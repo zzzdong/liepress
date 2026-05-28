@@ -1,0 +1,20 @@
+pub type Result<T> = std::result::Result<T, Error>;
+
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("visual element error: {0}")]
+    VisualElementError(String),
+
+    #[error("font load error: {0}")]
+    FontLoadError(String),
+
+    #[error("layout error: {0}")]
+    LayoutError(String),
+
+    #[error("io error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
+
+
