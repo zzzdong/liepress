@@ -288,11 +288,20 @@ impl PageRenderer for SvgRenderer {
         let font_size = run.font_size;
         let escaped_text = Self::escape_xml(&run.text);
 
-        let text_svg = format!(
-            r#"<text fill="{}" font-size="{}" x="{:.2}" y="{:.2}">{}</text>"#,
-            color, font_size, x, y, escaped_text
-        );
-        self.svg_content.push_str(&text_svg);
+        if let Some(ref url) = run.url {
+            let escaped_url = Self::escape_xml(url);
+            let text_svg = format!(
+                r#"<a href="{}"><text fill="{}" font-size="{}" x="{:.2}" y="{:.2}">{}</text></a>"#,
+                escaped_url, color, font_size, x, y, escaped_text
+            );
+            self.svg_content.push_str(&text_svg);
+        } else {
+            let text_svg = format!(
+                r#"<text fill="{}" font-size="{}" x="{:.2}" y="{:.2}">{}</text>"#,
+                color, font_size, x, y, escaped_text
+            );
+            self.svg_content.push_str(&text_svg);
+        }
         self.svg_content.push('\n');
     }
 

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use krilla::color::Color as KrillaColor;
 use krilla::color::rgb::Color as RgbColor;
 use krilla::document::Document;
-use krilla::geom::{PathBuilder, Point as KrillaPoint, Size, Transform as KrillaTransform};
+use krilla::geom::{PathBuilder, Point as KrillaPoint, Rect as KrillaRect, Size, Transform as KrillaTransform};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::{
@@ -14,6 +14,8 @@ use krilla::paint::{
 };
 use krilla::surface::Surface;
 use krilla::text::Font;
+use krilla::annotation::{Annotation, LinkAnnotation, Target};
+use krilla::action::{Action, LinkAction};
 use vello_cpu::kurbo::{BezPath, PathEl, Point, Rect, Shape};
 
 use crate::error::Result;
@@ -77,13 +79,23 @@ impl PdfDocumentGenerator {
             }
         }
 
-        {
+        let links = {
             let mut renderer = PdfRenderer::new(&mut surface, page.height);
             renderer.render_elements(&page.elements);
-            drop(renderer);
-        }
+            renderer.take_links()
+        };
 
         surface.finish();
+
+        // 添加超链接注释
+        for (x, y, w, h, url) in links {
+            if let Some(rect) = KrillaRect::from_xywh(x, y, w, h) {
+                let action = Action::from(LinkAction::new(url.clone()));
+                let link_annotation = LinkAnnotation::new(rect, Target::Action(action));
+                krilla_page.add_annotation(Annotation::new_link(link_annotation, None));
+            }
+        }
+
         krilla_page.finish();
         Ok(())
     }
@@ -100,6 +112,7 @@ pub struct PdfRenderer<'a, 's> {
     page_height: f32,
     font_cache: HashMap<FontCacheKey, Font>,
     push_count: usize,
+    links: Vec<(f32, f32, f32, f32, String)>,
 }
 
 impl<'a, 's> PdfRenderer<'a, 's> {
@@ -109,7 +122,12 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             page_height,
             font_cache: HashMap::new(),
             push_count: 0,
+            links: Vec::new(),
         }
+    }
+
+    fn take_links(&mut self) -> Vec<(f32, f32, f32, f32, String)> {
+        std::mem::take(&mut self.links)
     }
 
     fn color_to_krilla(color: &Color) -> RgbColor {
@@ -387,6 +405,15 @@ impl PageRenderer for PdfRenderer<'_, '_> {
             position.x as f32 + run.baseline_x,
             position.y as f32 + run.baseline_y,
         );
+
+        // 如果 run 有 URL，收集链接区域
+        if let Some(ref url) = run.url {
+            let link_x = position.x as f32 + run.baseline_x;
+            let link_y = position.y as f32;
+            let link_w = run.advance;
+            let link_h = run.font_size * 1.4;
+            self.links.push((link_x, link_y, link_w, link_h, url.clone()));
+        }
 
         let mut krilla_glyphs = Vec::new();
         for g in &run.glyphs {

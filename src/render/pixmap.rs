@@ -175,6 +175,7 @@ impl PixmapRenderer {
             font_style: style.font_style.clone(),
             color: style.color,
             align: style.align,
+            url: style.url.clone(),
         };
 
         // 缩放最大宽度

@@ -436,6 +436,8 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
         mdast::Node::Link(link) => {
             let mut style = Style::inherit_from(parent_style);
             style.color = crate::visual::Color::new(0, 0, 255);
+            style.font_style = FontStyle::Italic;
+            style.link_url = Some(link.url.clone());
             let children: Vec<Node> = link
                 .children
                 .iter()

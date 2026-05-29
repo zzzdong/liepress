@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::visual::Color;
 use parley::fontique::GenericFamily;
-use parley::style::{FontFamily, FontFamilyName, StyleProperty};
+use parley::style::{FontFamily, FontFamilyName, FontStyle as ParleyFontStyle, FontWeight, StyleProperty};
 use parley::{Alignment, AlignmentOptions, FontContext, LayoutContext};
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -59,6 +59,8 @@ pub struct TextRun {
     /// 该行的基线 Y 坐标（相对行顶 row_top_rel 的偏移）
     /// 同一行内所有 run 共享此值
     pub baseline_y: f32,
+    /// 超链接 URL（如果有）
+    pub url: Option<String>,
 }
 
 /// 文本行 - 包含一行中的所有 Run
@@ -131,6 +133,8 @@ pub struct TextStyle {
     pub font_weight: String,
     pub font_style: String,
     pub align: TextAlign,
+    /// 超链接 URL（如果有）
+    pub url: Option<String>,
 }
 
 impl Default for TextStyle {
@@ -142,6 +146,7 @@ impl Default for TextStyle {
             font_weight: "normal".to_string(),
             font_style: "normal".to_string(),
             align: TextAlign::Left,
+            url: None,
         }
     }
 }
@@ -233,6 +238,8 @@ pub fn create_text_layout_with_contexts(
     builder.push_default(StyleProperty::FontFamily(font_stack));
     builder.push_default(StyleProperty::FontSize(style.font_size as f32));
     builder.push_default(StyleProperty::Brush(style.color));
+    builder.push_default(StyleProperty::FontStyle(to_parley_font_style(&style.font_style)));
+    builder.push_default(StyleProperty::FontWeight(to_parley_font_weight(&style.font_weight)));
 
     // 构建布局
     let mut layout = builder.build(text);
@@ -307,25 +314,23 @@ pub fn layout_text_with_contexts(
     builder.push_default(StyleProperty::FontFamily(default_font_stack));
     builder.push_default(StyleProperty::FontSize(first_style.font_size as f32));
     builder.push_default(StyleProperty::Brush(first_style.color));
+    builder.push_default(StyleProperty::FontStyle(to_parley_font_style(&first_style.font_style)));
+    builder.push_default(StyleProperty::FontWeight(to_parley_font_weight(&first_style.font_weight)));
 
-    // 3. 后续各段覆盖样式
+    // 3. 后续各段覆盖样式（直接推送所有样式，不做条件判断）
     for (i, (_, style)) in texts.iter().enumerate().skip(1) {
         let (start, end) = ranges[i];
         if start >= end {
             continue;
         }
-        if style.font_family != first_style.font_family {
-            builder.push(
-                StyleProperty::FontFamily(to_parley_font_family(&style.font_family)),
-                start..end,
-            );
-        }
-        if (style.font_size - first_style.font_size).abs() > f64::EPSILON {
-            builder.push(StyleProperty::FontSize(style.font_size as f32), start..end);
-        }
-        if style.color != first_style.color {
-            builder.push(StyleProperty::Brush(style.color), start..end);
-        }
+        builder.push(
+            StyleProperty::FontFamily(to_parley_font_family(&style.font_family)),
+            start..end,
+        );
+        builder.push(StyleProperty::FontSize(style.font_size as f32), start..end);
+        builder.push(StyleProperty::Brush(style.color), start..end);
+        builder.push(StyleProperty::FontStyle(to_parley_font_style(&style.font_style)), start..end);
+        builder.push(StyleProperty::FontWeight(to_parley_font_weight(&style.font_weight)), start..end);
     }
 
     // 4. 构建布局
@@ -359,6 +364,39 @@ fn to_parley_font_family(families: &[String]) -> FontFamily<'static> {
         })
         .collect();
     FontFamily::List(Cow::Owned(names))
+}
+
+/// 将 font_style 字符串转换为 parley 的 FontStyle
+fn to_parley_font_style(style: &str) -> ParleyFontStyle {
+    match style.to_lowercase().as_str() {
+        "italic" => ParleyFontStyle::Italic,
+        "oblique" => ParleyFontStyle::Oblique(None),
+        _ => ParleyFontStyle::Normal,
+    }
+}
+
+/// 将 font_weight 字符串或数值转换为 parley 的 FontWeight
+fn to_parley_font_weight(weight: &str) -> FontWeight {
+    match weight.to_lowercase().as_str() {
+        "normal" => FontWeight::NORMAL,
+        "bold" => FontWeight::BOLD,
+        "thin" | "100" => FontWeight::THIN,
+        "extra_light" | "200" => FontWeight::EXTRA_LIGHT,
+        "light" | "300" => FontWeight::LIGHT,
+        "semi_light" | "350" => FontWeight::SEMI_LIGHT,
+        "medium" | "500" => FontWeight::MEDIUM,
+        "semi_bold" | "600" => FontWeight::SEMI_BOLD,
+        "extra_bold" | "800" => FontWeight::EXTRA_BOLD,
+        "black" | "900" => FontWeight::BLACK,
+        _ => {
+            // 尝试解析为数字
+            if let Ok(val) = weight.parse::<f32>() {
+                FontWeight::new(val)
+            } else {
+                FontWeight::NORMAL
+            }
+        }
+    }
 }
 
 // pub fn layout_text_with_contexts(

@@ -4,3 +4,4 @@
 
 mod end_to_end;
 mod diagnostic;
+mod pdf_validation;

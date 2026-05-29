@@ -92,7 +92,16 @@ fn test_link_has_color() {
                     for child in children {
                         if let NodeKind::Link { .. } = &child.kind {
                             // Links typically have blue color
-                            assert!(child.style.color.r > 0 || child.style.color.g > 0 || child.style.color.b > 0);
+                            assert_eq!(child.style.color.r, 0);
+                            assert_eq!(child.style.color.g, 0);
+                            assert_eq!(child.style.color.b, 255);
+                            // Links typically have italic style
+                            assert_eq!(child.style.font_style, FontStyle::Italic);
+                            // Links have URL set
+                            assert_eq!(
+                                child.style.link_url.as_deref(),
+                                Some("http://example.com")
+                            );
                             return;
                         }
                     }

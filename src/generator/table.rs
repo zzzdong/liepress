@@ -8,7 +8,7 @@
 //! 2. generate_rows — 按行区间生成视觉元素，支持跨页分割
 
 use crate::ast::{Node, NodeKind, TextAlign, Style, computed_style_to_text_style};
-use crate::generator::text::{collect_inline_segments, build_text_lines_rel};
+use crate::generator::text::{collect_inline_segments, build_text_lines_rel, annotate_runs_with_urls};
 use crate::text::{
     FONT_CONTEXT, LAYOUT_CONTEXT,
     layout_text_with_contexts, TextStyle, TextAlign as TextAlign2,
@@ -495,7 +495,8 @@ fn layout_cell_texts(
                         &mut lcx,
                     );
 
-                    let lines_rel = build_text_lines_rel(&layout, &total_text);
+                    let mut lines_rel = build_text_lines_rel(&layout, &total_text);
+                    annotate_runs_with_urls(&mut lines_rel, &total_text, &segments);
                     for line_rel in &lines_rel {
                         let line_abs_x = cell_x + padding_h + line_rel.min_x;
                         let line_abs_y = cell_y + padding_v + line_rel.row_top_rel;

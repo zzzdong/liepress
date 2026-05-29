@@ -7,8 +7,11 @@ edition = "2024"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-krilla = "0.7.0"
+krilla = "0.8.0"
 markdown = "1.0.0"
 parley = "0.9.0"
 thiserror = "2.0"
 vello_cpu = "0.0.8"
+
+[dev-dependencies]
+lopdf = "0.40"

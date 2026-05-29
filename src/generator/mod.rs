@@ -17,7 +17,7 @@ use vello_cpu::kurbo::{Point, Rect};
 use crate::ast::{self, Node, NodeKind, Style, LIST_INDENT_PT};
 use crate::text::{FONT_CONTEXT, LAYOUT_CONTEXT, TextAlign, TextStyle, layout_text_with_contexts};
 use crate::visual::{Color, VisualElement, FillStrokeStyle, StrokeStyle};
-use crate::generator::text::{collect_inline_segments, estimate_children_height, build_text_lines_rel, TextLineRel};
+use crate::generator::text::{collect_inline_segments, estimate_children_height, build_text_lines_rel, annotate_runs_with_urls, TextLineRel};
 
 use image::GenericImageView;
 
@@ -176,7 +176,8 @@ impl DocumentGenerator {
                 drop(fcx);
                 drop(lcx);
 
-                let lines_rel = build_text_lines_rel(&layout, &total_text);
+                let mut lines_rel = build_text_lines_rel(&layout, &total_text);
+                annotate_runs_with_urls(&mut lines_rel, &total_text, &segments);
                 let total_line_height: f32 = lines_rel.iter().map(|l| l.line_height).sum();
                 let total_height = total_line_height + margin_bottom;
 
@@ -376,6 +377,7 @@ impl DocumentGenerator {
             font_weight: "normal".to_string(),
             font_style: "normal".to_string(),
             align: crate::text::TextAlign::Center,
+            url: None,
         };
 
         let label_height = if !alt.is_empty() {
@@ -531,7 +533,8 @@ impl DocumentGenerator {
                 drop(fcx);
                 drop(lcx);
 
-                let lines_rel = build_text_lines_rel(&layout, &total_text);
+                let mut lines_rel = build_text_lines_rel(&layout, &total_text);
+                annotate_runs_with_urls(&mut lines_rel, &total_text, &segments);
                 self.place_text_lines(lines_rel, 0.0, indent, margin_bottom, true);
             })
         })
@@ -699,7 +702,8 @@ impl DocumentGenerator {
                         drop(fcx);
                         drop(lcx);
 
-                        let lines_rel = build_text_lines_rel(&layout, &total_text);
+                        let mut lines_rel = build_text_lines_rel(&layout, &total_text);
+                        annotate_runs_with_urls(&mut lines_rel, &total_text, &segments);
 
                         // 放置标记和内容的第一行
                         if let (Some(m_line), Some(first_line)) = (marker_line, lines_rel.first()) {

@@ -1,64 +1,60 @@
 //! 端到端集成测试
 
 use liepress::{markdown_to_pdf, markdown_to_svg, markdown_to_png};
-use std::fs;
-use std::path::Path;
 use crate::common::samples;
+use crate::common::{assert_valid_pdf, pdf_page_count, assert_has_link};
 
 #[test]
 fn test_full_pipeline_pdf() {
-    // Complete pipeline: Markdown -> AST -> Generator -> PDF
     let pdf_data = markdown_to_pdf(samples::FULL_FEATURED)
         .expect("Full PDF pipeline should succeed");
+    let doc = assert_valid_pdf(&pdf_data);
 
-    assert!(!pdf_data.is_empty());
-    assert_eq!(&pdf_data[0..4], b"%PDF");
+    // Verify link annotation exists
+    assert_has_link(&doc, "https://example.com");
 }
 
 #[test]
 fn test_full_pipeline_svg() {
-    // Complete pipeline: Markdown -> AST -> Generator -> SVG
     let svgs = markdown_to_svg(samples::FULL_FEATURED)
         .expect("Full SVG pipeline should succeed");
 
-    assert!(!svgs.is_empty());
+    assert!(!svgs.is_empty(), "SVG should produce pages");
     for svg in &svgs {
-        assert!(svg.contains("<svg"));
+        assert!(svg.contains("<svg"), "Should produce valid SVG");
     }
 }
 
 #[test]
 fn test_full_pipeline_png() {
-    // Complete pipeline: Markdown -> AST -> Generator -> PNG
     let pngs = markdown_to_png(samples::FULL_FEATURED)
         .expect("Full PNG pipeline should succeed");
 
-    assert!(!pngs.is_empty());
+    assert!(!pngs.is_empty(), "PNG should produce pages");
     for png in &pngs {
-        assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+        assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10],
+                   "Should produce valid PNG");
     }
 }
 
 #[test]
 fn test_all_backends_produce_consistent_page_count() {
-    // All backends should produce the same number of pages
     let md = samples::FULL_FEATURED;
 
     let pdf_data = markdown_to_pdf(md).unwrap();
     let svgs = markdown_to_svg(md).unwrap();
     let pngs = markdown_to_png(md).unwrap();
 
-    // Count PDF pages by looking for /Type /Page
-    let pdf_pages = String::from_utf8_lossy(&pdf_data)
-        .matches("/Type /Page")
-        .count();
+    // Use lopdf to count pages accurately
+    let pdf_pages = pdf_page_count(&pdf_data);
 
-    println!("PDF pages: {}, SVG pages: {}, PNG pages: {}",
+    println!("PDF pages (lopdf): {}, SVG pages: {}, PNG pages: {}",
              pdf_pages, svgs.len(), pngs.len());
 
-    // Note: PDF page count might differ slightly due to trailer pages
     assert!(!svgs.is_empty(), "SVG should have pages");
     assert_eq!(svgs.len(), pngs.len(), "SVG and PNG should have same page count");
+    // PDF should also match (FULL_FEATURED fits in 1 page)
+    assert_eq!(pdf_pages, svgs.len(), "PDF pages should match SVG pages");
 }
 
 #[test]
@@ -89,14 +85,15 @@ Some `inline code` for demonstration.
 
 [Visit Example](https://example.com)"#;
 
-    // Test all backends
     let pdf = markdown_to_pdf(md).expect("PDF should succeed");
     let svg = markdown_to_svg(md).expect("SVG should succeed");
     let png = markdown_to_png(md).expect("PNG should succeed");
 
-    assert!(!pdf.is_empty());
-    assert!(!svg.is_empty());
-    assert!(!png.is_empty());
+    let doc = assert_valid_pdf(&pdf);
+    assert_has_link(&doc, "https://example.com");
+
+    assert!(!svg.is_empty(), "SVG should have pages");
+    assert!(!png.is_empty(), "PNG should have pages");
 }
 
 #[test]
@@ -116,8 +113,8 @@ Math: α + β = γ"#;
     let pdf = markdown_to_pdf(md).expect("PDF with unicode should succeed");
     let svg = markdown_to_svg(md).expect("SVG with unicode should succeed");
 
-    assert!(!pdf.is_empty());
-    assert!(!svg.is_empty());
+    let _doc = assert_valid_pdf(&pdf);
+    assert!(!svg.is_empty(), "SVG should have pages");
 }
 
 #[test]
@@ -133,7 +130,7 @@ Backslashes: \path\to\file
 Symbols: © ® ™ § † ‡"#;
 
     let pdf = markdown_to_pdf(md).expect("PDF with special chars should succeed");
-    assert!(!pdf.is_empty());
+    let _doc = assert_valid_pdf(&pdf);
 }
 
 #[test]
@@ -155,6 +152,6 @@ fn test_nested_structures() {
     let pdf = markdown_to_pdf(md).expect("PDF with nested structures should succeed");
     let svg = markdown_to_svg(md).expect("SVG with nested structures should succeed");
 
-    assert!(!pdf.is_empty());
-    assert!(!svg.is_empty());
+    let _doc = assert_valid_pdf(&pdf);
+    assert!(!svg.is_empty(), "SVG should have pages");
 }

@@ -29,6 +29,7 @@ pub fn paragraph_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -62,6 +63,7 @@ pub fn heading_style(level: u8) -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -86,6 +88,7 @@ pub fn code_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -110,6 +113,7 @@ pub fn image_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -134,6 +138,7 @@ pub fn list_item_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -158,6 +163,7 @@ pub fn thematic_break_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -182,6 +188,7 @@ pub fn inline_code_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -206,6 +213,7 @@ pub fn link_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -230,6 +238,7 @@ pub fn blockquote_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -254,6 +263,7 @@ pub fn table_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: Some(Color::new(240, 240, 240)),
         table_alt_row_bg: Some(Color::new(248, 248, 248)),
+        link_url: None,
     }
 }
 
@@ -278,6 +288,7 @@ pub fn unordered_list_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -302,6 +313,7 @@ pub fn ordered_list_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -326,6 +338,7 @@ pub fn list_marker_style() -> Style {
         table_cell_padding_v_pt: 2.0,
         table_header_bg: None,
         table_alt_row_bg: None,
+        link_url: None,
     }
 }
 
@@ -348,6 +361,7 @@ pub fn computed_style_to_text_style(style: &Style) -> crate::text::TextStyle {
         font_weight: style.font_weight.as_str().to_string(),
         font_style: style.font_style.as_str().to_string(),
         align,
+        url: style.link_url.clone(),
     }
 }
 
@@ -363,3 +377,4 @@ pub const LIST_INDENT_PT: f32 = 12.0;
 pub fn calculate_list_indent(font_size_pt: f32) -> f32 {
     (font_size_pt * 1.2).max(10.0).min(20.0)
 }
+

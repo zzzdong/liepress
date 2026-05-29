@@ -110,6 +110,9 @@ pub struct Style {
     pub table_cell_padding_v_pt: f32,
     pub table_header_bg: Option<Color>,
     pub table_alt_row_bg: Option<Color>,
+
+    // 链接
+    pub link_url: Option<String>,
 }
 
 /// 计算样式的"继承"策略。
@@ -136,6 +139,7 @@ impl Style {
             table_cell_padding_v_pt: parent.table_cell_padding_v_pt,
             table_header_bg: parent.table_header_bg,
             table_alt_row_bg: parent.table_alt_row_bg,
+            link_url: parent.link_url.clone(),
         }
     }
 }
@@ -161,6 +165,7 @@ impl Default for Style {
             table_cell_padding_v_pt: 2.0,
             table_header_bg: None,
             table_alt_row_bg: None,
+            link_url: None,
         }
     }
 }
