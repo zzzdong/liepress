@@ -78,4 +78,48 @@ fn main() {
     pub const ORDERED_LIST: &str = r#"1. First item
 2. Second item
 3. Third item"#;
+
+    /// 简单表格
+    pub const SIMPLE_TABLE: &str = r#"| Header 1 | Header 2 |
+|----------|----------|
+| Cell A1  | Cell B1  |
+| Cell A2  | Cell B2  |"#;
+
+    /// 多列表格
+    pub const WIDE_TABLE: &str = r#"| Name   | Age | City      | Country   |
+|--------|-----|-----------|-----------|
+| Alice  | 30  | New York  | USA       |
+| Bob    | 25  | London    | UK        |
+| Charlie| 35  | Beijing   | China     |"#;
+
+    /// 各种对齐的表格
+    pub const ALIGNED_TABLE: &str = r#"| Left   | Center | Right |
+|:-------|:------:|------:|
+| L1     | C1     | R1    |
+| L2     | C2     | R2    |"#;
+
+    /// 大表格（用于测试跨页）
+    pub const LARGE_TABLE: &str = r#"| #  | Name        | Description                              |
+|----|-------------|------------------------------------------|
+| 1  | Item One    | This is the first item with a longer description that wraps |
+| 2  | Item Two    | The second item description goes here and might wrap too |
+| 3  | Item Three  | Short description                        |
+| 4  | Item Four   | Another item with some details here      |
+| 5  | Item Five   | Yet another item with description text that could wrap |
+| 6  | Item Six    | Short                                     |
+| 7  | Item Seven  | A longer description for item seven here |
+| 8  | Item Eight  | Eighth item with description              |
+| 9  | Item Nine   | Ninth item description goes here         |
+|10  | Item Ten    | Tenth and final item description          |"#;
+
+    /// 带内联格式的表格
+    pub const FORMATTED_TABLE: &str = r#"| Feature        | Status |
+|----------------|--------|
+| **Bold text**  | ✅ Done |
+| *Italic text*  | ✅ Done |
+| `inline code`  | ⏳ WIP  |"#;
+
+    /// 空表格
+    pub const EMPTY_TABLE: &str = r#"| H1 | H2 |
+|----|----|"#;
 }

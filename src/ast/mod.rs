@@ -28,7 +28,7 @@ use markdown::mdast;
 /// ```
 pub fn parse_markdown(markdown: &str) -> Node {
     let mdast =
-        markdown::to_mdast(markdown, &markdown::ParseOptions::default()).unwrap_or_else(|_| {
+        markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
             mdast::Node::Root(mdast::Root {
                 children: vec![],
                 position: None,

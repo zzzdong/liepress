@@ -90,8 +90,13 @@ pub enum NodeKind {
     ThematicBreak,
 
     /// 表格
-    /// 特殊处理，暂时保留为 MDAST 结构
-    Table { children: Vec<Node> },
+    Table {
+        children: Vec<Node>,   // TableRow 节点列表
+        align: Vec<TextAlign>, // 每列对齐方式
+    },
+
+    /// 表格行
+    TableRow { children: Vec<Node> }, // TableCell/Paragraph 节点列表
 
     // ── 内联节点 ──
     /// 纯文本（叶节点）
@@ -173,6 +178,13 @@ impl NodeKind {
                 s
             }
             NodeKind::Blockquote { children } => {
+                let mut s = String::new();
+                for child in children {
+                    s.push_str(&child.text_content());
+                }
+                s
+            }
+            NodeKind::TableRow { children } => {
                 let mut s = String::new();
                 for child in children {
                     s.push_str(&child.text_content());
@@ -313,16 +325,25 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
             )
         }
 
-        mdast::Node::Table(_table) => {
+        mdast::Node::Table(table) => {
             let style = table_style();
-            // 表格暂时保留为基本结构
-            let children: Vec<Node> = _table
+            let align: Vec<TextAlign> = table
+                .align
+                .iter()
+                .map(|a| match a {
+                    mdast::AlignKind::Left => TextAlign::Left,
+                    mdast::AlignKind::Right => TextAlign::Right,
+                    mdast::AlignKind::Center => TextAlign::Center,
+                    mdast::AlignKind::None => TextAlign::Left,
+                })
+                .collect();
+            let children: Vec<Node> = table
                 .children
                 .iter()
                 .map(|child| build_node(child, &style))
                 .collect();
             Node::new(
-                NodeKind::Table { children },
+                NodeKind::Table { children, align },
                 style,
                 false, // 表格不可分割
             )
@@ -336,7 +357,7 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
                 .map(|child| build_node(child, &style))
                 .collect();
             Node::new(
-                NodeKind::Table { children },
+                NodeKind::TableRow { children },
                 style,
                 false, // 表格行不可分割
             )
@@ -350,7 +371,7 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
                 .map(|child| build_node(child, &style))
                 .collect();
             Node::new(
-                NodeKind::Paragraph { children }, // 单元格内容作为段落处理
+                NodeKind::Paragraph { children },
                 style,
                 true,
             )
@@ -479,7 +500,8 @@ where
         | NodeKind::List { children, .. }
         | NodeKind::ListItem { children }
         | NodeKind::Blockquote { children }
-        | NodeKind::Table { children }
+        | NodeKind::Table { children, .. }
+        | NodeKind::TableRow { children }
         | NodeKind::Strong { children }
         | NodeKind::Emphasis { children }
         | NodeKind::Link { children, .. }

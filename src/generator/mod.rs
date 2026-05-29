@@ -6,6 +6,7 @@
 pub mod constants;
 pub mod types;
 pub mod text;
+mod table;
 
 pub use constants::*;
 pub use types::*;
@@ -78,6 +79,9 @@ impl DocumentGenerator {
             }
             NodeKind::ThematicBreak => {
                 self.layout_thematic_break(style);
+            }
+            NodeKind::Table { .. } => {
+                self.layout_table(node);
             }
             _ => {}
         }
@@ -911,6 +915,77 @@ impl DocumentGenerator {
         self.page_context.consume_height(total_height);
     }
 
+    // ─── 表格布局 ─────────────────────────────────────────────
+
+    fn layout_table(&mut self, node: &Node) {
+        use crate::generator::table::{compute_layout_info, generate_rows};
+
+        let content_width = self.page_context.settings.content_width();
+        let content_x = self.page_context.settings.content_x();
+        let content_y = self.page_context.settings.content_y();
+        let margin_bottom = node.style.margin_bottom_pt;
+
+        // 1. 计算表格布局（列宽、行高），不生成视觉元素
+        let layout = compute_layout_info(node, content_width);
+        if layout.num_rows == 0 || layout.num_cols == 0 {
+            return;
+        }
+
+        // 2. 按行逐页放置
+        let mut row_idx = 0;
+        let mut total_consumed = 0.0_f32;
+
+        while row_idx < layout.num_rows {
+            let remaining = self.page_context.remaining_height();
+
+            // 找到能放在当前页的最大行区间
+            let mut chunk_height = 0.0_f32;
+            let mut end_idx = row_idx;
+            while end_idx < layout.num_rows
+                && chunk_height + layout.row_heights[end_idx] <= remaining
+            {
+                chunk_height += layout.row_heights[end_idx];
+                end_idx += 1;
+            }
+
+            // 如果一行都放不下，强制换页
+            if end_idx == row_idx {
+                if !self.page_context.is_empty() {
+                    self.page_context.start_new_page();
+                    continue;
+                }
+                // 强制放至少一行（会溢出页面，但这是极限情况）
+                end_idx = row_idx + 1;
+                chunk_height = layout.row_heights[row_idx];
+            }
+
+            // 3. 为该行区间生成视觉元素（相对坐标，从 0 开始）
+            let page_y = content_y + self.page_context.current_y;
+            let elements = generate_rows(node, &layout, row_idx, end_idx, &node.style);
+
+            // 4. 平移到页面绝对坐标
+            for element in elements {
+                let shifted = shift_element(element, content_x as f64, page_y as f64);
+                self.page_context.add_element(shifted);
+            }
+
+            // 5. 消耗高度
+            self.page_context.consume_height(chunk_height);
+            total_consumed += chunk_height;
+            row_idx = end_idx;
+
+            // 6. 如果还有剩余行，换页
+            if row_idx < layout.num_rows {
+                self.page_context.start_new_page();
+            }
+        }
+
+        // 最后加上底部边距
+        if total_consumed > 0.0 {
+            self.page_context.consume_height(margin_bottom);
+        }
+    }
+
     // ─── 图片加载 ─────────────────────────────────────────────
 
     fn load_image(&self, url: &str) -> Option<(u32, u32, Vec<u8>)> {
@@ -937,6 +1012,95 @@ impl DocumentGenerator {
     }
 }
 
+// ─── 辅助函数 ───────────────────────────────────────────────────
+
+/// 递归平移 VisualElement 中的所有坐标
+fn shift_element(element: VisualElement, dx: f64, dy: f64) -> VisualElement {
+    match element {
+        VisualElement::Rect { rect, style } => VisualElement::Rect {
+            rect: Rect::new(rect.x0 + dx, rect.y0 + dy, rect.x1 + dx, rect.y1 + dy),
+            style,
+        },
+        VisualElement::Circle {
+            center,
+            radius,
+            style,
+        } => VisualElement::Circle {
+            center: Point::new(center.x + dx, center.y + dy),
+            radius,
+            style,
+        },
+        VisualElement::Line { start, end, style } => VisualElement::Line {
+            start: Point::new(start.x + dx, start.y + dy),
+            end: Point::new(end.x + dx, end.y + dy),
+            style,
+        },
+        VisualElement::Polyline { points, style } => VisualElement::Polyline {
+            points: points
+                .into_iter()
+                .map(|p| Point::new(p.x + dx, p.y + dy))
+                .collect(),
+            style,
+        },
+        VisualElement::Path { path, style } => VisualElement::Path { path, style },
+        VisualElement::GradientPath {
+            path,
+            gradient,
+            stroke,
+        } => VisualElement::GradientPath {
+            path,
+            gradient,
+            stroke,
+        },
+        VisualElement::TextLine {
+            runs,
+            bounds,
+            line_height,
+        } => VisualElement::TextLine {
+            runs,
+            bounds: Rect::new(
+                bounds.x0 + dx,
+                bounds.y0 + dy,
+                bounds.x1 + dx,
+                bounds.y1 + dy,
+            ),
+            line_height,
+        },
+        VisualElement::Image {
+            position,
+            size,
+            pixel_size,
+            data,
+            format,
+            alt,
+        } => VisualElement::Image {
+            position: Point::new(position.x + dx, position.y + dy),
+            size,
+            pixel_size,
+            data,
+            format,
+            alt,
+        },
+        VisualElement::Group {
+            children,
+            transform,
+        } => VisualElement::Group {
+            children: children
+                .into_iter()
+                .map(|c| shift_element(c, dx, dy))
+                .collect(),
+            transform,
+        },
+        VisualElement::ZGroup { z_index, children } => VisualElement::ZGroup {
+            z_index,
+            children: children
+                .into_iter()
+                .map(|c| shift_element(c, dx, dy))
+                .collect(),
+        },
+    }
+}
+
 // ─── Markdown 转 Document ───────────────────────────────────────
 
 pub fn markdown_to_document(markdown: &str) -> Document {
@@ -944,7 +1108,7 @@ pub fn markdown_to_document(markdown: &str) -> Document {
 }
 
 pub fn markdown_to_document_with_base_dir(markdown: &str, base_dir: Option<PathBuf>) -> Document {
-    let ast = markdown::to_mdast(markdown, &markdown::ParseOptions::default()).unwrap_or_else(|_| {
+    let ast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
         mdast::Node::Root(mdast::Root {
             children: Vec::new(),
             position: None,
@@ -978,7 +1142,7 @@ pub fn markdown_to_document_with_settings_and_base_dir(
     settings: PageSettings,
     base_dir: Option<PathBuf>,
 ) -> Document {
-    let ast = markdown::to_mdast(markdown, &markdown::ParseOptions::default()).unwrap_or_else(|_| {
+    let ast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
         mdast::Node::Root(mdast::Root {
             children: Vec::new(),
             position: None,

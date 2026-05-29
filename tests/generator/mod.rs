@@ -7,3 +7,4 @@ use liepress::generator::{markdown_to_document, Document, Page, constants::*};
 mod document;
 mod layout;
 mod pagination;
+mod table;

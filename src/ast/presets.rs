@@ -23,6 +23,12 @@ pub fn paragraph_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -50,6 +56,12 @@ pub fn heading_style(level: u8) -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -68,6 +80,12 @@ pub fn code_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -86,6 +104,12 @@ pub fn image_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::Contain,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -104,6 +128,12 @@ pub fn list_item_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -122,6 +152,12 @@ pub fn thematic_break_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -140,6 +176,12 @@ pub fn inline_code_style() -> Style {
         display: Display::Inline,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -158,6 +200,12 @@ pub fn link_style() -> Style {
         display: Display::Inline,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -176,6 +224,12 @@ pub fn blockquote_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -194,6 +248,12 @@ pub fn table_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: Some(Color::new(240, 240, 240)),
+        table_alt_row_bg: Some(Color::new(248, 248, 248)),
     }
 }
 
@@ -212,6 +272,12 @@ pub fn unordered_list_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -230,6 +296,12 @@ pub fn ordered_list_style() -> Style {
         display: Display::Block,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 
@@ -248,6 +320,12 @@ pub fn list_marker_style() -> Style {
         display: Display::Inline,
         width: None,
         object_fit: ObjectFit::None,
+        table_border_color: Color::new(180, 180, 180),
+        table_border_width_pt: 0.5,
+        table_cell_padding_h_pt: 4.0,
+        table_cell_padding_v_pt: 2.0,
+        table_header_bg: None,
+        table_alt_row_bg: None,
     }
 }
 

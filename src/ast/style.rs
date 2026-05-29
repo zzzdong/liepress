@@ -102,6 +102,14 @@ pub struct Style {
     // 图片
     pub width: Option<f32>,
     pub object_fit: ObjectFit,
+
+    // 表格
+    pub table_border_color: Color,
+    pub table_border_width_pt: f32,
+    pub table_cell_padding_h_pt: f32,
+    pub table_cell_padding_v_pt: f32,
+    pub table_header_bg: Option<Color>,
+    pub table_alt_row_bg: Option<Color>,
 }
 
 /// 计算样式的"继承"策略。
@@ -122,6 +130,12 @@ impl Style {
             display: Display::Inline,
             width: None,
             object_fit: ObjectFit::None,
+            table_border_color: parent.table_border_color,
+            table_border_width_pt: parent.table_border_width_pt,
+            table_cell_padding_h_pt: parent.table_cell_padding_h_pt,
+            table_cell_padding_v_pt: parent.table_cell_padding_v_pt,
+            table_header_bg: parent.table_header_bg,
+            table_alt_row_bg: parent.table_alt_row_bg,
         }
     }
 }
@@ -141,6 +155,12 @@ impl Default for Style {
             display: Display::Block,
             width: None,
             object_fit: ObjectFit::Contain,
+            table_border_color: Color::new(180, 180, 180),
+            table_border_width_pt: 0.5,
+            table_cell_padding_h_pt: 4.0,
+            table_cell_padding_v_pt: 2.0,
+            table_header_bg: None,
+            table_alt_row_bg: None,
         }
     }
 }
