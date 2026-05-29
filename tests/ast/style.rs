@@ -5,7 +5,7 @@ use liepress::ast::{parse_markdown, NodeKind, Style, FontWeight, FontStyle};
 #[test]
 fn test_paragraph_has_style() {
     let md = "Simple paragraph";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -20,7 +20,7 @@ fn test_paragraph_has_style() {
 #[test]
 fn test_heading_style_by_level() {
     let md = "# H1\n## H2\n### H3";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -38,7 +38,7 @@ fn test_heading_style_by_level() {
 #[test]
 fn test_code_block_has_monospace_font() {
     let md = "```\ncode\n```";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -57,7 +57,7 @@ fn test_code_block_has_monospace_font() {
 #[test]
 fn test_inline_code_style() {
     let md = "Some `inline code` here";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -83,7 +83,7 @@ fn test_inline_code_style() {
 #[test]
 fn test_link_has_color() {
     let md = "[link](http://example.com)";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -95,8 +95,6 @@ fn test_link_has_color() {
                             assert_eq!(child.style.color.r, 0);
                             assert_eq!(child.style.color.g, 0);
                             assert_eq!(child.style.color.b, 255);
-                            // Links typically have italic style
-                            assert_eq!(child.style.font_style, FontStyle::Italic);
                             // Links have URL set
                             assert_eq!(
                                 child.style.link_url.as_deref(),
@@ -117,7 +115,7 @@ fn test_link_has_color() {
 #[test]
 fn test_strong_has_bold_weight() {
     let md = "**bold text**";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -141,7 +139,7 @@ fn test_strong_has_bold_weight() {
 #[test]
 fn test_emphasis_has_italic_style() {
     let md = "*italic text*";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {

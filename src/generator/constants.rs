@@ -10,25 +10,26 @@ pub const PAGE_WIDTH_PT: f32 = 595.276;
 /// A4 页面高度（pt）
 pub const PAGE_HEIGHT_PT: f32 = 841.890;
 
-/// 默认边距（pt）
-pub const DEFAULT_MARGIN_PT: f32 = 72.0;
+/// 默认边距（pt） - 紧凑方案
+/// 上下 36pt (0.5"), 左右 54pt (0.75")
+pub const DEFAULT_MARGIN_PT: f32 = 36.0;
 
 /// 默认 DPI
 pub const DEFAULT_DPI: u32 = 72;
 
 // ─── 页面边距 ────────────────────────────────────────────
 
-/// 上边距（pt）
-pub const PAGE_MARGIN_TOP_PT: f32 = 72.0;
+/// 上边距（pt）- 0.5 英寸
+pub const PAGE_MARGIN_TOP_PT: f32 = 36.0;
 
-/// 下边距（pt）
-pub const PAGE_MARGIN_BOTTOM_PT: f32 = 72.0;
+/// 下边距（pt）- 0.5 英寸
+pub const PAGE_MARGIN_BOTTOM_PT: f32 = 36.0;
 
-/// 左边距（pt）
-pub const PAGE_MARGIN_LEFT_PT: f32 = 90.0;
+/// 左边距（pt）- 0.75 英寸
+pub const PAGE_MARGIN_LEFT_PT: f32 = 54.0;
 
-/// 右边距（pt）
-pub const PAGE_MARGIN_RIGHT_PT: f32 = 90.0;
+/// 右边距（pt）- 0.75 英寸
+pub const PAGE_MARGIN_RIGHT_PT: f32 = 54.0;
 
 // ─── 内容区域 ────────────────────────────────────────────
 

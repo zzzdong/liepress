@@ -39,48 +39,45 @@ pub fn collect_inline_segments(children: &[Node]) -> Vec<(String, TextStyle)> {
     segments
 }
 
-/// 从 segments 生成文本范围到 URL 的映射，并标注到 TextLineRel 的 runs 上。
+/// 从 segments 生成 URL 映射，并标注到 TextLineRel 的 runs 上。
 ///
-/// 通过匹配 run 的颜色和位置查找对应 segment 的 URL 和文本，将其设置到 run 的 `url` 字段。
-/// 用于在文本布局完成后，将超链接元数据回填到渲染单元中。
-/// 
-/// 使用 run.text_range 来从 total_text 中提取文本，并匹配对应的 segment 获取 URL。
+/// 使用顺序匹配：runs 在行中的顺序与 segments 一致。通过跟踪每个 segment
+/// 已消费的 Unicode 字符数，正确处理多字节字符（如 emoji）和自动换行场景。
 pub fn annotate_runs_with_urls(
     lines: &mut [TextLineRel],
     total_text: &str,
     segments: &[(String, TextStyle)],
 ) {
-    // 构建 segment 的累积范围映射
-    // segment_ranges: (start_byte, end_byte, segment_index)
-    let mut segment_ranges: Vec<(usize, usize, usize)> = Vec::new();
-    let mut current_pos = 0_usize;
-    for (i, (text, _)) in segments.iter().enumerate() {
-        let start = current_pos;
-        let end = current_pos + text.len();
-        segment_ranges.push((start, end, i));
-        current_pos = end;
-    }
+    let mut seg_idx = 0;
+    let mut seg_char_consumed = 0_usize;
+    let seg_char_counts: Vec<usize> = segments.iter().map(|(s, _)| s.chars().count()).collect();
 
-    // 为每个 run 填充文本和 URL
     for line in lines.iter_mut() {
         for run in line.runs.iter_mut() {
-            let range = &run.text_range;
-            
-            // 从 total_text 中提取该 run 的文本
-            if range.start < total_text.len() && range.end <= total_text.len() {
-                run.text = total_text[range.clone()].to_string();
+            while seg_idx < seg_char_counts.len() && seg_char_consumed >= seg_char_counts[seg_idx] {
+                seg_idx += 1;
+                seg_char_consumed = 0;
             }
 
-            // 找到包含该 run 的 segment
-            // 使用 run 的范围中点来匹配 segment
-            let mid_point = (range.start + range.end) / 2;
-            for (seg_start, seg_end, seg_idx) in &segment_ranges {
-                if mid_point >= *seg_start && mid_point < *seg_end {
-                    // 找到匹配的 segment
-                    let (_, style) = &segments[*seg_idx];
-                    run.url = style.url.clone();
-                    break;
+            if seg_idx < segments.len() {
+                let (seg_text, seg_style) = &segments[seg_idx];
+                let glyph_count = run.text_range.len();
+
+                let mut run_text = String::with_capacity(glyph_count);
+                let mut chars_taken = 0_usize;
+                for (ci, ch) in seg_text.chars().enumerate() {
+                    if ci < seg_char_consumed {
+                        continue;
+                    }
+                    if chars_taken >= glyph_count {
+                        break;
+                    }
+                    run_text.push(ch);
+                    chars_taken += 1;
                 }
+                run.text = run_text;
+                run.url = seg_style.url.clone();
+                seg_char_consumed += chars_taken;
             }
         }
     }
@@ -107,23 +104,20 @@ pub fn estimate_children_height(children: &[Node]) -> f32 {
 pub fn build_text_lines_rel(layout: &TextLayout, full_text: &str) -> Vec<TextLineRel> {
     let mut lines = Vec::new();
     let mut row_top_rel = 0.0_f32;
+    let mut full_text_pos = 0_usize;
 
     for line in layout.lines() {
         let metrics = line.metrics();
         let line_height = metrics.line_height;
-        let baseline_y = metrics.baseline - row_top_rel; // 行基线 Y 坐标（相对行顶的偏移）
+        let baseline_y = metrics.baseline - row_top_rel;
 
-        // 收集该行所有字形及所属 run 索引
         let mut glyph_data: Vec<(GlyphRaw, usize)> = Vec::new();
-        // 收集当前行的所有 glyph 和 run 信息
-        // run_infos: (color, font_data, font_size, run, first_glyph_x, text_range)
         let mut run_infos: Vec<(
             Color,
             parley::FontData,
             f32,
             parley::layout::Run<'_, Color>,
             f32,
-            std::ops::Range<usize>,
         )> = Vec::new();
 
         let mut next_run_idx = 0;
@@ -134,17 +128,13 @@ pub fn build_text_lines_rel(layout: &TextLayout, full_text: &str) -> Vec<TextLin
                 let font_data = run.font().clone();
                 let font_size = run.font_size();
 
-                // 使用 run.text_range() 获取该 run 的文本范围
-                let text_range = run.text_range();
-
-                // 获取第一个字形的绝对 x（后续会减去 min_x 转换为相对偏移）
                 let first_glyph_x = glyph_run
                     .positioned_glyphs()
                     .next()
                     .map(|g| g.x)
                     .unwrap_or(0.0);
 
-                run_infos.push((color, font_data, font_size, *run, first_glyph_x, text_range));
+                run_infos.push((color, font_data, font_size, *run, first_glyph_x));
 
                 for g in glyph_run.positioned_glyphs() {
                     glyph_data.push((
@@ -159,7 +149,6 @@ pub fn build_text_lines_rel(layout: &TextLayout, full_text: &str) -> Vec<TextLin
                 }
                 next_run_idx += 1;
             }
-            // InlineBox 忽略
         }
 
         if glyph_data.is_empty() {
@@ -167,7 +156,6 @@ pub fn build_text_lines_rel(layout: &TextLayout, full_text: &str) -> Vec<TextLin
             continue;
         }
 
-        // 计算行内最小 x 和最大 x（用于相对坐标转换）
         let min_x = glyph_data
             .iter()
             .map(|(g, _)| g.x)
@@ -178,11 +166,9 @@ pub fn build_text_lines_rel(layout: &TextLayout, full_text: &str) -> Vec<TextLin
             .fold(f32::NEG_INFINITY, f32::max);
         let width = max_x - min_x;
 
-        // 按 run 分组，构建 TextRun
         let mut runs = Vec::new();
 
-        // 收集每个 run 的 glyph 索引范围
-        let mut run_glyph_ranges: Vec<(usize, usize)> = Vec::new(); // (start_idx, end_idx)
+        let mut run_glyph_ranges: Vec<(usize, usize)> = Vec::new();
         let mut current_start = 0;
         let mut last_run_idx = glyph_data[0].1;
 
@@ -195,12 +181,15 @@ pub fn build_text_lines_rel(layout: &TextLayout, full_text: &str) -> Vec<TextLin
         }
         run_glyph_ranges.push((current_start, glyph_data.len()));
 
-        // 按 run 分组构建 TextRun
-
         for (start_idx, end_idx) in run_glyph_ranges.iter() {
             let run_idx = glyph_data[*start_idx].1;
-            let (color, font_data, font_size, _run, first_glyph_x, text_range) =
+            let (color, font_data, font_size, _run, first_glyph_x) =
                 &run_infos[run_idx];
+
+            // 通过累计字形数推导该 run 在全文中的字节范围（每个 ASCII 字形 = 1 字节）
+            let glyph_count = end_idx - start_idx;
+            let text_range = full_text_pos..full_text_pos + glyph_count;
+            full_text_pos = text_range.end;
 
             // 提取当前行的 glyphs 并转换为相对坐标
             let relative_glyphs: Vec<Glyph> = glyph_data[*start_idx..*end_idx]

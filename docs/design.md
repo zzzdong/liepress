@@ -100,12 +100,23 @@ LiePress 是一个 Rust 实现的 Markdown 到多格式文档生成器，支持�
 | `font_style` | `FontStyle` | 字体样式（Normal/Italic） | ✅ |
 | `color` | `Color` | 文本颜色（RGBA） | ✅ |
 | `line_height_pt` | `f32` | 行高（pt） | ✅ |
+| `letter_spacing` | `f32` | 字间距（pt） | ✅ |
+| `text_align` | `TextAlign` | 对齐方式（Left/Center/Right/Justify） | ✅（Justify 回退为 Left） |
+| `display` | `Display` | 显示类型（Block/Inline/InlineBlock/None） | ✅ |
 | `margin_top_pt` | `f32` | 上边距（pt） | ✅ |
 | `margin_bottom_pt` | `f32` | 下边距（pt） | ✅ |
-| `text_align` | `TextAlign` | 对齐方式（Left/Center/Right/Justify） | ✅（Justify 回退为 Left） |
-| `display` | `Display` | 显示类型（Block/Inline/InlineBlock） | ✅ |
-| `width` | `Option<f32>` | 显式宽度（pt） | ✅（图片使用） |
+| `margin_left_pt` | `f32` | 左边距（pt） | ✅ |
+| `margin_right_pt` | `f32` | 右边距（pt） | ✅ |
+| `padding_top_pt` | `f32` | 上内边距（pt） | ✅ |
+| `padding_bottom_pt` | `f32` | 下内边距（pt） | ✅ |
+| `padding_left_pt` | `f32` | 左内边距（pt） | ✅ |
+| `padding_right_pt` | `f32` | 右内边距（pt） | ✅ |
+| `width` | `Option<f32>` | 显式宽度（pt） | ✅ |
+| `height` | `Option<f32>` | 显式高度（pt） | ✅ |
 | `object_fit` | `ObjectFit` | 图片适应方式（Contain/Cover/Fill/None） | ✅ |
+| `background_color` | `Option<Color>` | 背景色 | ✅ |
+| `page_break_before` | `PageBreak` | 分页前控制（Auto/Always/Avoid/Left/Right） | ✅ |
+| `page_break_after` | `PageBreak` | 分页后控制（Auto/Always/Avoid/Left/Right） | ✅ |
 | `table_border_color` | `Color` | 表格边框颜色 | ✅ |
 | `table_border_width_pt` | `f32` | 表格边框宽度（pt） | ✅ |
 | `table_cell_padding_h_pt` | `f32` | 单元格水平内边距（pt） | ✅ |
@@ -113,24 +124,124 @@ LiePress 是一个 Rust 实现的 Markdown 到多格式文档生成器，支持�
 | `table_header_bg` | `Option<Color>` | 表头背景色 | ✅ |
 | `table_alt_row_bg` | `Option<Color>` | 交替行背景色 | ✅ |
 | `link_url` | `Option<String>` | 链接 URL | ✅ |
+| `list_indent_pt` | `Option<f32>` | 列表缩进（pt，None 表示使用 2em 默认值） | ✅ |
 
-#### 1.4 样式预设 ([src/ast/presets.rs](../src/ast/presets.rs))
+#### 1.4 内置样式表 ([src/ast/presets.rs](../src/ast/presets.rs))
 
-| 预设函数 | 字体 | 字号 | 特殊样式 |
-|---------|------|------|---------|
-| `paragraph_style()` | serif | 10.5pt | 默认正文 |
-| `heading_style(level)` | serif | 24~10.5pt | 逐级递减，粗体 |
-| `code_style()` | monospace | 9pt | 深灰文字 #333 |
-| `image_style()` | serif | 10.5pt | ObjectFit::Contain |
-| `list_item_style()` | serif | 10.5pt | 较小下边距 4pt |
-| `list_marker_style()` | serif | 10.5pt | 右对齐，Inline |
-| `unordered_list_style()` | serif | 10.5pt | 列表容器 |
-| `ordered_list_style()` | serif | 10.5pt | 列表容器 |
-| `inline_code_style()` | monospace | 10.5pt | 深灰文字 #333，Inline |
-| `link_style()` | serif | 10.5pt | 蓝色 #0000FF，Inline |
-| `blockquote_style()` | serif | 10.5pt | 上下边距 12pt |
-| `table_style()` | serif | 10.5pt | 表头浅灰背景 #F0F0F0，交替行 #F8F8F8 |
-| `thematic_break_style()` | serif | 10.5pt | 大上下边距 18pt |
+内置默认 CSS（`DEFAULT_CSS` 常量），使用标准 CSS 语法定义。用户可通过 `<style>` 标签或 `ConvertOptions` 覆盖。
+
+| 选择器 | 属性 | 说明 |
+|--------|------|------|
+| `body` | `font-family: serif; font-size: 10.5pt; line-height: 1.5; color: #000` | 根容器，通过 CSS 继承影响所有元素 |
+| `h1`~`h6` | `font-family: serif; font-weight: bold;` `font-size: 24pt~10.5pt` | 逐级递减，粗体 |
+| `p` | `margin-top: 0; margin-bottom: 12pt` | 段落 |
+| `ul`, `ol` | `margin-top: 6pt; margin-bottom: 6pt` | 列表容器 |
+| `li` | `margin-top: 0; margin-bottom: 4pt` | 列表项 |
+| `pre` | `font-family: monospace; font-size: 9pt; background-color: #F5F5F5` | 代码块，灰色背景 |
+| `blockquote` | `margin-top: 12pt; margin-bottom: 12pt` | 引用块 |
+| `hr` | `margin-top: 18pt; margin-bottom: 18pt` | 分隔线 |
+| `table` | `border-collapse: collapse; font-size: 10pt` | 表格 |
+| `th` | `font-weight: bold; background-color: #F0F0F0` | 表头 |
+| `tr:nth-child(even)` | `background-color: #F8F8F8` | 交替行 |
+| `code` | `font-family: monospace; color: #333` | 行内代码 |
+| `a` | `color: #0000FF; font-style: italic` | 超链接（蓝色斜体） |
+| `strong` | `font-weight: bold` | 粗体 |
+| `em` | `font-style: italic` | 斜体 |
+| `span` | `display: inline` | 普通文本 |
+
+`list_marker_style()` 函数保留为硬编码（标记是自动生成的布局元素，不由 CSS 系统控制）。
+
+#### 1.5 CSS 样式解析 ([src/ast/css.rs](../src/ast/css.rs))
+
+实现轻量级 CSS 解析器，支持 CSS 核心子集：
+
+**选择器支持**：
+| 类型 | 示例 | 特异性 | 说明 |
+|------|------|--------|------|
+| 通用选择器 | `*` | 0 | 匹配所有元素 |
+| 标签选择器 | `h1`, `p`, `table` | 1 | 按标签名匹配 |
+| 类选择器 | `.title` | 10 | 按类名匹配 |
+| 后代组合器 | `blockquote p` | 总和 | 空格分隔的祖先链匹配 |
+
+**属性支持**：`font-family`、`font-size`、`font-weight`、`font-style`、`color`、`line-height`、`text-align`、`display`、`margin-*`、`padding-*`、`width`、`height`、`background-color`、`object-fit`、`page-break-before/after`、`letter-spacing`、表格属性、`list-indent`
+
+**长度单位**：`pt`、`px`、`em`（相对父元素字号）、`%`（相对父元素字号）
+
+**值解析**：
+- 颜色：`#RGB`、`#RRGGBB`、`rgb(r,g,b)`、命名颜色（20+ CSS 标准色名）
+- `auto`：移除显式宽/高，回退到自动计算
+- 无单位数字解析为 `pt`
+
+**StyleResolver**（[css.rs](file:///d:/code/rust/liepress/src/ast/css.rs#L870-L935)）：
+- 合并内置 CSS + 用户 CSS + `<style>` 内联 CSS
+- CSS 特异性排序：低优先级先应用，高优先级覆盖
+- 严格模式（`strict: true`）：CSS 解析失败时返回 `CssParseError`
+- 非严格模式（默认）：静默忽略错误，沿用已有有效样式
+
+**样式解析流程**：
+```
+build_node(node, resolver, ancestor_tags, parent_style)
+    │
+    ▼
+Style::inherit_from(parent_style) → 拷贝可继承属性
+    │
+    ▼
+收集所有匹配选择器的规则 + 计算特异性
+    │
+    ▼
+按特异性升序排序 → 依次 apply_declaration 覆盖
+    │
+    ▼
+返回最终的 Style
+```
+
+#### 1.6 Markdown `<style>` 标签提取 ([src/ast/mod.rs](../src/ast/mod.rs))
+
+自动从 Markdown 的 `<style>` HTML 块中提取 CSS 内容：
+
+- 递归搜索 MDAST 树中的 `Node::Html` 节点
+- 提取 `<style>...</style>` 之间的文本
+- 支持 HTML 属性（如 `<style>`, `<style type="text/css">`）
+- 提取的 CSS 优先级最高（用户 CSS > `<style>` CSS > 内置 CSS）
+- 在 `parse_markdown_with_css` 函数中自动完成合并
+
+**示例**：
+```markdown
+<style>
+body { font-family: "Noto Sans SC", serif; }
+h1 { color: #c00; }
+</style>
+
+# 标题会继承 body 的字体
+段落也会使用 Noto Sans SC 字体。
+```
+
+**继承模型**：
+- 可继承属性（CSS 标准）：`font-family`、`font-size`、`font-weight`、`font-style`、`color`、`line-height`、`letter-spacing`、`text-align`、`page-break-*`、`table-*`
+- 不可继承属性：`margin-*`、`padding-*`、`display`、`width`、`height`、`background-color`、`object-fit`
+- `body` 上设置的 `font-family` 会自动传递到所有未显式设置字体的元素（`code`/`pre` 等设置了 `monospace` 的除外）
+
+#### 1.7 页面设置 (@page)
+
+通过 `@page` at-rule 可配置页面尺寸和页边距。
+
+支持的属性：
+- `margin-top`, `margin-bottom`, `margin-left`, `margin-right`：页边距（pt/px/in/cm 等绝对单位）
+- `margin`：简写，支持 1~4 个值（同 CSS 标准）
+- `size`：页面尺寸，支持命名值（`A4`, `Letter`）或两个长度值（宽 高）
+
+示例：
+```css
+@page {
+    margin: 36pt 54pt;
+    size: A4;
+}
+```
+
+优先级规则：
+1. `markdown_to_document_with_settings()` 传入的 `PageSettings` 覆盖一切
+2. CSS 中的 `@page` 规则（来自用户 CSS 或 Markdown `<style>`）
+3. 内置默认（常量 `PAGE_MARGIN_*_PT` 和 `PAGE_*_PT`）
 
 ### 2. Generator 模块 (`src/generator/`)
 
@@ -444,16 +555,102 @@ render_page() → 为每个区域创建 LinkAnnotation + Action(URI)
 命令行接口，基于 clap。
 
 ```bash
-liepress --input input.md -o output.pdf
-liepress --input input.md -o output.svg
-liepress --input input.md -o output.png
+# 基本用法
+liepress -i input.md -o output.pdf
+liepress -i input.md -o output.svg
+liepress -i input.md -o output.png
+
+# 使用自定义 CSS 覆盖样式
+liepress -i input.md -o output.pdf -s my-style.css
+
+# 严格模式（CSS 解析错误时直接报错）
+liepress -i input.md -o output.pdf -S
+
+# 指定输出格式
+liepress -i input.md -o output.png -f png
 ```
+
+**参数说明**：
+
+| 参数 | 缩写 | 说明 |
+|------|------|------|
+| `--input <FILE>` | `-i` | 输入 Markdown 文件路径 |
+| `--output <FILE>` | `-o` | 输出文件路径 |
+| `--format <FORMAT>` | `-f` | 输出格式：`pdf`（默认）、`svg`、`png` |
+| `--style <CSS_FILE>` | `-s` | 可选 CSS 样式表文件，覆盖默认样式 |
+| `--strict` | `-S` | 严格模式：CSS 解析失败时直接报错（默认关闭） |
 
 ### 8. 常量定义 ([src/generator/constants.rs](../src/generator/constants.rs))
 
 - 页面尺寸: A4 (595.276 × 841.890 pt)
-- 默认边距: 上下 72pt，左右 90pt
+- 默认边距: 上下 36pt (0.5")，左右 54pt (0.75")
 - 默认 DPI: 72
+
+### 9. 库 API ([src/lib.rs](../src/lib.rs))
+
+#### 9.1 公共函数
+
+| 函数 | 说明 |
+|------|------|
+| `markdown_to_pdf(markdown)` | Markdown 字符串 → PDF 字节 |
+| `markdown_to_svg(markdown)` | Markdown 字符串 → SVG 字符串列表 |
+| `markdown_to_png(markdown)` | Markdown 字符串 → PNG 字节列表 |
+| `markdown_file_to_pdf(path)` | Markdown 文件 → PDF 字节 |
+| `markdown_file_to_svg(path)` | Markdown 文件 → SVG 字符串列表 |
+| `markdown_file_to_png(path)` | Markdown 文件 → PNG 字节列表 |
+| `markdown_to_pdf_with_options(md, opts)` | 带配置的 PDF 转换 |
+| `markdown_to_svg_with_options(md, opts)` | 带配置的 SVG 转换 |
+| `markdown_to_png_with_options(md, opts)` | 带配置的 PNG 转换 |
+| `markdown_file_to_pdf_with_options(path, opts)` | 文件 + 配置 PDF 转换 |
+| `markdown_file_to_svg_with_options(path, opts)` | 文件 + 配置 SVG 转换 |
+| `markdown_file_to_png_with_options(path, opts)` | 文件 + 配置 PNG 转换 |
+
+#### 9.2 ConvertOptions ([src/lib.rs](../src/lib.rs))
+
+配置结构体，支持 builder 风格链式调用：
+
+```rust
+use liepress::ConvertOptions;
+use std::path::PathBuf;
+
+let opts = ConvertOptions::new()
+    .with_font_family(&["Noto Sans SC", "sans-serif"])
+    .with_css("h1 { color: red; }")
+    .with_css_file(PathBuf::from("style.css"))
+    .with_strict(true);
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `font_family` | `Vec<String>` | `[]` | 全局默认字体家族列表，自动生成 `body { font-family: ... }` 通过继承应用到所有元素 |
+| `user_css` | `String` | `""` | 用户 CSS 样式字符串，叠加在默认样式之上 |
+| `css_file` | `Option<PathBuf>` | `None` | 用户 CSS 样式文件路径，与 `user_css` 合并 |
+| `strict` | `bool` | `false` | 严格模式：CSS 解析失败时返回错误 |
+
+**优先级（从低到高）**：
+1. 内置默认 CSS（`DEFAULT_CSS`）
+2. `ConvertOptions.font_family`（自动生成 `body { font-family }`）
+3. `ConvertOptions.user_css`
+4. `ConvertOptions.css_file`
+5. Markdown 内联 `<style>` 标签
+
+#### 9.3 错误处理 ([src/error.rs](../src/error.rs))
+
+```rust
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub enum Error {
+    VisualElementError(String),
+    FontLoadError(String),
+    LayoutError(String),
+    CssParseError(String),
+    IoError(std::io::Error),  // 自动转换
+}
+```
+
+使用 `thiserror` 派生宏。`IoError` 通过 `#[from]` 支持 `?` 自动转换。
 
 ## 特性支持状态
 
@@ -466,7 +663,7 @@ liepress --input input.md -o output.png
 | 粗体 | ✅ | 字体加粗 |
 | 斜体 | ✅ | 字体倾斜 |
 | 行内代码 | ✅ | 等宽字体 |
-| 超链接 | ✅ | 蓝色文本，PDF 可点击注释 |
+| 超链接 | ✅ | 蓝色斜体，PDF 可点击注释 |
 | 图片 | ✅ | 自适应缩放，支持标题 |
 | 无序列表 | ✅ | 支持嵌套 |
 | 有序列表 | ✅ | 自动编号，支持嵌套 |
@@ -474,6 +671,9 @@ liepress --input input.md -o output.png
 | 引用块 | ✅ | 左侧色块标记 |
 | 分隔线 | ✅ | 居中水平线 |
 | 表格 | ✅ | 列宽自适应，跨页分割 |
+| CSS 自定义样式 | ✅ | 内置样式表 + 用户 CSS 覆盖 + `<style>` 标签 |
+| 字体配置 | ✅ | 通过 `body { font-family }` CSS 继承或 `ConvertOptions.font_family` |
+| 严格模式 | ✅ | CLI `--strict` 参数或 `ConvertOptions.strict` |
 | 删除线 | ⚠️ | NodeKind 已定义，样式未渲染 |
 | 任务列表 | ❌ | 未实现 |
 | 脚注 | ❌ | 未实现 |
@@ -485,20 +685,33 @@ liepress --input input.md -o output.png
 
 | 属性 | 状态 | 说明 |
 |------|------|------|
-| 字体家族 | ✅ | 支持 fallback 列表，CSS 通用家族关键字 |
-| 字号 | ✅ | pt 单位 |
-| 字重 | ✅ | Normal/Bold + 完整 100-900 |
+| 字体家族 | ✅ | 支持 fallback 列表，CSS 通用家族关键字，引号支持 |
+| 字号 | ✅ | pt 单位，支持 em/% 相对值 |
+| 字重 | ✅ | Normal/Bold + CSS 数值 (100-900) |
 | 字体样式 | ✅ | Normal/Italic/Oblique |
-| 颜色 | ✅ | RGBA |
-| 行高 | ✅ | pt 单位 |
-| 边距 | ✅ | 上下边距 |
+| 颜色 | ✅ | #RGB、#RRGGBB、rgb()、命名颜色 |
+| 行高 | ✅ | pt/em/无单位倍数 |
 | 文本对齐 | ✅ | 左/中/右（两端对齐回退为左对齐） |
-| 显示类型 | ✅ | Block/Inline/InlineBlock |
+| 显示类型 | ✅ | Block/Inline/InlineBlock/None |
+| 上边距 | ✅ | pt/px/em/% |
+| 下边距 | ✅ | pt/px/em/% |
+| 左边距 | ✅ | pt/px/em/% |
+| 右边距 | ✅ | pt/px/em/% |
+| 上内边距 | ✅ | pt/px/em/% |
+| 下内边距 | ✅ | pt/px/em/% |
+| 左内边距 | ✅ | pt/px/em/% |
+| 右内边距 | ✅ | pt/px/em/% |
+| 宽/高 | ✅ | pt/px/em/%, auto |
+| 背景色 | ✅ | 所有颜色格式均支持 |
+| 字间距 | ✅ | pt/px/em/% |
+| 分页前控制 | ✅ | auto/always/avoid/left/right |
+| 分页后控制 | ✅ | auto/always/avoid/left/right |
 | 表格边框 | ✅ | 颜色、宽度 |
-| 单元格填充 | ✅ | 水平/垂直 |
+| 单元格填充 | ✅ | 水平/垂直分别可配置 |
 | 表头背景 | ✅ | 可配置颜色 |
 | 交替行背景 | ✅ | 可配置颜色 |
 | 图片适应 | ✅ | Contain/Cover/Fill/None |
+| 列表缩进 | ✅ | 支持 CSS `list-indent` 属性自定义，默认 2em |
 | 删除线样式 | ❌ | 未实现 |
 
 ### 布局功能
@@ -509,7 +722,7 @@ liepress --input input.md -o output.png
 | 自定义页面尺寸 | ✅ | 通过 PageSettings |
 | 自定义边距 | ✅ | 通过 PageSettings |
 | 自动分页 | ✅ | 行级分页，确保行完整 |
-| 列表缩进 | ✅ | 基于字体大小动态计算 |
+| 列表缩进 | ✅ | 基于字体大小 2em 动态计算，支持 CSS `list-indent` 自定义 |
 | 有序列表起始编号 | ✅ | 支持 start 属性 |
 | 图片缩放 | ✅ | 多策略：原始/适配宽度/适配页面 |
 | 图片标题 | ✅ | 使用 alt 文本，灰色小字 |
@@ -580,6 +793,16 @@ liepress --input input.md -o output.png
 - 字形坐标在线性变换后无需调整
 - 分页时只需更新 bounds
 
+### 7. CSS 继承机制
+
+**决策**: 使用 `body` 作为根元素，通过 `Style::inherit_from()` 实现 CSS 标准继承。
+
+**理由**:
+- 用户只需在 `<style>body { font-family: ... }</style>` 中配置一次，所有元素自动继承
+- 与 Web CSS 行为一致，降低学习成本
+- 显式设置（如 `pre { font-family: monospace }`）自然覆盖继承值
+- 支持 `ConvertOptions.font_family` 作为编程式快捷方式，无需手写 CSS
+
 ## 扩展指南
 
 ### 添加新的 NodeKind
@@ -599,7 +822,26 @@ liepress --input input.md -o output.png
 
 ### 自定义样式
 
-通过修改 `presets.rs` 中的样式函数，或在未来支持外部主题文件。
+通过 CSS 覆盖机制提供三种方式：
+
+1. **Markdown 中 `<style>` 标签**：最便捷，直接在文档头部写 CSS 规则
+   ```markdown
+   <style>
+   body { font-family: "Noto Sans SC", serif; }
+   h1 { color: #c00; border-bottom: 1px solid #ccc; }
+   </style>
+   ```
+
+2. **外部 CSS 文件**：通过 CLI `-s` 参数或 `ConvertOptions.css_file` 指定
+   ```bash
+   liepress -i input.md -o output.pdf -s my-theme.css
+   ```
+
+3. **`ConvertOptions.font_family`**：编程式快捷设置全局字体，自动注入 CSS
+
+**优先级**（从低到高）：内置 CSS → `font_family` → `user_css` → `css_file` → Markdown `<style>`
+
+**继承**：在 `body` 上设置的字体、颜色等可继承属性会自动应用到所有未显式覆盖的元素。
 
 ## 测试策略
 
@@ -639,6 +881,7 @@ liepress --input input.md -o output.png
 | vello_cpu | 2D 图形渲染 | 最新 |
 | image | 图片解码 | 最新 |
 | clap | CLI 参数解析 | 最新 |
+| thiserror | 错误类型派生 | 最新 |
 | lopdf | 测试中 PDF 解析和验证 | 最新 |
 
 ## 未来方向
@@ -654,10 +897,10 @@ liepress --input input.md -o output.png
 ### 中期
 
 6. **主题系统**: 外部主题文件（YAML/TOML）支持
-7. **自定义字体**: 改进字体注册 API，支持按文档配置
-8. **页眉页脚**: 支持页码、标题、日期等
-9. **目录生成**: 自动生成 Table of Contents
-10. **图片对齐**: 支持 float、居中、环绕等布局
+7. **页眉页脚**: 支持页码、标题、日期等
+8. **目录生成**: 自动生成 Table of Contents
+9. **图片对齐**: 支持 float、居中、环绕等布局
+10. **自定义字体注册**: 改进字体注册 API，支持按文档配置字体文件
 
 ### 长期
 

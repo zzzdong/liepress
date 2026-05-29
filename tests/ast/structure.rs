@@ -5,7 +5,7 @@ use liepress::ast::{parse_markdown, NodeKind};
 #[test]
 fn test_parse_unordered_list() {
     let md = "- Item 1\n- Item 2\n- Item 3";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -25,7 +25,7 @@ fn test_parse_unordered_list() {
 #[test]
 fn test_parse_ordered_list() {
     let md = "1. First\n2. Second\n3. Third";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -43,7 +43,7 @@ fn test_parse_ordered_list() {
 #[test]
 fn test_parse_nested_list() {
     let md = "- Item 1\n  - Sub 1\n  - Sub 2\n- Item 2";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -68,7 +68,7 @@ fn test_parse_nested_list() {
 #[test]
 fn test_parse_code_block() {
     let md = "```rust\nfn main() {}\n```";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -88,7 +88,7 @@ fn test_parse_code_block() {
 #[test]
 fn test_parse_codeblock_without_lang() {
     let md = "```\nsome code\n```";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -107,7 +107,7 @@ fn test_parse_codeblock_without_lang() {
 #[test]
 fn test_parse_blockquote() {
     let md = "> This is a quote";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -126,7 +126,7 @@ fn test_parse_blockquote() {
 #[test]
 fn test_parse_thematic_break() {
     let md = "---";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -143,7 +143,7 @@ fn test_parse_thematic_break() {
 #[test]
 fn test_parse_inline_formatting() {
     let md = "**bold** and *italic* and `code`";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -162,7 +162,7 @@ fn test_parse_inline_formatting() {
 #[test]
 fn test_parse_link() {
     let md = "[link text](https://example.com)";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -185,7 +185,7 @@ fn test_parse_link() {
 #[test]
 fn test_parse_image() {
     let md = "![alt text](image.png)";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {

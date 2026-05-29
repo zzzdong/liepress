@@ -3,11 +3,12 @@
 //! 将 MDAST 节点转换为简化的、带样式的 Node。
 //! 设计目标：
 //! - 简化节点类型（heading、paragraph 等都可表示为带样式的文本块）
-//! - 每个节点携带 ComputedStyle，包含布局所需的所有样式信息
-//! - 添加布局相关属性（如是否可分割）
+//! - 每个节点携带 Style，包含布局所需的所有样式信息
+//! - 样式来源：CSS 样式表解析（内置 + 用户覆盖）
 
 use markdown::mdast;
 
+use super::css::*;
 use super::presets::*;
 use super::style::*;
 
@@ -47,7 +48,7 @@ impl Node {
 /// 相比 MDAST，此枚举做了以下简化：
 /// 1. 合并了语义上相似的节点（如 Heading 和 Paragraph 都是文本容器）
 /// 2. 保留了布局引擎需要的类型信息
-/// 3. 每个节点通过 ComputedStyle 区分视觉表现
+/// 3. 每个节点通过 Style 区分视觉表现
 #[derive(Debug, Clone)]
 pub enum NodeKind {
     /// 文档根节点
@@ -58,13 +59,12 @@ pub enum NodeKind {
     Heading { level: u8, children: Vec<Node> },
 
     /// 段落
-    /// 最基本的文本块，可分割
     Paragraph { children: Vec<Node> },
 
     /// 列表
     List {
         ordered: bool,
-        start: Option<u32>, // 有序列表的起始编号
+        start: Option<u32>,
         children: Vec<Node>,
     },
 
@@ -72,7 +72,6 @@ pub enum NodeKind {
     ListItem { children: Vec<Node> },
 
     /// 图片
-    /// 不可分割，必须完整显示
     Image {
         src: String,
         alt: String,
@@ -80,7 +79,6 @@ pub enum NodeKind {
     },
 
     /// 代码块
-    /// 通常不可分割，保持完整
     CodeBlock { code: String, lang: Option<String> },
 
     /// 引用块
@@ -91,12 +89,12 @@ pub enum NodeKind {
 
     /// 表格
     Table {
-        children: Vec<Node>,   // TableRow 节点列表
-        align: Vec<TextAlign>, // 每列对齐方式
+        children: Vec<Node>,
+        align: Vec<TextAlign>,
     },
 
     /// 表格行
-    TableRow { children: Vec<Node> }, // TableCell/Paragraph 节点列表
+    TableRow { children: Vec<Node> },
 
     // ── 内联节点 ──
     /// 纯文本（叶节点）
@@ -127,14 +125,10 @@ impl NodeKind {
     pub fn text_content(&self) -> String {
         match self {
             NodeKind::Text { text } => text.clone(),
-            NodeKind::Strong { children } => {
-                let mut s = String::new();
-                for child in children {
-                    s.push_str(&child.text_content());
-                }
-                s
-            }
-            NodeKind::Emphasis { children } => {
+            NodeKind::Strong { children }
+            | NodeKind::Emphasis { children }
+            | NodeKind::Link { children, .. }
+            | NodeKind::Delete { children } => {
                 let mut s = String::new();
                 for child in children {
                     s.push_str(&child.text_content());
@@ -142,49 +136,11 @@ impl NodeKind {
                 s
             }
             NodeKind::InlineCode { code } => code.clone(),
-            NodeKind::Link { children, .. } => {
-                let mut s = String::new();
-                for child in children {
-                    s.push_str(&child.text_content());
-                }
-                s
-            }
-            NodeKind::Delete { children } => {
-                let mut s = String::new();
-                for child in children {
-                    s.push_str(&child.text_content());
-                }
-                s
-            }
-            NodeKind::Heading { children, .. } => {
-                let mut s = String::new();
-                for child in children {
-                    s.push_str(&child.text_content());
-                }
-                s
-            }
-            NodeKind::Paragraph { children } => {
-                let mut s = String::new();
-                for child in children {
-                    s.push_str(&child.text_content());
-                }
-                s
-            }
-            NodeKind::ListItem { children } => {
-                let mut s = String::new();
-                for child in children {
-                    s.push_str(&child.text_content());
-                }
-                s
-            }
-            NodeKind::Blockquote { children } => {
-                let mut s = String::new();
-                for child in children {
-                    s.push_str(&child.text_content());
-                }
-                s
-            }
-            NodeKind::TableRow { children } => {
+            NodeKind::Heading { children, .. }
+            | NodeKind::Paragraph { children }
+            | NodeKind::ListItem { children }
+            | NodeKind::Blockquote { children }
+            | NodeKind::TableRow { children } => {
                 let mut s = String::new();
                 for child in children {
                     s.push_str(&child.text_content());
@@ -196,69 +152,88 @@ impl NodeKind {
     }
 }
 
-// ─── MDAST → Node 转换 ───
+// ─── MDAST → Node 转换 ──────────────────────────────────────
 
 /// 将 MDAST 根节点转换为简化 Node 树
 ///
-/// 每个节点的样式由默认样式系统确定（后续可扩展为 CSS 匹配）
-pub fn build_ast(root: &mdast::Node) -> Node {
-    let root_style = paragraph_style(); // Root 使用正文样式作为默认
-    build_node(root, &root_style)
+/// 使用给定的样式解析器为每个节点解析样式。
+pub fn build_ast(root: &mdast::Node, resolver: &StyleResolver) -> Node {
+    build_node(root, resolver, &[], &Style::default())
 }
 
-fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
+fn build_node(
+    node: &mdast::Node,
+    resolver: &StyleResolver,
+    ancestor_tags: &[String],
+    parent_style: &Style,
+) -> Node {
     match node {
         mdast::Node::Root(root) => {
-            let style = paragraph_style();
+            let tag = "body";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = root
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::Document { children },
                 style,
-                false, // 根节点不可分割
+                false,
             )
         }
 
         mdast::Node::Paragraph(_para) => {
-            let style = paragraph_style();
-            let children = build_inline_children(&_para.children, &style);
+            let tag = "p";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
+            let children = build_inline_children(&_para.children, resolver, &new_ancestors, &style);
             Node::new(
                 NodeKind::Paragraph { children },
                 style,
-                true, // 段落可分割
+                true,
             )
         }
 
         mdast::Node::Heading(heading) => {
-            let style = heading_style(heading.depth);
-            let children = build_inline_children(&heading.children, &style);
+            let tag = match heading.depth {
+                1 => "h1", 2 => "h2", 3 => "h3",
+                4 => "h4", 5 => "h5", 6 => "h6",
+                _ => "h1",
+            };
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
+            let children = build_inline_children(&heading.children, resolver, &new_ancestors, &style);
             Node::new(
                 NodeKind::Heading {
                     level: heading.depth,
                     children,
                 },
                 style,
-                false, // 标题不可分割，保持完整
+                false,
             )
         }
 
         mdast::Node::Code(code) => {
-            let style = code_style();
+            let tag = "pre";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
             Node::new(
                 NodeKind::CodeBlock {
                     code: code.value.clone(),
                     lang: code.lang.clone(),
                 },
                 style,
-                false, // 代码块不可分割，保持完整
+                false,
             )
         }
 
         mdast::Node::Image(image) => {
-            let style = image_style();
+            let tag = "img";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
             Node::new(
                 NodeKind::Image {
                     src: image.url.clone(),
@@ -266,16 +241,19 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
                     title: image.title.clone(),
                 },
                 style,
-                false, // 图片不可分割
+                false,
             )
         }
 
         mdast::Node::List(list) => {
-            let style = list_item_style();
+            let tag = if list.ordered { "ol" } else { "ul" };
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = list
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::List {
@@ -284,49 +262,59 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
                     children,
                 },
                 style,
-                true, // 列表可分割（单个 item 可能跨页）
+                true,
             )
         }
 
         mdast::Node::ListItem(item) => {
-            let style = list_item_style();
+            let tag = "li";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = item
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::ListItem { children },
                 style,
-                true, // 列表项可分割
+                true,
             )
         }
 
         mdast::Node::Blockquote(blockquote) => {
-            let style = blockquote_style();
+            let tag = "blockquote";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = blockquote
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::Blockquote { children },
                 style,
-                true, // 引用块可分割
+                true,
             )
         }
 
         mdast::Node::ThematicBreak(_) => {
-            let style = thematic_break_style();
+            let tag = "hr";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
             Node::new(
                 NodeKind::ThematicBreak,
                 style,
-                false, // 分隔线不可分割
+                false,
             )
         }
 
         mdast::Node::Table(table) => {
-            let style = table_style();
+            let tag = "table";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let align: Vec<TextAlign> = table
                 .align
                 .iter()
@@ -340,36 +328,39 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
             let children: Vec<Node> = table
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::Table { children, align },
                 style,
-                false, // 表格不可分割
+                false,
             )
         }
 
         mdast::Node::TableRow(row) => {
-            let style = table_style();
+            let tag = "tr";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = row
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::TableRow { children },
                 style,
-                false, // 表格行不可分割
+                false,
             )
         }
 
         mdast::Node::TableCell(cell) => {
-            let style = table_style();
-            let children: Vec<Node> = cell
-                .children
-                .iter()
-                .map(|child| build_node(child, &style))
-                .collect();
+            // 表格单元格使用 td 标签，但样式与段落类似
+            let tag = "td";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
+            let children = build_inline_children(&cell.children, resolver, &new_ancestors, &style);
             Node::new(
                 NodeKind::Paragraph { children },
                 style,
@@ -379,69 +370,75 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
 
         // ── 内联节点 ──
         mdast::Node::Text(text) => {
-            let style = Style::inherit_from(parent_style);
+            let tag = "span";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
             Node::new(
                 NodeKind::Text {
                     text: text.value.clone(),
                 },
                 style,
-                true, // 内联文本可分割
+                true,
             )
         }
 
         mdast::Node::Strong(strong) => {
-            let mut style = Style::inherit_from(parent_style);
-            style.font_weight = FontWeight::Bold;
+            let tag = "strong";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = strong
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::Strong { children },
                 style,
-                true, // 内联元素可分割
+                true,
             )
         }
 
         mdast::Node::Emphasis(emph) => {
-            let mut style = Style::inherit_from(parent_style);
-            style.font_style = FontStyle::Italic;
+            let tag = "em";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = emph
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::Emphasis { children },
                 style,
-                true, // 内联元素可分割
+                true,
             )
         }
 
         mdast::Node::InlineCode(code) => {
-            let mut style = Style::inherit_from(parent_style);
-            let code_default = inline_code_style();
-            style.font_family = code_default.font_family;
-            style.color = code_default.color;
+            let tag = "code";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
             Node::new(
                 NodeKind::InlineCode {
                     code: code.value.clone(),
                 },
                 style,
-                true, // 行内代码可分割
+                true,
             )
         }
 
         mdast::Node::Link(link) => {
-            let mut style = Style::inherit_from(parent_style);
-            style.color = crate::visual::Color::new(0, 0, 255);
-            style.font_style = FontStyle::Italic;
+            let tag = "a";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            // 设置链接 URL（CSS 无法设置动态 URL，所以从 MDAST 中取）
+            let mut style = style;
             style.link_url = Some(link.url.clone());
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = link
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::Link {
@@ -450,25 +447,37 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
                     children,
                 },
                 style,
-                true, // 链接可分割
+                true,
             )
         }
 
         mdast::Node::Delete(del) => {
-            let style = Style::inherit_from(parent_style);
+            let tag = "del";
+            let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
+            let mut new_ancestors = ancestor_tags.to_vec();
+            new_ancestors.push(tag.to_string());
             let children: Vec<Node> = del
                 .children
                 .iter()
-                .map(|child| build_node(child, &style))
+                .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             Node::new(
                 NodeKind::Delete { children },
                 style,
-                true, // 删除线可分割
+                true,
             )
         }
 
-        // MDAST 中的其他节点类型暂不处理（如脚注、定义等）
+        // HTML 节点（用于提取 <style> CSS，不在输出中产生内容）
+        mdast::Node::Html(_) => Node::new(
+            NodeKind::Text {
+                text: String::new(),
+            },
+            Style::default(),
+            false,
+        ),
+
+        // MDAST 中的其他节点类型暂不处理
         _ => Node::new(
             NodeKind::Text {
                 text: String::new(),
@@ -480,10 +489,15 @@ fn build_node(node: &mdast::Node, parent_style: &Style) -> Node {
 }
 
 /// 构建内联子节点列表
-fn build_inline_children(children: &[mdast::Node], parent_style: &Style) -> Vec<Node> {
+fn build_inline_children(
+    children: &[mdast::Node],
+    resolver: &StyleResolver,
+    ancestor_tags: &[String],
+    parent_style: &Style,
+) -> Vec<Node> {
     children
         .iter()
-        .map(|child| build_node(child, parent_style))
+        .map(|child| build_node(child, resolver, ancestor_tags, parent_style))
         .collect()
 }
 

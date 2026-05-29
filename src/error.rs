@@ -12,6 +12,9 @@ pub enum Error {
     #[error("layout error: {0}")]
     LayoutError(String),
 
+    #[error("css parse error: {0}")]
+    CssParseError(String),
+
     #[error("io error: {0}")]
     IoError(#[from] std::io::Error),
 }

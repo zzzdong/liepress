@@ -14,7 +14,7 @@ pub use types::*;
 use markdown::mdast;
 use std::path::{Path, PathBuf};
 use vello_cpu::kurbo::{Point, Rect};
-use crate::ast::{self, Node, NodeKind, Style, LIST_INDENT_PT};
+use crate::ast::{self, Node, NodeKind, Style};
 use crate::text::{FONT_CONTEXT, LAYOUT_CONTEXT, TextAlign, TextStyle, layout_text_with_contexts};
 use crate::visual::{Color, VisualElement, FillStrokeStyle, StrokeStyle};
 use crate::generator::text::{collect_inline_segments, estimate_children_height, build_text_lines_rel, annotate_runs_with_urls, TextLineRel};
@@ -543,8 +543,9 @@ impl DocumentGenerator {
     // ─── 列表布局 ─────────────────────────────────────────────
 
     fn layout_list(&mut self, children: &[Node], ordered: bool, start: u32, style: &Style) {
-        // 使用基于字体大小的动态缩进（2 个空格宽度）
-        let indent = ast::calculate_list_indent(style.font_size_pt);
+        let indent = style
+            .list_indent_pt
+            .unwrap_or_else(|| ast::calculate_list_indent(style.font_size_pt));
         self.layout_list_with_indent(children, ordered, start, indent, style);
     }
 
@@ -828,7 +829,7 @@ impl DocumentGenerator {
                     children,
                     *child_ordered,
                     child_start.unwrap_or(1),
-                    indent + LIST_INDENT_PT,
+                    indent + ast::calculate_list_indent(style.font_size_pt),
                     style,
                 );
             }
@@ -1107,26 +1108,64 @@ fn shift_element(element: VisualElement, dx: f64, dy: f64) -> VisualElement {
 
 // ─── Markdown 转 Document ───────────────────────────────────────
 
+/// 使用内置默认样式将 Markdown 转换为 Document
 pub fn markdown_to_document(markdown: &str) -> Document {
     markdown_to_document_with_base_dir(markdown, None)
 }
 
+/// 使用内置默认样式和基础路径将 Markdown 转换为 Document
 pub fn markdown_to_document_with_base_dir(markdown: &str, base_dir: Option<PathBuf>) -> Document {
-    let ast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
-        mdast::Node::Root(mdast::Root {
-            children: Vec::new(),
-            position: None,
-        })
-    });
-
-    let styled_root = ast::build_ast(&ast);
+    let styled_root = crate::ast::parse_markdown(markdown)
+        .unwrap_or_else(|_| crate::ast::Node::new(
+            crate::ast::NodeKind::Document { children: vec![] },
+            crate::ast::Style::default(),
+            false,
+        ));
 
     let mut generator = DocumentGenerator::new();
     if let Some(dir) = base_dir {
         generator = generator.with_base_dir(dir);
     }
 
-    if let ast::NodeKind::Document { children } = &styled_root.kind {
+    if let crate::ast::NodeKind::Document { children } = &styled_root.kind {
+        for child in children {
+            generator.layout_node(child);
+        }
+    }
+
+    generator.finish()
+}
+
+/// 使用自定义 CSS 将 Markdown 转换为 Document
+pub fn markdown_to_document_with_css(markdown: &str, user_css: &str) -> Document {
+    markdown_to_document_with_css_and_base_dir(markdown, user_css, None)
+}
+
+/// 使用自定义 CSS 和基础路径将 Markdown 转换为 Document
+pub fn markdown_to_document_with_css_and_base_dir(
+    markdown: &str,
+    user_css: &str,
+    base_dir: Option<PathBuf>,
+) -> Document {
+    let (styled_root, page_config) = match crate::ast::parse_markdown_with_css(markdown, user_css) {
+        Ok((node, config)) => (node, config),
+        Err(_) => (
+            crate::ast::Node::new(
+                crate::ast::NodeKind::Document { children: vec![] },
+                crate::ast::Style::default(),
+                false,
+            ),
+            crate::ast::PageConfig::default(),
+        ),
+    };
+
+    let settings = PageSettings::from(page_config);
+    let mut generator = DocumentGenerator::with_settings(settings);
+    if let Some(dir) = base_dir {
+        generator = generator.with_base_dir(dir);
+    }
+
+    if let crate::ast::NodeKind::Document { children } = &styled_root.kind {
         for child in children {
             generator.layout_node(child);
         }
@@ -1146,25 +1185,52 @@ pub fn markdown_to_document_with_settings_and_base_dir(
     settings: PageSettings,
     base_dir: Option<PathBuf>,
 ) -> Document {
-    let ast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
-        mdast::Node::Root(mdast::Root {
-            children: Vec::new(),
-            position: None,
-        })
-    });
-
-    let styled_root = ast::build_ast(&ast);
+    let styled_root = crate::ast::parse_markdown(markdown)
+        .unwrap_or_else(|_| crate::ast::Node::new(
+            crate::ast::NodeKind::Document { children: vec![] },
+            crate::ast::Style::default(),
+            false,
+        ));
 
     let mut generator = DocumentGenerator::with_settings(settings);
     if let Some(dir) = base_dir {
         generator = generator.with_base_dir(dir);
     }
 
-    if let ast::NodeKind::Document { children } = &styled_root.kind {
+    if let crate::ast::NodeKind::Document { children } = &styled_root.kind {
         for child in children {
             generator.layout_node(child);
         }
     }
 
     generator.finish()
+}
+
+/// 使用自定义 CSS 将 Markdown 转换为 Document（严格模式）
+///
+/// 与 `markdown_to_document_with_css` 不同，此函数在 CSS 解析失败时返回错误。
+pub fn markdown_to_document_with_css_strict(markdown: &str, user_css: &str) -> Result<Document, String> {
+    markdown_to_document_with_css_and_base_dir_strict(markdown, user_css, None)
+}
+
+/// 使用自定义 CSS 和基础路径将 Markdown 转换为 Document（严格模式）
+pub fn markdown_to_document_with_css_and_base_dir_strict(
+    markdown: &str,
+    user_css: &str,
+    base_dir: Option<PathBuf>,
+) -> Result<Document, String> {
+    let (styled_root, page_config) = crate::ast::parse_markdown_with_css_strict(markdown, user_css)?;
+    let settings = PageSettings::from(page_config);
+    let mut generator = DocumentGenerator::with_settings(settings);
+    if let Some(dir) = base_dir {
+        generator = generator.with_base_dir(dir);
+    }
+
+    if let crate::ast::NodeKind::Document { children } = &styled_root.kind {
+        for child in children {
+            generator.layout_node(child);
+        }
+    }
+
+    Ok(generator.finish())
 }

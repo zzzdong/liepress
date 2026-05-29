@@ -8,6 +8,7 @@ use crate::generator::constants::{
     PAGE_MARGIN_TOP_PT, PAGE_MARGIN_BOTTOM_PT,
     PAGE_MARGIN_LEFT_PT, PAGE_MARGIN_RIGHT_PT,
 };
+use crate::ast::PageConfig;
 
 /// 页面设置 - 可配置的页面尺寸和边距
 #[derive(Debug, Clone, Copy)]
@@ -75,6 +76,19 @@ impl PageSettings {
     /// 内容区高度
     pub fn content_height(&self) -> f32 {
         self.height_pt - self.margin_top_pt - self.margin_bottom_pt
+    }
+}
+
+impl From<PageConfig> for PageSettings {
+    fn from(config: PageConfig) -> Self {
+        Self {
+            width_pt: config.width.unwrap_or(PAGE_WIDTH_PT),
+            height_pt: config.height.unwrap_or(PAGE_HEIGHT_PT),
+            margin_top_pt: config.margin_top.unwrap_or(PAGE_MARGIN_TOP_PT),
+            margin_bottom_pt: config.margin_bottom.unwrap_or(PAGE_MARGIN_BOTTOM_PT),
+            margin_left_pt: config.margin_left.unwrap_or(PAGE_MARGIN_LEFT_PT),
+            margin_right_pt: config.margin_right.unwrap_or(PAGE_MARGIN_RIGHT_PT),
+        }
     }
 }
 

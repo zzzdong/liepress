@@ -5,7 +5,7 @@ use liepress::ast::{parse_markdown, NodeKind};
 #[test]
 fn test_parse_simple_paragraph() {
     let md = "Hello, world!";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -30,7 +30,7 @@ fn test_parse_simple_paragraph() {
 #[test]
 fn test_parse_heading() {
     let md = "# Heading 1\n\n## Heading 2";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -57,7 +57,7 @@ fn test_parse_heading() {
 #[test]
 fn test_parse_all_heading_levels() {
     let md = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -78,7 +78,7 @@ fn test_parse_all_heading_levels() {
 #[test]
 fn test_parse_empty_document() {
     let md = "";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
@@ -91,7 +91,7 @@ fn test_parse_empty_document() {
 #[test]
 fn test_parse_multiple_paragraphs() {
     let md = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
-    let node = parse_markdown(md);
+    let node = parse_markdown(md).unwrap();
 
     match &node.kind {
         NodeKind::Document { children } => {
