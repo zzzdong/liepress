@@ -463,10 +463,10 @@ impl PageRenderer for PdfRenderer<'_, '_> {
         use krilla::image::Image;
 
         let image = match format.to_lowercase().as_str() {
-            "png" => Image::from_png(krilla::Data::from(data.to_vec()), false),
-            "jpeg" | "jpg" => Image::from_jpeg(krilla::Data::from(data.to_vec()), false),
-            "gif" => Image::from_gif(krilla::Data::from(data.to_vec()), false),
-            "webp" => Image::from_webp(krilla::Data::from(data.to_vec()), false),
+            "png" => Image::from_png(krilla::Data::from(data.to_vec()), true),
+            "jpeg" | "jpg" => Image::from_jpeg(krilla::Data::from(data.to_vec()), true),
+            "gif" => Image::from_gif(krilla::Data::from(data.to_vec()), true),
+            "webp" => Image::from_webp(krilla::Data::from(data.to_vec()), true),
             _ => return,
         };
 

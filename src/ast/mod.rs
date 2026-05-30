@@ -176,11 +176,10 @@ fn extract_style_css(node: &mdast::Node) -> String {
 
 /// 递归收集所有 <style> 标签内的 CSS
 fn collect_style_css(node: &mdast::Node, css_parts: &mut Vec<String>) {
-    if let mdast::Node::Html(html) = node {
-        if let Some(css) = extract_style_text(&html.value) {
+    if let mdast::Node::Html(html) = node
+        && let Some(css) = extract_style_text(&html.value) {
             css_parts.push(css);
         }
-    }
 
     if let Some(children) = mdast_children(node) {
         for child in children {

@@ -9,18 +9,29 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use vello_cpu::kurbo::Rect;
 
-
-/// 文本布局包装类型
-pub type TextLayout = parley::Layout<Color>;
+/// 文本布局 - 包含排版后的行集合
+///
+/// 由 [`layout_text`] / [`layout_text_with_contexts`] 生成。
+/// TextLayout 中的坐标全部相对 layout 原点（段落左上角），
+/// 分页和绝对定位由 generator 模块负责。
+#[derive(Clone, Debug)]
+pub struct TextLayout {
+    /// 排版后的所有行
+    pub lines: Vec<TextLine>,
+    /// 布局总宽度（pt）
+    pub width: f64,
+    /// 布局总高度（pt）
+    pub height: f64,
+}
 
 /// 字形信息 - 与 parley 的 Glyph 一一对应
 #[derive(Clone, Debug)]
 pub struct Glyph {
     /// 字形 ID
     pub id: u32,
-    /// X 坐标（相对 VisualElement::TextRun.position 的偏移）
+    /// X 坐标（相对所属 TextLine.bounds.origin 的偏移）
     pub x: f32,
-    /// Y 坐标（相对 VisualElement::TextRun.position 的偏移）
+    /// Y 坐标（相对所属 TextLine.bounds.origin 的偏移）
     pub y: f32,
     /// 前进宽度
     pub advance: f32,
@@ -30,12 +41,6 @@ pub struct Glyph {
 ///
 /// 一个 Run 是一段具有相同样式（字体、字号、颜色）的连续字形序列。
 /// 它是文本渲染的最小单元。
-///
-/// 坐标系设计：
-/// - `TextLine.bounds.origin`: 行在页面上的位置（绝对坐标）
-/// - `glyphs[].x/y`: 相对 `bounds.origin` 的偏移量
-///
-/// 渲染时：glyph 页面坐标 = bounds.origin + glyph.x/y
 #[derive(Clone, Debug)]
 pub struct TextRun {
     /// 该 Run 的文本内容
@@ -65,16 +70,16 @@ pub struct TextRun {
 
 /// 文本行 - 包含一行中的所有 Run
 ///
-/// 分页以 TextLine 为单位，确保行不会被截断。
-///
-/// 坐标系设计：
-/// - `bounds`: 行在页面上的绝对坐标和尺寸
+/// 坐标系设计（相对 layout 原点）：
+/// - `bounds.origin`: 行在 layout 中的位置
 /// - `runs[].glyphs[].x/y`: 相对 `bounds.origin` 的偏移量
+///
+/// 绝对定位时：glyph 页面坐标 = 页面偏移 + bounds.origin + glyph
 #[derive(Clone, Debug)]
 pub struct TextLine {
     /// 该行的所有 Run
     pub runs: Vec<TextRun>,
-    /// 行的边界框（页面绝对坐标）
+    /// 行的边界框（相对 layout 原点）
     pub bounds: Rect,
     /// 该行的高度（来自 LineMetrics.line_height）
     pub line_height: f32,
@@ -161,16 +166,6 @@ pub enum FontSource {
 }
 
 /// 注册自定义字体到全局字体上下文。
-///
-/// 适用于不需要创建 `LieChart` 实例即可加载字体的场景。
-/// 加载后的字体可以通过 `font_family` 名称在图表的文本样式中使用。
-///
-/// # 示例
-///
-/// ```ignore
-/// // 从内存加载（例如从 CDN 下载的字节）
-/// liecharts::register_font(liecharts::FontSource::Memory(font_bytes), Some("MyFont")).unwrap();
-/// ```
 pub fn register_font(
     source: FontSource,
     family_name_override: Option<&str>,
@@ -208,10 +203,163 @@ pub fn register_font(
     Ok(())
 }
 
+// ─── 内部辅助：从 parley Layout 提取行 ─────────────────────
+
+/// 字形原始数据（相对 layout 原点的坐标），仅在提取过程中使用
+struct GlyphRaw {
+    id: u32,
+    x: f32,
+    y: f32,
+    advance: f32,
+}
+
+/// 从 parley Layout 提取行列表，返回相对 layout 原点的 TextLine 集合。
+///
+/// 每个 TextLine.bounds.origin 表示该行在 layout 中的位置：
+/// - x = 该行最左字形相对于 layout 左侧的偏移
+/// - y = 该行顶部相对于 layout 顶部的累积偏移
+/// runs[].glyphs[].x/y = glyph 坐标 - 行原点，即相对行左上角的偏移
+fn extract_lines_from_parley(layout: &parley::Layout<Color>, full_text: &str) -> Vec<TextLine> {
+    let mut lines = Vec::new();
+    let mut row_top_rel = 0.0_f32;
+    let mut full_text_pos = 0_usize;
+
+    for line in layout.lines() {
+        let metrics = line.metrics();
+        let line_height = metrics.line_height;
+        let baseline_y = metrics.baseline - row_top_rel;
+
+        let mut glyph_data: Vec<(GlyphRaw, usize)> = Vec::new();
+        let mut run_infos: Vec<(
+            Color,
+            parley::FontData,
+            f32,
+            parley::layout::Run<'_, Color>,
+            f32,
+        )> = Vec::new();
+
+        let mut next_run_idx = 0;
+        for item in line.items() {
+            if let parley::layout::PositionedLayoutItem::GlyphRun(glyph_run) = item {
+                let run = glyph_run.run();
+                let color = glyph_run.style().brush;
+                let font_data = run.font().clone();
+                let font_size = run.font_size();
+
+                let first_glyph_x = glyph_run
+                    .positioned_glyphs()
+                    .next()
+                    .map(|g| g.x)
+                    .unwrap_or(0.0);
+
+                run_infos.push((color, font_data, font_size, *run, first_glyph_x));
+
+                for g in glyph_run.positioned_glyphs() {
+                    glyph_data.push((
+                        GlyphRaw {
+                            id: g.id,
+                            x: g.x,
+                            y: g.y,
+                            advance: g.advance,
+                        },
+                        next_run_idx,
+                    ));
+                }
+                next_run_idx += 1;
+            }
+        }
+
+        if glyph_data.is_empty() {
+            row_top_rel += line_height;
+            continue;
+        }
+
+        let min_x = glyph_data
+            .iter()
+            .map(|(g, _)| g.x)
+            .fold(f32::INFINITY, f32::min);
+        let max_x = glyph_data
+            .iter()
+            .map(|(g, _)| g.x)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let width = max_x - min_x;
+
+        let mut runs = Vec::new();
+
+        let mut run_glyph_ranges: Vec<(usize, usize)> = Vec::new();
+        let mut current_start = 0;
+        let mut last_run_idx = glyph_data[0].1;
+
+        for (i, (_, run_idx)) in glyph_data.iter().enumerate() {
+            if *run_idx != last_run_idx {
+                run_glyph_ranges.push((current_start, i));
+                current_start = i;
+                last_run_idx = *run_idx;
+            }
+        }
+        run_glyph_ranges.push((current_start, glyph_data.len()));
+
+        for (start_idx, end_idx) in run_glyph_ranges.iter() {
+            let run_idx = glyph_data[*start_idx].1;
+            let (color, font_data, font_size, _run, first_glyph_x) =
+                &run_infos[run_idx];
+
+            let glyph_count = end_idx - start_idx;
+            let text_range = full_text_pos..full_text_pos + glyph_count;
+            full_text_pos = text_range.end;
+
+            let relative_glyphs: Vec<Glyph> = glyph_data[*start_idx..*end_idx]
+                .iter()
+                .map(|(g, _)| Glyph {
+                    id: g.id,
+                    x: g.x - min_x,
+                    y: g.y - row_top_rel,
+                    advance: g.advance,
+                })
+                .collect();
+
+            let advance = relative_glyphs.iter().map(|g| g.advance).sum();
+            let baseline_x = *first_glyph_x - min_x;
+
+            runs.push(TextRun {
+                text: String::new(),
+                text_range: text_range.clone(),
+                font_data: font_data.clone(),
+                font_size: *font_size,
+                color: *color,
+                advance,
+                glyphs: relative_glyphs,
+                is_rtl: false,
+                baseline_x,
+                baseline_y,
+                url: None,
+            });
+        }
+
+        let bounds = Rect::new(
+            min_x as f64,
+            row_top_rel as f64,
+            (min_x + width) as f64,
+            (row_top_rel + line_height) as f64,
+        );
+
+        lines.push(TextLine {
+            runs,
+            bounds,
+            line_height,
+        });
+
+        row_top_rel += line_height;
+    }
+
+    lines
+}
+
+// ─── 公开布局函数 ────────────────────────────────────────
+
 /// 创建文本布局
 ///
-/// 使用 parley 以 **左对齐** 排版文本，返回布局以获取自然宽度/高度。
-/// 组件的对齐（居中、右对齐等）应在拿到 layout 尺寸后手动计算位置偏移。
+/// 使用 parley 排版文本，返回包含行集合的 TextLayout。
 pub fn create_text_layout(
     text: &str,
     font_config: &TextStyle,
@@ -230,10 +378,8 @@ pub fn create_text_layout_with_contexts(
     font_cx: &mut FontContext,
     layout_cx: &mut LayoutContext<Color>,
 ) -> TextLayout {
-    // 创建布局构建器
     let mut builder = layout_cx.ranged_builder(font_cx, text, 1.0, true);
 
-    // 应用样式
     let font_stack = to_parley_font_family(&style.font_family);
     builder.push_default(StyleProperty::FontFamily(font_stack));
     builder.push_default(StyleProperty::FontSize(style.font_size as f32));
@@ -241,29 +387,18 @@ pub fn create_text_layout_with_contexts(
     builder.push_default(StyleProperty::FontStyle(to_parley_font_style(&style.font_style)));
     builder.push_default(StyleProperty::FontWeight(to_parley_font_weight(&style.font_weight)));
 
-    // 构建布局
     let mut layout = builder.build(text);
-
-    // 断行
     layout.break_all_lines(max_width.map(|w| w as f32));
-
-    // 始终左对齐：parley 不做居中/右对齐，组件的对齐由 compute_text_offset 或手动计算实现
     layout.align(Alignment::Start, AlignmentOptions::default());
 
-    layout
+    let width = layout.width() as f64;
+    let height = layout.height() as f64;
+    let lines = extract_lines_from_parley(&layout, text);
+
+    TextLayout { lines, width, height }
 }
 
 /// 将多段不同样式的文本合并在一个 TextLayout 中。
-///
-/// 每段文本可以有自己的 TextStyle（字体、字号、颜色）。
-/// 所有文本按顺序直接拼接，通过 parley 的 RangedBuilder 为各段应用不同样式。
-/// 需要换行时，请在文本段中自行包含 `\n`。
-/// 最终返回单一的 TextLayout，支持断行和多行对齐。
-///
-/// # 参数
-/// - `texts`: 文本段列表，每项为 `(文本内容, 文本样式)`。至少包含一段。
-/// - `max_width`: 最大行宽，`None` 表示不断行。
-/// - `align`: 多行对齐方式。`Left`、`Center` 或 `Right`。
 pub fn layout_text(
     texts: &[(&str, &TextStyle)],
     max_width: Option<f64>,
@@ -275,10 +410,6 @@ pub fn layout_text(
 }
 
 /// 使用指定的 FontContext 和 LayoutContext 创建多段样式文本布局。
-///
-/// 这是 `layout_text` 的低级版本，适用于需要复用上下文的场景。
-/// 直接拼接所有文本段（不带额外分隔符），以第一段的样式为默认样式，
-/// 其余各段通过 ranged_builder 的 `push` 方法覆盖特定范围的样式属性。
 pub fn layout_text_with_contexts(
     texts: &[(&str, &TextStyle)],
     max_width: Option<f64>,
@@ -296,7 +427,6 @@ pub fn layout_text_with_contexts(
         );
     }
 
-    // 1. 直接拼接所有文本（不带额外分隔符，用户可在文本中自行添加 \n）
     let mut combined = String::new();
     let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(texts.len());
     for (text, _) in texts {
@@ -306,7 +436,6 @@ pub fn layout_text_with_contexts(
         ranges.push((start, end));
     }
 
-    // 2. 创建 ranged_builder，以第一段样式作为默认
     let mut builder = layout_cx.ranged_builder(font_cx, &combined, 1.0, true);
 
     let first_style = &texts[0].1;
@@ -317,7 +446,6 @@ pub fn layout_text_with_contexts(
     builder.push_default(StyleProperty::FontStyle(to_parley_font_style(&first_style.font_style)));
     builder.push_default(StyleProperty::FontWeight(to_parley_font_weight(&first_style.font_weight)));
 
-    // 3. 后续各段覆盖样式（直接推送所有样式，不做条件判断）
     for (i, (_, style)) in texts.iter().enumerate().skip(1) {
         let (start, end) = ranges[i];
         if start >= end {
@@ -333,13 +461,9 @@ pub fn layout_text_with_contexts(
         builder.push(StyleProperty::FontWeight(to_parley_font_weight(&style.font_weight)), start..end);
     }
 
-    // 4. 构建布局
     let mut layout = builder.build(&combined);
-
-    // 5. 断行
     layout.break_all_lines(max_width.map(|w| w as f32));
 
-    // 6. 对齐：映射 TextAlign → parley::Alignment
     let paragraph_align = match align {
         TextAlign::Left => Alignment::Start,
         TextAlign::Center => Alignment::Center,
@@ -347,14 +471,14 @@ pub fn layout_text_with_contexts(
     };
     layout.align(paragraph_align, AlignmentOptions::default());
 
-    layout
+    let width = layout.width() as f64;
+    let height = layout.height() as f64;
+    let lines = extract_lines_from_parley(&layout, &combined);
+
+    TextLayout { lines, width, height }
 }
 
-
 /// 将字体家族列表（Vec<String>）转换为 parley 的 FontFamily::List。
-///
-/// 自动识别 CSS 通用家族关键字（serif、sans-serif、monospace 等），
-/// 将其映射为 GenericFamily 以便 parley 使用系统字体回退。
 fn to_parley_font_family(families: &[String]) -> FontFamily<'static> {
     let names: Vec<FontFamilyName<'static>> = families
         .iter()
@@ -389,7 +513,6 @@ fn to_parley_font_weight(weight: &str) -> FontWeight {
         "extra_bold" | "800" => FontWeight::EXTRA_BOLD,
         "black" | "900" => FontWeight::BLACK,
         _ => {
-            // 尝试解析为数字
             if let Ok(val) = weight.parse::<f32>() {
                 FontWeight::new(val)
             } else {
@@ -398,14 +521,3 @@ fn to_parley_font_weight(weight: &str) -> FontWeight {
         }
     }
 }
-
-// pub fn layout_text_with_contexts(
-//     texts: &[(&str, &TextStyle)],
-//     max_width: Option<f64>,
-//     max_height: Option<f64>,
-//     align: TextAlign,
-//     font_cx: &mut FontContext,
-//     layout_cx: &mut LayoutContext<Color>,
-// ) -> Vec<TextRun> {
-//     unimplemented!()
-// }

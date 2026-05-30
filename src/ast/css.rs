@@ -144,8 +144,7 @@ pub fn parse_css(css: &str) -> Result<Stylesheet, String> {
         let selectors: Vec<Selector> = selector_str
             .split(',')
             .map(|s| parse_selector(s.trim()))
-            .filter(|s| s.is_some())
-            .map(|s| s.unwrap())
+            .flatten()
             .collect();
 
         if selectors.is_empty() {
@@ -317,7 +316,7 @@ fn selector_specificity(selector: &Selector) -> u32 {
 fn rule_specificity(rule: &CssRule) -> u32 {
     rule.selectors
         .iter()
-        .map(|s| selector_specificity(s))
+        .map(selector_specificity)
         .max()
         .unwrap_or(0)
 }

@@ -328,10 +328,9 @@ Document { pages: Vec<Page> }
 
 **段落布局** ([src/generator/mod.rs](../src/generator/mod.rs)):
 1. 收集所有内联子节点（Text/Strong/Emphasis/InlineCode/Link）的文本段和样式
-2. 使用 parley 的 RangedBuilder 拼接文本，各段应用不同样式
-3. 断行后提取 `TextLineRel`（相对坐标的行数据）
-4. 使用 `annotate_runs_with_urls` 将超链接 URL 回填到对应的 run 中
-5. `place_text_lines` 负责将行放置到页面上，处理自动分页
+2. 调用 `layout_text_with_contexts()` 生成 `TextLayout`（包含已断行的 `TextLine` 集合）
+3. 使用 `annotate_runs_with_urls` 将超链接 URL 回填到对应的 run 中
+4. `place_text_lines` 负责将行放置到页面上，处理自动分页和缩进
 
 **列表布局**:
 - 无序列表: 固定标记区域 (10pt)
@@ -377,16 +376,13 @@ Document { pages: Vec<Page> }
 
 #### 2.5 内联文本处理 ([src/generator/text.rs](../src/generator/text.rs))
 
-核心函数：
+core 函数：
 
 - **`collect_inline_segments()`**: 递归收集内联子节点（Strong、Emphasis、Link、InlineCode、Text）的文本段和样式
-- **`build_text_lines_rel()`**: 从 parley Layout 提取行列表，将字形坐标转换为相对行左上角的偏移量
 - **`annotate_runs_with_urls()`**: 通过 run 的 `text_range` 匹配对应的 segment，将超链接 URL 回填到 TextRun 的 `url` 字段
 
-关键数据结构：
-
-- **`TextLineRel`**: 相对段落原点的行数据，包含 runs、min_x、width、line_height、row_top_rel
-- **`GlyphRaw`**: 字形原始数据（相对 layout 原点的坐标）
+这两个函数是 generator 层面的辅助工具，不涉及 parley 布局细节。
+Text 引擎的布局细节全部封装在 [`src/text.rs`](../src/text.rs) 中。
 
 ### 3. Visual 模块 ([src/visual.rs](../src/visual.rs))
 
@@ -428,19 +424,24 @@ enum VisualElement {
 
 ### 4. Text 模块 ([src/text.rs](../src/text.rs))
 
-文本排版核心，基于 parley 库。
+文本排版核心，基于 parley 库，不与 AST 或 generator 耦合。
+职责：接收文本 + 样式，返回已断行的 `TextLayout`。分页、缩进等由 generator 负责。
 
 #### 4.1 核心类型
 
-- **`TextLayout`**: parley `Layout<Color>` 的包装类型
-- **`TextLine`**: 一行文本，包含 `runs`、`bounds`、`line_height`
+- **`TextLayout`**: 排版结果，包含 `lines: Vec<TextLine>`、`width: f64`、`height: f64`
+  - 所有坐标相对 layout 原点（段落左上角）
+- **`TextLine`**: 一行文本
+  - `runs: Vec<TextRun>` — 该行的所有 Run
+  - `bounds: Rect` — 相对 layout 原点的边界框
+  - `line_height: f32` — 行高
 - **`TextRun`**: 具有相同样式的文本片段
   - `text`: 文本内容
   - `text_range`: 在段落中的字节范围
   - `font_data`: parley FontData（用于渲染）
   - `font_size`: 字号
   - `color`: 颜色
-  - `glyphs`: 字形列表（坐标相对行顶偏移）
+  - `glyphs: Vec<Glyph>` — 字形列表（坐标相对 `TextLine.bounds.origin`）
   - `baseline_x/y`: 基线位置
   - `url`: 超链接 URL（可选）
 - **`Glyph`**: 单个字形信息（id, x, y, advance）
@@ -461,17 +462,23 @@ Layout.break_all_lines(max_width)
 Layout.align(Alignment)
     │
     ▼
-遍历 positioned_glyphs()，提取行和字形
+extract_lines_from_parley() 提取行和字形
     │
     ▼
-转换为 TextLine (包含 TextRun 列表)
+返回 TextLayout { lines: Vec<TextLine>, width, height }
     │
     ▼
-annotate_runs_with_urls() 回填 URL
+[generator 层] annotate_runs_with_urls() 回填 URL
     │
     ▼
-渲染时遍历 TextRun，逐个绘制字形
+[generator 层] place_text_lines() 分页 + 绝对定位
+    │
+    ▼
+渲染时遍历 TextLine → TextRun → Glyph，逐个绘制
 ```
+
+Text 引擎负责前三步（排版 → 断行 → 提取为自有结构），
+generator 负责后三步（URL 回填 → 分页定位 → 渲染）。
 
 #### 4.3 多段样式布局
 
@@ -562,20 +569,13 @@ trait PageRenderer {
 Markdown: [text](url)
     │
     ▼
-NodeKind::Link { url, children: [Text("text")] }
-    │  link_style() 设置 color=#0000FF, link_url=url
-    │  子节点继承父节点的 link_url
-    ▼
 collect_inline_segments() → ("text", TextStyle { url: Some(url), ... })
     │
     ▼
-layout_text_with_contexts() → parley 为不同样式创建独立 GlyphRun
-    │
+layout_text_with_contexts() → TextLayout { lines: Vec<TextLine> }
+    │                        extract_lines_from_parley() 内部自动完成
     ▼
-build_text_lines_rel() → 提取 TextLineRel（含 text_range）
-    │
-    ▼
-annotate_runs_with_urls() → 匹配 text_range 中点 → 回填 run.url
+annotate_runs_with_urls() → 匹配 text_range → 回填 run.url
     │
     ▼
 draw_text_run() → 收集有 url 的 run 的矩形区域

@@ -168,22 +168,20 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
             config.width = Some(841.890);
             config.height = Some(595.276);
         }
-    } else if args.portrait {
-        if let (Some(w), Some(h)) = (config.width, config.height) {
+    } else if args.portrait
+        && let (Some(w), Some(h)) = (config.width, config.height) {
             config.width = Some(w.min(h));
             config.height = Some(w.max(h));
         }
-    }
 
     // Margins
-    if let Some(m) = &args.margin {
-        if let Some(v) = parse_length(m) {
+    if let Some(m) = &args.margin
+        && let Some(v) = parse_length(m) {
             config.margin_top = Some(v);
             config.margin_bottom = Some(v);
             config.margin_left = Some(v);
             config.margin_right = Some(v);
         }
-    }
     if let Some(v) = &args.margin_top {
         config.margin_top = parse_length(v);
     }

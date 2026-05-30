@@ -8,7 +8,7 @@
 //! 2. generate_rows — 按行区间生成视觉元素，支持跨页分割
 
 use crate::ast::{Node, NodeKind, TextAlign, Style, computed_style_to_text_style};
-use crate::generator::text::{collect_inline_segments, build_text_lines_rel, annotate_runs_with_urls};
+use crate::generator::text::{collect_inline_segments, annotate_runs_with_urls};
 use crate::text::{
     FONT_CONTEXT, LAYOUT_CONTEXT,
     layout_text_with_contexts, TextStyle, TextAlign as TextAlign2,
@@ -251,7 +251,7 @@ fn measure_cell(cell: &Node, padding_h: f32) -> CellMeasure {
                 &mut fcx,
                 &mut lcx,
             );
-            layout.width() as f32
+            layout.width as f32
         })
     });
 
@@ -274,7 +274,7 @@ fn measure_cell(cell: &Node, padding_h: f32) -> CellMeasure {
                         &mut fcx,
                         &mut lcx,
                     );
-                    layout.width() as f32
+                    layout.width as f32
                 })
             })
         })
@@ -392,8 +392,8 @@ fn calculate_row_heights(
                     );
 
                     let mut h = 0.0_f32;
-                    for line in layout.lines() {
-                        h += line.metrics().line_height;
+                    for line in &layout.lines {
+                        h += line.line_height;
                     }
                     h
                 })
@@ -495,22 +495,23 @@ fn layout_cell_texts(
                         &mut lcx,
                     );
 
-                    let mut lines_rel = build_text_lines_rel(&layout, &total_text);
-                    annotate_runs_with_urls(&mut lines_rel, &total_text, &segments);
-                    for line_rel in &lines_rel {
-                        let line_abs_x = cell_x + padding_h + line_rel.min_x;
-                        let line_abs_y = cell_y + padding_v + line_rel.row_top_rel;
+                    let mut lines = layout.lines;
+                    annotate_runs_with_urls(&mut lines, &total_text, &segments);
+                    for line in &lines {
+                        let line_abs_x = cell_x + padding_h + line.bounds.x0 as f32;
+                        let line_abs_y = cell_y + padding_v + line.bounds.y0 as f32;
+                        let line_width = line.bounds.width() as f32;
                         let bounds = Rect::new(
                             line_abs_x as f64,
                             line_abs_y as f64,
-                            (line_abs_x + line_rel.width) as f64,
-                            (line_abs_y + line_rel.line_height) as f64,
+                            (line_abs_x + line_width) as f64,
+                            (line_abs_y + line.line_height) as f64,
                         );
 
                         elements.push(VisualElement::TextLine {
-                            runs: line_rel.runs.clone(),
+                            runs: line.runs.clone(),
                             bounds,
-                            line_height: line_rel.line_height,
+                            line_height: line.line_height,
                         });
                     }
                 })

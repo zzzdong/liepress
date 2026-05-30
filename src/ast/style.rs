@@ -63,7 +63,9 @@ impl TextAlign {
 // ─── 分页控制 ───
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum PageBreak {
+    #[default]
     Auto,
     Always,
     Avoid,
@@ -71,11 +73,6 @@ pub enum PageBreak {
     Right,
 }
 
-impl Default for PageBreak {
-    fn default() -> Self {
-        PageBreak::Auto
-    }
-}
 
 // ─── 显示类型 ───
 

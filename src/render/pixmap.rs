@@ -5,10 +5,12 @@ use crate::generator::Page;
 use crate::render::PageRenderer;
 use crate::text::{TextLayout, TextStyle, layout_text};
 use crate::visual::{Color, FillStrokeStyle, GradientDef, Stroke, StrokeStyle, Transform};
+use std::sync::Arc;
+use vello_cpu::peniko::{Extend, ImageSampler, ImageQuality};
 use vello_cpu::RenderContext;
 use vello_cpu::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape, Stroke as KurboStroke};
 use vello_cpu::peniko::color::AlphaColor;
-use vello_cpu::{Pixmap, Resources};
+use vello_cpu::{Image, ImageSource, Pixmap, Resources};
 
 pub struct PixmapDocumentGenerator {
     name: String,
@@ -383,26 +385,73 @@ impl PageRenderer for PixmapRenderer {
         // 恢复渲染状态
     }
 
-    fn draw_image(&mut self, _data: &[u8], _format: &str, position: Point, size: (f64, f64)) {
-        // 简化实现：绘制一个灰色矩形作为图片占位符
+    fn draw_image(&mut self, data: &[u8], _format: &str, position: Point, size: (f64, f64)) {
+        if data.is_empty() {
+            let scaled_position = self.scale_point(&position);
+            let scaled_size = (size.0 * self.scale as f64, size.1 * self.scale as f64);
+            let rect = Rect::new(
+                scaled_position.x,
+                scaled_position.y,
+                scaled_position.x + scaled_size.0,
+                scaled_position.y + scaled_size.1,
+            );
+            let style = crate::visual::FillStrokeStyle {
+                fill: Some(crate::visual::Color::new(200, 200, 200)),
+                stroke: Some(crate::visual::Stroke {
+                    color: crate::visual::Color::new(150, 150, 150),
+                    width: 1.0,
+                }),
+            };
+            self.draw_rect(rect, &style);
+            return;
+        }
+
+        let img = match image::load_from_memory(data) {
+            Ok(img) => img,
+            Err(_) => return,
+        };
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let width_u16 = width as u16;
+        let height_u16 = height as u16;
+
+        let pixels: Vec<vello_cpu::peniko::color::PremulRgba8> = rgba
+            .chunks_exact(4)
+            .map(|pixel| {
+                let alpha = u16::from(pixel[3]);
+                let premultiply = |component: u8| ((alpha * u16::from(component)) / 255) as u8;
+                vello_cpu::peniko::color::PremulRgba8 {
+                    r: premultiply(pixel[0]),
+                    g: premultiply(pixel[1]),
+                    b: premultiply(pixel[2]),
+                    a: pixel[3],
+                }
+            })
+            .collect();
+
+        let pixmap = Pixmap::from_parts(pixels, width_u16, height_u16);
+        let arc_pixmap = Arc::new(pixmap);
+
+        let image = Image {
+            image: ImageSource::Pixmap(arc_pixmap),
+            sampler: ImageSampler {
+                x_extend: Extend::Pad,
+                y_extend: Extend::Pad,
+                quality: ImageQuality::High,
+                alpha: 1.0,
+            },
+        };
+
+        self.ctx.set_paint(image);
+
         let scaled_position = self.scale_point(&position);
         let scaled_size = (size.0 * self.scale as f64, size.1 * self.scale as f64);
-
         let rect = Rect::new(
             scaled_position.x,
             scaled_position.y,
             scaled_position.x + scaled_size.0,
             scaled_position.y + scaled_size.1,
         );
-
-        let style = crate::visual::FillStrokeStyle {
-            fill: Some(crate::visual::Color::new(200, 200, 200)),
-            stroke: Some(crate::visual::Stroke {
-                color: crate::visual::Color::new(150, 150, 150),
-                width: 1.0,
-            }),
-        };
-
-        self.draw_rect(rect, &style);
+        self.ctx.fill_rect(&rect);
     }
 }

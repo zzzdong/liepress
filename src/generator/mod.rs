@@ -11,15 +11,15 @@ mod table;
 pub use constants::*;
 pub use types::*;
 
-use markdown::mdast;
 use std::path::{Path, PathBuf};
 use vello_cpu::kurbo::{Point, Rect};
 use crate::ast::{self, Node, NodeKind, Style};
 use crate::text::{FONT_CONTEXT, LAYOUT_CONTEXT, TextAlign, TextStyle, layout_text_with_contexts};
 use crate::visual::{Color, VisualElement, FillStrokeStyle, StrokeStyle};
-use crate::generator::text::{collect_inline_segments, estimate_children_height, build_text_lines_rel, annotate_runs_with_urls, TextLineRel};
+use crate::generator::text::{collect_inline_segments, estimate_children_height, annotate_runs_with_urls};
 
 use image::GenericImageView;
+use image::guess_format;
 
 /// 文档生成器
 pub struct DocumentGenerator {
@@ -92,16 +92,13 @@ impl DocumentGenerator {
     /// 放置文本行到页面上，处理自动分页。
     ///
     /// # 参数
-    /// - `lines_rel`: 文本行数据（相对坐标）
-    /// - `x_offset`: X 方向额外偏移量（在 content_x + indent 的基础上）
-    /// - `indent`: 缩进量（影响 X 位置）
+    /// - `x_offset`: 水平偏移量
     /// - `margin_bottom`: 底部边距
     /// - `splittable`: 是否允许跨页分割（段落可分割，标题不可）
     fn place_text_lines(
         &mut self,
-        lines_rel: Vec<TextLineRel>,
+        lines: Vec<crate::text::TextLine>,
         x_offset: f32,
-        indent: f32,
         margin_bottom: f32,
         splittable: bool,
     ) {
@@ -113,8 +110,8 @@ impl DocumentGenerator {
         let mut current_page_y = start_y;
         let mut last_page_start_y = start_y;
 
-        for line_rel in lines_rel {
-            let line_bottom_rel = current_page_y + line_rel.line_height;
+        for line in lines {
+            let line_bottom_rel = current_page_y + line.line_height;
 
             if splittable && line_bottom_rel > content_height && !self.page_context.is_empty() {
                 self.page_context.finalize_current_page();
@@ -123,23 +120,24 @@ impl DocumentGenerator {
                 last_page_start_y = 0.0;
             }
 
-            let line_abs_left = content_x + indent + x_offset + line_rel.min_x;
+            let line_abs_left = content_x + x_offset + line.bounds.x0 as f32;
             let line_abs_top = content_y + current_page_y;
+            let line_width = line.bounds.width() as f32;
 
             let bounds = Rect::new(
                 line_abs_left as f64,
                 line_abs_top as f64,
-                (line_abs_left + line_rel.width) as f64,
-                (line_abs_top + line_rel.line_height) as f64,
+                (line_abs_left + line_width) as f64,
+                (line_abs_top + line.line_height) as f64,
             );
 
             self.page_context.add_element(VisualElement::TextLine {
-                runs: line_rel.runs,
+                runs: line.runs,
                 bounds,
-                line_height: line_rel.line_height,
+                line_height: line.line_height,
             });
 
-            current_page_y += line_rel.line_height;
+            current_page_y += line.line_height;
         }
 
         let consumed_height = current_page_y - last_page_start_y + margin_bottom;
@@ -173,12 +171,9 @@ impl DocumentGenerator {
                     &mut lcx,
                 );
 
-                drop(fcx);
-                drop(lcx);
-
-                let mut lines_rel = build_text_lines_rel(&layout, &total_text);
-                annotate_runs_with_urls(&mut lines_rel, &total_text, &segments);
-                let total_line_height: f32 = lines_rel.iter().map(|l| l.line_height).sum();
+                let mut lines = layout.lines;
+                annotate_runs_with_urls(&mut lines, &total_text, &segments);
+                let total_line_height: f32 = lines.iter().map(|l| l.line_height).sum();
                 let total_height = total_line_height + margin_bottom;
 
                 if total_height > self.page_context.settings.content_height() {
@@ -196,7 +191,7 @@ impl DocumentGenerator {
                     self.page_context.start_new_page();
                 }
 
-                self.place_text_lines(lines_rel, 0.0, 0.0, margin_bottom, false);
+                self.place_text_lines(lines, 0.0, margin_bottom, false);
             })
         })
     }
@@ -229,10 +224,10 @@ impl DocumentGenerator {
                 );
 
                 let code_x = 8.0;
-                let lines_rel = build_text_lines_rel(&layout, code);
+                let lines = layout.lines;
 
                 // 使用实际渲染行高计算总高度
-                let actual_total_height: f32 = lines_rel.iter().map(|l| l.line_height).sum();
+                let actual_total_height: f32 = lines.iter().map(|l| l.line_height).sum();
                 let total_height = actual_total_height + margin_bottom;
 
                 if total_height > self.page_context.remaining_height()
@@ -249,8 +244,8 @@ impl DocumentGenerator {
                 let mut current_lines: Vec<usize> = Vec::new();
                 let mut cursor_y = self.page_context.current_y;
 
-                for (i, line_rel) in lines_rel.iter().enumerate() {
-                    let line_bottom_rel = cursor_y + line_rel.line_height;
+                for (i, line) in lines.iter().enumerate() {
+                    let line_bottom_rel = cursor_y + line.line_height;
 
                     if line_bottom_rel > content_height && !current_lines.is_empty() {
                         page_groups.push(std::mem::take(&mut current_lines));
@@ -258,7 +253,7 @@ impl DocumentGenerator {
                     }
 
                     current_lines.push(i);
-                    cursor_y += line_rel.line_height;
+                    cursor_y += line.line_height;
                 }
 
                 if !current_lines.is_empty() {
@@ -271,7 +266,7 @@ impl DocumentGenerator {
 
                     // 计算本页代码组的高度
                     let group_height: f32 =
-                        line_indices.iter().map(|&i| lines_rel[i].line_height).sum();
+                        line_indices.iter().map(|&i| lines[i].line_height).sum();
 
                     let page_current_y = self.page_context.current_y;
                     let bg_top = content_y + page_current_y;
@@ -294,31 +289,32 @@ impl DocumentGenerator {
                     // 再添加文本行
                     let mut line_y = page_current_y;
                     for &line_idx in line_indices {
-                        let line_rel = &lines_rel[line_idx];
-                        let line_abs_left = content_x + code_x + line_rel.min_x;
+                        let line = &lines[line_idx];
+                        let line_abs_left = content_x + code_x + line.bounds.x0 as f32;
                         let line_abs_top = content_y + line_y;
+                        let line_width = line.bounds.width() as f32;
 
                         let bounds = Rect::new(
                             line_abs_left as f64,
                             line_abs_top as f64,
-                            (line_abs_left + line_rel.width) as f64,
-                            (line_abs_top + line_rel.line_height) as f64,
+                            (line_abs_left + line_width) as f64,
+                            (line_abs_top + line.line_height) as f64,
                         );
 
                         self.page_context.add_element(VisualElement::TextLine {
-                            runs: line_rel.runs.clone(),
+                            runs: line.runs.clone(),
                             bounds,
-                            line_height: line_rel.line_height,
+                            line_height: line.line_height,
                         });
 
-                        line_y += line_rel.line_height;
+                        line_y += line.line_height;
                     }
 
                     if is_last {
                         // 最后一页：消耗实际使用的高度
                         let last_group_height: f32 = line_indices
                             .iter()
-                            .map(|&i| lines_rel[i].line_height)
+                            .map(|&i| lines[i].line_height)
                             .sum();
                         self.page_context.consume_height(last_group_height + margin_bottom);
                     } else {
@@ -340,7 +336,7 @@ impl DocumentGenerator {
         let image_result = self.load_image(src);
 
         // 目标 DPI：图片将以该 DPI 渲染
-        const TARGET_DPI: f32 = 150.0;
+        const TARGET_DPI: f32 = 300.0;
         const PDF_DPI: f32 = 72.0;
         // 像素到点的转换系数：pt = px * (72 / DPI)
         let px_to_pt = PDF_DPI / TARGET_DPI;
@@ -348,11 +344,7 @@ impl DocumentGenerator {
         // 1. 原始像素尺寸和转换后的点尺寸
         let (pixel_width, pixel_height, image_data, image_format) = match &image_result {
             Some((w, h, data)) => {
-                let format = if src.to_lowercase().ends_with(".png") {
-                    "png".to_string()
-                } else {
-                    "jpeg".to_string()
-                };
+                let format = detect_image_format(data);
                 (*w, *h, Some(data.clone()), format)
             }
             None => {
@@ -394,7 +386,7 @@ impl DocumentGenerator {
                         &mut lcx,
                     );
 
-                    layout.height() as f32 + 4.0 // 标题高度 + 4pt 间距
+                    layout.height as f32 + 4.0 // 标题高度 + 4pt 间距
                 })
             })
         } else {
@@ -467,27 +459,28 @@ impl DocumentGenerator {
                     // 标题显示在图片下方，有 4pt 间距
                     let label_top = image_bottom + 4.0;
 
-                    let lines_rel = build_text_lines_rel(&layout, alt);
-                    for line_rel in lines_rel.iter() {
+                    for line in layout.lines.iter() {
                         // 每行依次向下排列
-                        let line_y = label_top + line_rel.row_top_rel;
+                        let line_y = label_top + line.bounds.y0 as f32;
+                        let line_width = line.bounds.width() as f32;
+                        let line_x0 = line.bounds.x0 as f32;
 
                         let bounds = Rect::new(
-                            (left + line_rel.min_x) as f64,
+                            (left + line_x0) as f64,
                             line_y as f64,
-                            (left + line_rel.min_x + line_rel.width) as f64,
-                            (line_y + line_rel.line_height) as f64,
+                            (left + line_x0 + line_width) as f64,
+                            (line_y + line.line_height) as f64,
                         );
 
                         self.page_context.add_element(VisualElement::TextLine {
-                            runs: line_rel.runs.clone(),
+                            runs: line.runs.clone(),
                             bounds,
-                            line_height: line_rel.line_height,
+                            line_height: line.line_height,
                         });
                     }
 
                     // 消费高度：图片高度 + 间距 4pt + 标题高度 + 底部间距
-                    let actual_label_height = layout.height() as f32;
+                    let actual_label_height = layout.height as f32;
                     self.page_context.consume_height(target_height + 4.0 + actual_label_height + margin_bottom);
                 })
             });
@@ -530,12 +523,9 @@ impl DocumentGenerator {
                     &mut lcx,
                 );
 
-                drop(fcx);
-                drop(lcx);
-
-                let mut lines_rel = build_text_lines_rel(&layout, &total_text);
-                annotate_runs_with_urls(&mut lines_rel, &total_text, &segments);
-                self.place_text_lines(lines_rel, 0.0, indent, margin_bottom, true);
+                let mut lines = layout.lines;
+                annotate_runs_with_urls(&mut lines, &total_text, &segments);
+                self.place_text_lines(lines, indent, margin_bottom, true);
             })
         })
     }
@@ -621,7 +611,7 @@ impl DocumentGenerator {
         let layout = create_text_layout(&max_marker, &text_style, None);
 
         // 返回布局宽度 + 少量边距
-        let width = layout.width() as f32;
+        let width = layout.width as f32;
         (width + 4.0).max(12.0).min(30.0) // 最小12pt，最大30pt
     }
 
@@ -637,7 +627,6 @@ impl DocumentGenerator {
         style: &Style,
     ) {
         use crate::text::{create_text_layout, layout_text_with_contexts, TextAlign};
-        use crate::generator::text::build_text_lines_rel;
 
         let content_x = self.page_context.settings.content_x();
         let content_y = self.page_context.settings.content_y();
@@ -646,8 +635,7 @@ impl DocumentGenerator {
 
         // 创建标记布局
         let marker_layout = create_text_layout(marker, &text_style, None);
-        let marker_lines = build_text_lines_rel(&marker_layout, marker);
-        let marker_line = marker_lines.first();
+        let marker_line = marker_layout.lines.first();
 
         match &node.kind {
             NodeKind::Paragraph { children } => {
@@ -663,12 +651,12 @@ impl DocumentGenerator {
                     // 没有文本内容，只放置标记
                     if let Some(m_line) = marker_line {
                         let line_y = content_y + self.page_context.current_y;
-                        let marker_left = content_x + marker_x + marker_area - m_line.width;
+                        let marker_left = content_x + marker_x + marker_area - m_line.bounds.width() as f32;
 
                         let bounds = vello_cpu::kurbo::Rect::new(
                             marker_left as f64,
                             line_y as f64,
-                            (marker_left + m_line.width) as f64,
+                            (marker_left + m_line.bounds.width() as f32) as f64,
                             (line_y + m_line.line_height) as f64,
                         );
 
@@ -700,22 +688,19 @@ impl DocumentGenerator {
                             &mut lcx,
                         );
 
-                        drop(fcx);
-                        drop(lcx);
-
-                        let mut lines_rel = build_text_lines_rel(&layout, &total_text);
-                        annotate_runs_with_urls(&mut lines_rel, &total_text, &segments);
+                        let mut lines = layout.lines;
+                        annotate_runs_with_urls(&mut lines, &total_text, &segments);
 
                         // 放置标记和内容的第一行
-                        if let (Some(m_line), Some(first_line)) = (marker_line, lines_rel.first()) {
+                        if let (Some(m_line), Some(first_line)) = (marker_line, lines.first()) {
                             let line_y = content_y + self.page_context.current_y;
-                            let marker_left = content_x + marker_x + marker_area - m_line.width;
+                            let marker_left = content_x + marker_x + marker_area - m_line.bounds.width() as f32;
 
                             // 放置标记
                             let marker_bounds = vello_cpu::kurbo::Rect::new(
                                 marker_left as f64,
                                 line_y as f64,
-                                (marker_left + m_line.width) as f64,
+                                (marker_left + m_line.bounds.width() as f32) as f64,
                                 (line_y + m_line.line_height) as f64,
                             );
 
@@ -726,11 +711,11 @@ impl DocumentGenerator {
                             });
 
                             // 放置内容的第一行
-                            let content_left = content_x + content_indent + first_line.min_x;
+                            let content_left = content_x + content_indent + first_line.bounds.x0 as f32;
                             let content_bounds = vello_cpu::kurbo::Rect::new(
                                 content_left as f64,
                                 line_y as f64,
-                                (content_left + first_line.width) as f64,
+                                (content_left + first_line.bounds.width() as f32) as f64,
                                 (line_y + first_line.line_height) as f64,
                             );
 
@@ -749,8 +734,8 @@ impl DocumentGenerator {
                             let content_height = settings.content_height();
                             let mut current_page_y = self.page_context.current_y;
 
-                            for line_rel in lines_rel.iter().skip(1) {
-                                let line_bottom_rel = current_page_y + line_rel.line_height;
+                            for line in lines.iter().skip(1) {
+                                let line_bottom_rel = current_page_y + line.line_height;
 
                                 if line_bottom_rel > content_height && !self.page_context.is_empty() {
                                     self.page_context.finalize_current_page();
@@ -758,23 +743,23 @@ impl DocumentGenerator {
                                     current_page_y = 0.0;
                                 }
 
-                                let line_abs_left = content_x + content_indent + line_rel.min_x;
+                                let line_abs_left = content_x + content_indent + line.bounds.x0 as f32;
                                 let line_abs_top = content_y + current_page_y;
 
                                 let bounds = vello_cpu::kurbo::Rect::new(
                                     line_abs_left as f64,
                                     line_abs_top as f64,
-                                    (line_abs_left + line_rel.width) as f64,
-                                    (line_abs_top + line_rel.line_height) as f64,
+                                    (line_abs_left + line.bounds.width() as f32) as f64,
+                                    (line_abs_top + line.line_height) as f64,
                                 );
 
                                 self.page_context.add_element(crate::visual::VisualElement::TextLine {
-                                    runs: line_rel.runs.clone(),
+                                    runs: line.runs.clone(),
                                     bounds,
-                                    line_height: line_rel.line_height,
+                                    line_height: line.line_height,
                                 });
 
-                                current_page_y += line_rel.line_height;
+                                current_page_y += line.line_height;
                             }
 
                             // 消费剩余高度和底部边距
@@ -788,12 +773,12 @@ impl DocumentGenerator {
                 // 非段落节点：先放置标记，再布局节点
                 if let Some(m_line) = marker_line {
                     let line_y = content_y + self.page_context.current_y;
-                    let marker_left = content_x + marker_x + marker_area - m_line.width;
+                    let marker_left = content_x + marker_x + marker_area - m_line.bounds.width() as f32;
 
                     let bounds = vello_cpu::kurbo::Rect::new(
                         marker_left as f64,
                         line_y as f64,
-                        (marker_left + m_line.width) as f64,
+                        (marker_left + m_line.bounds.width() as f32) as f64,
                         (line_y + m_line.line_height) as f64,
                     );
 
@@ -1014,6 +999,17 @@ impl DocumentGenerator {
                 return Some((width, height, data));
             }
         None
+    }
+}
+
+/// 通过 magic bytes 检测图片格式，返回渲染器使用的格式字符串
+fn detect_image_format(data: &[u8]) -> String {
+    match guess_format(data) {
+        Ok(image::ImageFormat::Png) => "png".to_string(),
+        Ok(image::ImageFormat::Jpeg) => "jpeg".to_string(),
+        Ok(image::ImageFormat::Gif) => "gif".to_string(),
+        Ok(image::ImageFormat::WebP) => "webp".to_string(),
+        _ => "jpeg".to_string(),
     }
 }
 

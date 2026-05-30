@@ -4,7 +4,8 @@
 
 use liepress::{markdown_to_pdf, markdown_to_svg};
 use std::fs;
-use crate::common::diag_output_dir;
+use crate::common::{diag_output_dir, ensure_test_image};
+use std::path::PathBuf;
 
 fn output_dir_markdown_to_svg(md: &str, output_dir: &std::path::PathBuf, name: &str) {
     use liepress::generator::markdown_to_document;
@@ -147,4 +148,16 @@ Visit [Rust](https://www.rust-lang.org/) for more information."#;
 
     output_dir_markdown_to_svg(md, &output_dir, "full_featured");
     output_dir_markdown_to_pdf(md, &output_dir, "full_featured");
+}
+
+#[test]
+fn test_image_example_diagnostic() {
+    let fixtures_path = PathBuf::from("tests/fixtures/test_image.png");
+    ensure_test_image(&fixtures_path);
+
+    let output_dir = diag_output_dir("image_example_diag");
+
+    let md = crate::common::samples::IMAGE_EXAMPLE;
+    output_dir_markdown_to_svg(md, &output_dir, "image_example");
+    output_dir_markdown_to_pdf(md, &output_dir, "image_example");
 }

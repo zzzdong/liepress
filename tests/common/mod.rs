@@ -28,6 +28,24 @@ pub fn save_test_output(path: &PathBuf, data: &[u8]) {
     fs::write(path, data).expect("Should write output file");
 }
 
+/// 确保测试用的图片存在，如果不存在则创建一个渐变色 PNG
+pub fn ensure_test_image(path: &PathBuf) {
+    if path.exists() {
+        return;
+    }
+    fs::create_dir_all(path.parent().unwrap()).expect("Should create fixtures dir");
+    let mut img = image::RgbaImage::new(400, 300);
+    for x in 0..400 {
+        for y in 0..300 {
+            let r = ((x as f32 / 400.0) * 255.0) as u8;
+            let g = ((y as f32 / 300.0) * 255.0) as u8;
+            let b = ((1.0 - (x as f32 / 400.0 + y as f32 / 300.0) * 0.5) * 255.0) as u8;
+            img.put_pixel(x, y, image::Rgba([r, g, b, 255]));
+        }
+    }
+    img.save(path).expect("Should create test image");
+}
+
 // ─── lopdf 验证工具 ───────────────────────────────────────
 
 /// 加载 PDF 数据，返回 lopdf Document
@@ -301,4 +319,38 @@ fn main() {
     /// 空表格
     pub const EMPTY_TABLE: &str = r#"| H1 | H2 |
 |----|----|"#;
+
+    /// 图片插入示例
+    pub const IMAGE_EXAMPLE: &str = r#"# Image Example
+
+This document demonstrates image insertion.
+
+## Basic Image
+
+Text before the image.
+
+![Test Image](tests/fixtures/test_image.png)
+
+Text after the image.
+
+## Image with Caption
+
+A colorful gradient pattern with caption.
+
+![Colorful Gradient Pattern](tests/fixtures/test_image.png)
+
+## Image Between Text
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+
+![Centered Image](tests/fixtures/test_image.png)
+
+Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+
+## Multiple Images
+
+![First Image](tests/fixtures/test_image.png)
+
+![Second Image](tests/fixtures/test_image.png)
+"#;
 }
