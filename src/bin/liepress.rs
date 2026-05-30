@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 use liepress::{
-    markdown_file_to_pdf, markdown_file_to_svg, markdown_file_to_png,
     markdown_file_to_pdf_with_options, markdown_file_to_svg_with_options,
     markdown_file_to_png_with_options, ConvertOptions, PageConfig,
 };
@@ -78,6 +77,12 @@ struct Args {
     /// Right margin (overrides --margin)
     #[arg(long = "margin-right", value_name = "MARGIN")]
     margin_right: Option<String>,
+
+    /// Disable auto font detection (enabled by default).
+    /// When enabled, the font-family is chosen based on the detected
+    /// language of the document (e.g. Chinese → Noto Serif SC, SimSun).
+    #[arg(long = "no-auto-font", default_value_t = false)]
+    no_auto_font: bool,
 }
 
 /// Parse a length string with unit (pt, mm, cm, in) into points (pt)
@@ -203,6 +208,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         opts.css_file = Some(css_path.clone());
     }
     opts.strict = args.strict;
+    if args.no_auto_font {
+        opts.auto_font = false;
+    }
 
     if let Some(page_config) = build_page_config(&args) {
         opts.page_config = Some(page_config);
@@ -210,21 +218,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.format {
         Format::Pdf => {
-            let pdf_bytes = if opts.css_file.is_some() || opts.strict || opts.page_config.is_some()
-            {
-                markdown_file_to_pdf_with_options(&args.input, &opts)?
-            } else {
-                markdown_file_to_pdf(&args.input)?
-            };
+            let pdf_bytes = markdown_file_to_pdf_with_options(&args.input, &opts)?;
             std::fs::write(&args.output, pdf_bytes)?;
             println!("PDF saved to: {}", args.output.display());
         }
         Format::Svg => {
-            let svgs = if opts.css_file.is_some() || opts.strict || opts.page_config.is_some() {
-                markdown_file_to_svg_with_options(&args.input, &opts)?
-            } else {
-                markdown_file_to_svg(&args.input)?
-            };
+            let svgs = markdown_file_to_svg_with_options(&args.input, &opts)?;
             if svgs.len() == 1 {
                 std::fs::write(&args.output, &svgs[0])?;
                 println!("SVG saved to: {}", args.output.display());
@@ -241,11 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Format::Png => {
-            let pngs = if opts.css_file.is_some() || opts.strict || opts.page_config.is_some() {
-                markdown_file_to_png_with_options(&args.input, &opts)?
-            } else {
-                markdown_file_to_png(&args.input)?
-            };
+            let pngs = markdown_file_to_png_with_options(&args.input, &opts)?;
             if pngs.len() == 1 {
                 std::fs::write(&args.output, &pngs[0])?;
                 println!("PNG saved to: {}", args.output.display());

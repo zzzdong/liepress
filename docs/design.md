@@ -172,7 +172,7 @@ LiePress 是一个 Rust 实现的 Markdown 到多格式文档生成器，支持�
 - `auto`：移除显式宽/高，回退到自动计算
 - 无单位数字解析为 `pt`
 
-**StyleResolver**（[css.rs](file:///d:/code/rust/liepress/src/ast/css.rs#L870-L935)）：
+**StyleResolver**（[css.rs](../src/ast/css.rs#L870-L935)）：
 - 合并内置 CSS + 用户 CSS + `<style>` 内联 CSS
 - CSS 特异性排序：低优先级先应用，高优先级覆盖
 - 严格模式（`strict: true`）：CSS 解析失败时返回 `CssParseError`
@@ -242,6 +242,44 @@ h1 { color: #c00; }
 1. `markdown_to_document_with_settings()` 传入的 `PageSettings` 覆盖一切
 2. CSS 中的 `@page` 规则（来自用户 CSS 或 Markdown `<style>`）
 3. 内置默认（常量 `PAGE_MARGIN_*_PT` 和 `PAGE_*_PT`）
+
+#### 1.8 自动字体检测（Auto Font）([src/lib.rs](../src/lib.rs))
+
+内置启发式语言检测引擎，根据 Markdown 文档内容自动选择匹配的字体家族。
+
+**ScriptRange 检测**：定义四个有效脚本范围：
+
+| 脚本 | Unicode 范围 | 示例字符 |
+|------|-------------|---------|
+| Han（中文） | CJK 统一表意文字 (4E00-9FFF)、扩展 A-F (3400-2EBE0)、兼容表意文字 (F900-FAFF, 2F800-2FA1F) | 中文汉字 |
+| Japanese（日文） | 平假名 (3040-309F)、片假名 (30A0-30FF, 31F0-31FF) | あア |
+| Korean（韩文） | 韩文音节 (AC00-D7AF) | 한글 |
+| Latin（拉丁文） | 基本拉丁 (0000-00FF)、通用标点 (2000-206F)、其他字母字符 | abc |
+
+检测时会跳过代码块（``` 包围）、链接内容 `[text](url)` 和行内代码 `` ` ``，避免误判。
+
+**流程**：
+1. 遍历 Markdown 每行内容，按字符统计各脚本的出现次数
+2. 找出出现次数最多的脚本作为主要语言
+3. 根据主要语言返回推荐字体列表
+
+**字体映射**：
+
+| 主要语言 | 推荐字体列表 |
+|----------|-------------|
+| Han（中文） | `Noto Serif SC`, `Source Han Serif SC`, `SimSun`, `SimSun-ExtB`, `serif` |
+| Japanese（日文） | `Noto Serif CJK JP`, `Noto Serif JP`, `serif` |
+| Korean（韩文） | `Noto Serif CJK KR`, `Noto Serif KR`, `serif` |
+| Latin（拉丁文） | `Noto Serif`, `Georgia`, `Times New Roman`, `serif` |
+
+**集成方式**：
+
+自动字体检测通过 `resolve_user_css()` 函数集成到 CSS 解析管道中。当 `auto_font = true` 且用户未显式设置 `font_family` 或 CSS 中不包含 `font-family` 时，生成的 `body { font-family: ... }` 规则会覆盖内置 DEFAULT_CSS 的 `font-family: serif`。
+
+**启用方式**：
+- **默认启用**（自 v0.1.0 起）：`ConvertOptions::default()` 中 `auto_font = true`
+- **CLI 关闭**：`liepress --no-auto-font -i input.md -o output.pdf`
+- **编程关闭**：`ConvertOptions::new().with_auto_font(false)`
 
 ### 2. Generator 模块 (`src/generator/`)
 
@@ -555,7 +593,7 @@ render_page() → 为每个区域创建 LinkAnnotation + Action(URI)
 命令行接口，基于 clap。
 
 ```bash
-# 基本用法
+# 基本用法（自动字体检测默认开启）
 liepress -i input.md -o output.pdf
 liepress -i input.md -o output.svg
 liepress -i input.md -o output.png
@@ -565,6 +603,9 @@ liepress -i input.md -o output.pdf -s my-style.css
 
 # 严格模式（CSS 解析错误时直接报错）
 liepress -i input.md -o output.pdf -S
+
+# 关闭自动字体检测（使用内置 serif 默认字体）
+liepress -i input.md -o output.pdf --no-auto-font
 
 # 指定输出格式
 liepress -i input.md -o output.png -f png
@@ -579,6 +620,7 @@ liepress -i input.md -o output.png -f png
 | `--format <FORMAT>` | `-f` | 输出格式：`pdf`（默认）、`svg`、`png` |
 | `--style <CSS_FILE>` | `-s` | 可选 CSS 样式表文件，覆盖默认样式 |
 | `--strict` | `-S` | 严格模式：CSS 解析失败时直接报错（默认关闭） |
+| `--no-auto-font` | | 关闭自动字体检测（默认开启） |
 
 ### 8. 常量定义 ([src/generator/constants.rs](../src/generator/constants.rs))
 
@@ -617,7 +659,8 @@ let opts = ConvertOptions::new()
     .with_font_family(&["Noto Sans SC", "sans-serif"])
     .with_css("h1 { color: red; }")
     .with_css_file(PathBuf::from("style.css"))
-    .with_strict(true);
+    .with_strict(true)
+    .with_auto_font(false);
 ```
 
 **字段说明**：
@@ -628,13 +671,18 @@ let opts = ConvertOptions::new()
 | `user_css` | `String` | `""` | 用户 CSS 样式字符串，叠加在默认样式之上 |
 | `css_file` | `Option<PathBuf>` | `None` | 用户 CSS 样式文件路径，与 `user_css` 合并 |
 | `strict` | `bool` | `false` | 严格模式：CSS 解析失败时返回错误 |
+| `auto_font` | `bool` | `true` | 自动字体检测：根据文档内容选择匹配字体（中文→Noto Serif SC/宋体，日文→Noto Serif CJK JP） |
+| `page_config` | `Option<PageConfig>` | `None` | 页面配置（尺寸、边距），优先级高于 CSS `@page` |
 
 **优先级（从低到高）**：
 1. 内置默认 CSS（`DEFAULT_CSS`）
-2. `ConvertOptions.font_family`（自动生成 `body { font-family }`）
-3. `ConvertOptions.user_css`
-4. `ConvertOptions.css_file`
-5. Markdown 内联 `<style>` 标签
+2. 自动字体检测 `auto_font`（生成 `body { font-family }`，仅在未显式设置字体时生效）
+3. `ConvertOptions.font_family`（自动生成 `body { font-family }`）
+4. `ConvertOptions.user_css`
+5. `ConvertOptions.css_file`
+6. Markdown 内联 `<style>` 标签
+
+> **注意**：`auto_font` 与 `font_family` 互斥。当 `font_family` 非空或任意用户 CSS 中包含 `font-family` 时，`auto_font` 自动失效，以用户指定为准。
 
 #### 9.3 错误处理 ([src/error.rs](../src/error.rs))
 
@@ -672,7 +720,8 @@ pub enum Error {
 | 分隔线 | ✅ | 居中水平线 |
 | 表格 | ✅ | 列宽自适应，跨页分割 |
 | CSS 自定义样式 | ✅ | 内置样式表 + 用户 CSS 覆盖 + `<style>` 标签 |
-| 字体配置 | ✅ | 通过 `body { font-family }` CSS 继承或 `ConvertOptions.font_family` |
+| 字体配置 | ✅ | 自动字体检测（auto_font）、`body { font-family }` CSS 继承、`ConvertOptions.font_family` |
+| 自动字体检测 | ✅ | 基于文档内容的启发式语言检测（中文/日文/韩文/拉丁文），自动选择匹配字体 |
 | 严格模式 | ✅ | CLI `--strict` 参数或 `ConvertOptions.strict` |
 | 删除线 | ⚠️ | NodeKind 已定义，样式未渲染 |
 | 任务列表 | ❌ | 未实现 |
@@ -802,6 +851,7 @@ pub enum Error {
 - 与 Web CSS 行为一致，降低学习成本
 - 显式设置（如 `pre { font-family: monospace }`）自然覆盖继承值
 - 支持 `ConvertOptions.font_family` 作为编程式快捷方式，无需手写 CSS
+- 支持 `auto_font` 自动检测，无需任何配置即可获得合理字体
 
 ## 扩展指南
 
@@ -822,9 +872,10 @@ pub enum Error {
 
 ### 自定义样式
 
-通过 CSS 覆盖机制提供三种方式：
+通过 CSS 覆盖机制提供四种方式：
 
-1. **Markdown 中 `<style>` 标签**：最便捷，直接在文档头部写 CSS 规则
+1. **自动字体检测**（默认启用）：自动根据文档语言选择合适的字体家族，无需任何配置
+2. **Markdown 中 `<style>` 标签**：最便捷，直接在文档头部写 CSS 规则
    ```markdown
    <style>
    body { font-family: "Noto Sans SC", serif; }
@@ -832,14 +883,20 @@ pub enum Error {
    </style>
    ```
 
-2. **外部 CSS 文件**：通过 CLI `-s` 参数或 `ConvertOptions.css_file` 指定
+3. **外部 CSS 文件**：通过 CLI `-s` 参数或 `ConvertOptions.css_file` 指定
    ```bash
    liepress -i input.md -o output.pdf -s my-theme.css
    ```
 
-3. **`ConvertOptions.font_family`**：编程式快捷设置全局字体，自动注入 CSS
+4. **`ConvertOptions.font_family`**：编程式快捷设置全局字体，自动注入 CSS
 
-**优先级**（从低到高）：内置 CSS → `font_family` → `user_css` → `css_file` → Markdown `<style>`
+**优先级**（从低到高）：
+1. 内置 CSS（`DEFAULT_CSS`）
+2. 自动字体检测 `auto_font`（仅在未显式设置字体时生效）
+3. `ConvertOptions.font_family`
+4. `ConvertOptions.user_css`
+5. `ConvertOptions.css_file`
+6. Markdown 内联 `<style>` 标签
 
 **继承**：在 `body` 上设置的字体、颜色等可继承属性会自动应用到所有未显式覆盖的元素。
 

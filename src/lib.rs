@@ -50,10 +50,10 @@ pub struct ConvertOptions {
     pub css_file: Option<PathBuf>,
     /// 严格模式：CSS 解析失败时返回错误（默认 false）
     pub strict: bool,
-    /// 自动字体：根据文档内容自动选择合适的字体（默认 false）
+    /// 自动字体：根据文档内容自动选择合适的字体（默认 true）
     ///
     /// 启用后，如果没有显式设置 `font_family`，会根据文档中的字符分布
-    /// 自动推荐字体列表（如中文优先 Noto Serif SC，日文优先 Noto Serif JP）。
+    /// 自动推荐字体列表（如中文优先 Noto Serif SC + SimSun，日文优先 Noto Serif CJK JP）。
     /// 用户提供的 CSS（包括 `<style>` 中的 `body { font-family }`）始终最高优先级。
     pub auto_font: bool,
     /// 页面配置（页面尺寸、边距等）
@@ -139,7 +139,7 @@ impl Default for ConvertOptions {
             user_css: String::new(),
             css_file: None,
             strict: false,
-            auto_font: false,
+            auto_font: true,
             page_config: None,
         }
     }
@@ -199,10 +199,31 @@ impl ScriptRange {
     fn from_char(c: char) -> Self {
         let code = c as u32;
         match code {
-            0x3040..=0x309F | 0x30A0..=0x30FF => ScriptRange::Japanese,
-            0x3400..=0x4DBF | 0x4E00..=0x9FFF => ScriptRange::Han,
+            // 日文：平假名、片假名
+            0x3040..=0x309F | 0x30A0..=0x30FF | 0x31F0..=0x31FF => ScriptRange::Japanese,
+            // 中文/汉字：
+            //   CJK 统一表意文字 (4E00-9FFF)
+            //   CJK 扩展 A (3400-4DBF)
+            //   CJK 扩展 B (20000-2A6DF)
+            //   CJK 扩展 C (2A700-2B73F)
+            //   CJK 扩展 D (2B740-2B81F)
+            //   CJK 扩展 E (2B820-2CEAF)
+            //   CJK 扩展 F (2CEB0-2EBE0)
+            //   CJK 兼容表意文字 (F900-FAFF)
+            //   CJK 兼容表意文字补充 (2F800-2FA1F)
+            0x3400..=0x4DBF | 0x4E00..=0x9FFF
+            | 0xF900..=0xFAFF
+            | 0x20000..=0x2A6DF
+            | 0x2A700..=0x2B73F
+            | 0x2B740..=0x2B81F
+            | 0x2B820..=0x2CEAF
+            | 0x2CEB0..=0x2EBE0
+            | 0x2F800..=0x2FA1F => ScriptRange::Han,
+            // 韩文
             0xAC00..=0xD7AF => ScriptRange::Korean,
+            // 拉丁文基础、补充标点
             0x0000..=0x00FF | 0x2000..=0x206F => ScriptRange::Latin,
+            // 其他有字母属性的字符归为 Latin
             _ if c.is_alphabetic() => ScriptRange::Latin,
             _ => ScriptRange::Other,
         }
@@ -261,10 +282,29 @@ fn infer_font_family(markdown: &str) -> Vec<String> {
     let dominant = counts.iter().max_by_key(|&(_, count)| *count).map(|(k, _)| *k).unwrap_or(ScriptRange::Other);
 
     match dominant {
-        ScriptRange::Han => vec!["Noto Serif SC".to_string(), "Noto Sans SC".to_string(), "serif".to_string()],
-        ScriptRange::Japanese => vec!["Noto Serif JP".to_string(), "Noto Sans JP".to_string(), "sans-serif".to_string()],
-        ScriptRange::Korean => vec!["Noto Serif KR".to_string(), "Noto Sans KR".to_string(), "sans-serif".to_string()],
-        ScriptRange::Latin => vec!["Noto Serif".to_string(), "Georgia".to_string(), "Times New Roman".to_string(), "serif".to_string()],
+        ScriptRange::Han => vec![
+            "Noto Serif SC".to_string(),
+            "Source Han Serif SC".to_string(),
+            "SimSun".to_string(),
+            "SimSun-ExtB".to_string(),
+            "serif".to_string(),
+        ],
+        ScriptRange::Japanese => vec![
+            "Noto Serif CJK JP".to_string(),
+            "Noto Serif JP".to_string(),
+            "serif".to_string(),
+        ],
+        ScriptRange::Korean => vec![
+            "Noto Serif CJK KR".to_string(),
+            "Noto Serif KR".to_string(),
+            "serif".to_string(),
+        ],
+        ScriptRange::Latin => vec![
+            "Noto Serif".to_string(),
+            "Georgia".to_string(),
+            "Times New Roman".to_string(),
+            "serif".to_string(),
+        ],
         ScriptRange::Other => vec!["serif".to_string()],
     }
 }
