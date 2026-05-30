@@ -651,8 +651,8 @@ fn parse_font_family(value: &str) -> Vec<String> {
     families
 }
 
-/// 解析长度值（支持 pt, px, em, %）
-fn parse_length(value: &str, parent_font_size: f32) -> Option<f32> {
+/// 解析长度值（支持 pt, px, em, %, mm, cm, in）
+pub(crate) fn parse_length(value: &str, parent_font_size: f32) -> Option<f32> {
     let value = value.trim();
 
     // 处理 `0`（无单位）
@@ -667,6 +667,15 @@ fn parse_length(value: &str, parent_font_size: f32) -> Option<f32> {
     } else if let Some(v) = value.strip_suffix("em") {
         let em = v.trim().parse::<f32>().ok()?;
         Some(em * parent_font_size)
+    } else if let Some(v) = value.strip_suffix("mm") {
+        let mm = v.trim().parse::<f32>().ok()?;
+        Some(mm * 72.0 / 25.4)
+    } else if let Some(v) = value.strip_suffix("cm") {
+        let cm = v.trim().parse::<f32>().ok()?;
+        Some(cm * 72.0 / 2.54)
+    } else if let Some(v) = value.strip_suffix("in") {
+        let inches = v.trim().parse::<f32>().ok()?;
+        Some(inches * 72.0)
     } else if let Some(v) = value.strip_suffix('%') {
         let pct = v.trim().parse::<f32>().ok()?;
         Some(pct * parent_font_size / 100.0)
@@ -870,22 +879,79 @@ fn apply_page_declaration(config: &mut PageConfig, property: &str, value: &str) 
         }
         "size" => {
             let parts: Vec<&str> = value.split_whitespace().collect();
-            if parts.len() == 2 {
-                if let (Some(w), Some(h)) = (parse_length(parts[0], 10.5), parse_length(parts[1], 10.5)) {
-                    config.width = Some(w);
-                    config.height = Some(h);
-                }
-            } else if parts.len() == 1 {
-                match parts[0].to_ascii_lowercase().as_str() {
+            let mut width: Option<f32> = None;
+            let mut height: Option<f32> = None;
+            let mut is_landscape = false;
+            let mut is_portrait = false;
+
+            for part in &parts {
+                let lower = part.to_ascii_lowercase();
+                match lower.as_str() {
+                    "landscape" => {
+                        is_landscape = true;
+                    }
+                    "portrait" => {
+                        is_portrait = true;
+                    }
+                    "a3" => {
+                        width = Some(841.890);
+                        height = Some(1190.551);
+                    }
                     "a4" => {
-                        config.width = Some(595.276);
-                        config.height = Some(841.890);
+                        width = Some(595.276);
+                        height = Some(841.890);
+                    }
+                    "a5" => {
+                        width = Some(419.528);
+                        height = Some(595.276);
+                    }
+                    "a6" => {
+                        width = Some(297.638);
+                        height = Some(419.528);
                     }
                     "letter" => {
-                        config.width = Some(612.0);
-                        config.height = Some(792.0);
+                        width = Some(612.0);
+                        height = Some(792.0);
                     }
-                    _ => {}
+                    "legal" => {
+                        width = Some(612.0);
+                        height = Some(1008.0);
+                    }
+                    "tabloid" | "ledger" => {
+                        width = Some(792.0);
+                        height = Some(1224.0);
+                    }
+                    _ => {
+                        if let Some(v) = parse_length(part, 10.5) {
+                            if width.is_none() {
+                                width = Some(v);
+                            } else if height.is_none() {
+                                height = Some(v);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if is_landscape {
+                if let (Some(w), Some(h)) = (width, height) {
+                    config.width = Some(w.max(h));
+                    config.height = Some(w.min(h));
+                } else {
+                    config.width = Some(841.890);
+                    config.height = Some(595.276);
+                }
+            } else if is_portrait {
+                if let (Some(w), Some(h)) = (width, height) {
+                    config.width = Some(w.min(h));
+                    config.height = Some(w.max(h));
+                }
+            } else {
+                if let Some(w) = width {
+                    config.width = Some(w);
+                }
+                if let Some(h) = height {
+                    config.height = Some(h);
                 }
             }
         }
@@ -898,13 +964,9 @@ impl Stylesheet {
     pub fn extract_page_config(&self) -> PageConfig {
         let mut config = PageConfig::default();
         for at_rule in &self.at_rules {
-            match at_rule {
-                AtRule::Page { declarations } => {
-                    for decl in declarations {
-                        apply_page_declaration(&mut config, &decl.property, &decl.value);
-                    }
-                }
-                _ => {}
+            let AtRule::Page { declarations } = at_rule;
+            for decl in declarations {
+                apply_page_declaration(&mut config, &decl.property, &decl.value);
             }
         }
         config
@@ -1270,6 +1332,98 @@ mod tests {
         let css = r#"
             @page {
                 size: Letter;
+            }
+        "#;
+        let sheet = parse_css(css).unwrap();
+        let config = sheet.extract_page_config();
+        assert_eq!(config.width, Some(612.0));
+        assert_eq!(config.height, Some(792.0));
+    }
+
+    #[test]
+    fn test_page_at_rule_size_a3() {
+        let css = r#"
+            @page {
+                size: A3;
+            }
+        "#;
+        let sheet = parse_css(css).unwrap();
+        let config = sheet.extract_page_config();
+        assert_eq!(config.width, Some(841.890));
+        assert_eq!(config.height, Some(1190.551));
+    }
+
+    #[test]
+    fn test_page_at_rule_size_legal() {
+        let css = r#"
+            @page {
+                size: Legal;
+            }
+        "#;
+        let sheet = parse_css(css).unwrap();
+        let config = sheet.extract_page_config();
+        assert_eq!(config.width, Some(612.0));
+        assert_eq!(config.height, Some(1008.0));
+    }
+
+    #[test]
+    fn test_page_at_rule_size_tabloid() {
+        let css = r#"
+            @page {
+                size: Tabloid;
+            }
+        "#;
+        let sheet = parse_css(css).unwrap();
+        let config = sheet.extract_page_config();
+        assert_eq!(config.width, Some(792.0));
+        assert_eq!(config.height, Some(1224.0));
+    }
+
+    #[test]
+    fn test_page_at_rule_size_landscape() {
+        let css = r#"
+            @page {
+                size: landscape;
+            }
+        "#;
+        let sheet = parse_css(css).unwrap();
+        let config = sheet.extract_page_config();
+        // landscape without size name defaults to A4 landscape (swapped)
+        assert_eq!(config.width, Some(841.890));
+        assert_eq!(config.height, Some(595.276));
+    }
+
+    #[test]
+    fn test_page_at_rule_size_a4_landscape() {
+        let css = r#"
+            @page {
+                size: A4 landscape;
+            }
+        "#;
+        let sheet = parse_css(css).unwrap();
+        let config = sheet.extract_page_config();
+        assert_eq!(config.width, Some(841.890));
+        assert_eq!(config.height, Some(595.276));
+    }
+
+    #[test]
+    fn test_page_at_rule_size_custom_landscape() {
+        let css = r#"
+            @page {
+                size: 600pt 800pt landscape;
+            }
+        "#;
+        let sheet = parse_css(css).unwrap();
+        let config = sheet.extract_page_config();
+        assert_eq!(config.width, Some(800.0));
+        assert_eq!(config.height, Some(600.0));
+    }
+
+    #[test]
+    fn test_page_at_rule_size_portrait() {
+        let css = r#"
+            @page {
+                size: Letter portrait;
             }
         "#;
         let sheet = parse_css(css).unwrap();

@@ -1234,3 +1234,67 @@ pub fn markdown_to_document_with_css_and_base_dir_strict(
 
     Ok(generator.finish())
 }
+
+/// 使用自定义 CSS 和页面配置覆盖将 Markdown 转换为 Document
+///
+/// `page_config_override` 的优先级最高，会覆盖 CSS `@page` 规则中的同名字段。
+/// 如果不需要覆盖，传 `None` 即可。
+pub fn markdown_to_document_with_css_and_page_config(
+    markdown: &str,
+    user_css: &str,
+    page_config_override: Option<crate::ast::PageConfig>,
+    base_dir: Option<PathBuf>,
+    strict: bool,
+) -> Result<Document, String> {
+    let (styled_root, mut page_config) = if strict {
+        crate::ast::parse_markdown_with_css_strict(markdown, user_css)?
+    } else {
+        match crate::ast::parse_markdown_with_css(markdown, user_css) {
+            Ok(result) => result,
+            Err(_) => (
+                crate::ast::Node::new(
+                    crate::ast::NodeKind::Document { children: vec![] },
+                    crate::ast::Style::default(),
+                    false,
+                ),
+                crate::ast::PageConfig::default(),
+            ),
+        }
+    };
+
+    // 应用 page_config_override（最高优先级，覆盖 CSS @page 规则）
+    if let Some(ref override_config) = page_config_override {
+        if let Some(v) = override_config.width {
+            page_config.width = Some(v);
+        }
+        if let Some(v) = override_config.height {
+            page_config.height = Some(v);
+        }
+        if let Some(v) = override_config.margin_top {
+            page_config.margin_top = Some(v);
+        }
+        if let Some(v) = override_config.margin_bottom {
+            page_config.margin_bottom = Some(v);
+        }
+        if let Some(v) = override_config.margin_left {
+            page_config.margin_left = Some(v);
+        }
+        if let Some(v) = override_config.margin_right {
+            page_config.margin_right = Some(v);
+        }
+    }
+
+    let settings = PageSettings::from(page_config);
+    let mut generator = DocumentGenerator::with_settings(settings);
+    if let Some(dir) = base_dir {
+        generator = generator.with_base_dir(dir);
+    }
+
+    if let crate::ast::NodeKind::Document { children } = &styled_root.kind {
+        for child in children {
+            generator.layout_node(child);
+        }
+    }
+
+    Ok(generator.finish())
+}
