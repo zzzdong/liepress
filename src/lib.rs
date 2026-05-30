@@ -130,6 +130,64 @@ impl ConvertOptions {
         self.page_config = Some(config);
         self
     }
+
+    /// 设置页眉文本（支持 {page} 和 {total} 模板变量）
+    ///
+    /// 页眉会显示在每页的顶部边距区域，居中对齐。
+    /// 使用 `{page}` 表示当前页码，`{total}` 表示总页数。
+    ///
+    /// ```
+    /// use liepress::ConvertOptions;
+    ///
+    /// let opts = ConvertOptions::new()
+    ///     .with_header("我的文档");
+    ///
+    /// let opts = ConvertOptions::new()
+    ///     .with_header("第 {page} 页 / 共 {total} 页");
+    /// ```
+    pub fn with_header(mut self, header: &str) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.header = Some(header.to_string());
+        self
+    }
+
+    /// 设置页脚文本（支持 {page} 和 {total} 模板变量）
+    ///
+    /// 页脚会显示在每页的底部边距区域，居中对齐。
+    /// 使用 `{page}` 表示当前页码，`{total}` 表示总页数。
+    ///
+    /// ```
+    /// use liepress::ConvertOptions;
+    ///
+    /// let opts = ConvertOptions::new()
+    ///     .with_footer("- {page} -");
+    ///
+    /// let opts = ConvertOptions::new()
+    ///     .with_footer("第 {page} 页 / 共 {total} 页");
+    /// ```
+    pub fn with_footer(mut self, footer: &str) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.footer = Some(footer.to_string());
+        self
+    }
+
+    /// 设置页眉字体大小（pt）
+    ///
+    /// 默认 9pt。仅在设置了页眉时生效。
+    pub fn with_header_font_size(mut self, size: f32) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.header_font_size = Some(size);
+        self
+    }
+
+    /// 设置页脚字体大小（pt）
+    ///
+    /// 默认 9pt。仅在设置了页脚时生效。
+    pub fn with_footer_font_size(mut self, size: f32) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.footer_font_size = Some(size);
+        self
+    }
 }
 
 impl Default for ConvertOptions {

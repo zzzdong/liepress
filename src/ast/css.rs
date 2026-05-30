@@ -143,8 +143,7 @@ pub fn parse_css(css: &str) -> Result<Stylesheet, String> {
         // 解析选择器（支持逗号分隔的多个选择器）
         let selectors: Vec<Selector> = selector_str
             .split(',')
-            .map(|s| parse_selector(s.trim()))
-            .flatten()
+            .filter_map(|s| parse_selector(s.trim()))
             .collect();
 
         if selectors.is_empty() {
@@ -954,6 +953,28 @@ fn apply_page_declaration(config: &mut PageConfig, property: &str, value: &str) 
                 }
             }
         }
+        "header" => {
+            let trimmed = value.trim();
+            if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+                config.header = Some(trimmed[1..trimmed.len()-1].to_string());
+            } else {
+                config.header = Some(trimmed.to_string());
+            }
+        }
+        "footer" => {
+            let trimmed = value.trim();
+            if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+                config.footer = Some(trimmed[1..trimmed.len()-1].to_string());
+            } else {
+                config.footer = Some(trimmed.to_string());
+            }
+        }
+        "header-font-size" => {
+            config.header_font_size = parse_length(value, 10.5);
+        }
+        "footer-font-size" => {
+            config.footer_font_size = parse_length(value, 10.5);
+        }
         _ => {}
     }
 }
@@ -1049,6 +1070,18 @@ impl StyleResolver {
                 }
                 if let Some(v) = user_page.height {
                     page_config.height = Some(v);
+                }
+                if let Some(v) = user_page.header {
+                    page_config.header = Some(v);
+                }
+                if let Some(v) = user_page.footer {
+                    page_config.footer = Some(v);
+                }
+                if let Some(v) = user_page.header_font_size {
+                    page_config.header_font_size = Some(v);
+                }
+                if let Some(v) = user_page.footer_font_size {
+                    page_config.footer_font_size = Some(v);
                 }
                 Ok(Self {
                     user,

@@ -221,27 +221,47 @@ h1 { color: #c00; }
 - 不可继承属性：`margin-*`、`padding-*`、`display`、`width`、`height`、`background-color`、`object-fit`
 - `body` 上设置的 `font-family` 会自动传递到所有未显式设置字体的元素（`code`/`pre` 等设置了 `monospace` 的除外）
 
-#### 1.7 页面设置 (@page)
+#### 1.7 页面设置 (@page) 与页眉页脚
 
-通过 `@page` at-rule 可配置页面尺寸和页边距。
+通过 `@page` at-rule 可配置页面尺寸、页边距以及页眉页脚。
 
-支持的属性：
+**尺寸与边距属性**：
 - `margin-top`, `margin-bottom`, `margin-left`, `margin-right`：页边距（pt/px/in/cm 等绝对单位）
 - `margin`：简写，支持 1~4 个值（同 CSS 标准）
 - `size`：页面尺寸，支持命名值（`A4`, `Letter`）或两个长度值（宽 高）
+
+**页眉页脚属性**：
+- `header`：页眉文本，支持 `{page}`（当前页码）和 `{total}`（总页数）模板变量
+- `footer`：页脚文本，模板变量同上。默认值 `- {page} -`
+- `header-font-size`：页眉字号（pt），默认 9pt
+- `footer-font-size`：页脚字号（pt），默认 9pt
 
 示例：
 ```css
 @page {
     margin: 36pt 54pt;
     size: A4;
+    header: "项目文档";
+    footer: "第 {page} 页 / 共 {total} 页";
+    header-font-size: 10pt;
 }
 ```
 
-优先级规则：
+**页眉渲染**：
+- 文本居中对齐，灰色（`#646464`），9pt
+- 页眉文字下方有一条 0.5pt 浅灰（`#C8C8C8`）分隔线
+- 绘制在顶部边距区域，内容区上方 4pt
+
+**页脚渲染**：
+- 文本居中对齐，灰色（`#646464`），9pt
+- 无分隔线
+- 绘制在底部边距区域，内容区下方 4pt
+
+**优先级规则**：
 1. `markdown_to_document_with_settings()` 传入的 `PageSettings` 覆盖一切
-2. CSS 中的 `@page` 规则（来自用户 CSS 或 Markdown `<style>`）
-3. 内置默认（常量 `PAGE_MARGIN_*_PT` 和 `PAGE_*_PT`）
+2. `ConvertOptions.page_config` 中的页眉页脚字段
+3. CSS 中的 `@page` 规则（来自用户 CSS 或 Markdown `<style>`）
+4. 内置默认（页脚显示 `- {page} -`，无页眉）
 
 #### 1.8 自动字体检测（Auto Font）([src/lib.rs](../src/lib.rs))
 
@@ -609,6 +629,14 @@ liepress -i input.md -o output.pdf --no-auto-font
 
 # 指定输出格式
 liepress -i input.md -o output.png -f png
+
+# 页眉页脚控制
+liepress -i input.md -o output.pdf --header "项目报告"
+liepress -i input.md -o output.pdf --footer "第 {page} 页 / 共 {total} 页"
+liepress -i input.md -o output.pdf --no-page-number
+
+# 同时控制页眉和页脚
+liepress -i input.md -o output.pdf --header "机密" --footer "- {page} -"
 ```
 
 **参数说明**：
@@ -621,6 +649,9 @@ liepress -i input.md -o output.png -f png
 | `--style <CSS_FILE>` | `-s` | 可选 CSS 样式表文件，覆盖默认样式 |
 | `--strict` | `-S` | 严格模式：CSS 解析失败时直接报错（默认关闭） |
 | `--no-auto-font` | | 关闭自动字体检测（默认开启） |
+| `--header <TEXT>` | | 页眉文本，支持 `{page}` 和 `{total}` 模板变量 |
+| `--footer <TEXT>` | | 页脚文本，默认显示 `- {page} -`，空字符串清除页脚 |
+| `--no-page-number` | | 移除默认页码，等价于 `--footer ""` |
 
 ### 8. 常量定义 ([src/generator/constants.rs](../src/generator/constants.rs))
 
@@ -672,7 +703,22 @@ let opts = ConvertOptions::new()
 | `css_file` | `Option<PathBuf>` | `None` | 用户 CSS 样式文件路径，与 `user_css` 合并 |
 | `strict` | `bool` | `false` | 严格模式：CSS 解析失败时返回错误 |
 | `auto_font` | `bool` | `true` | 自动字体检测：根据文档内容选择匹配字体（中文→Noto Serif SC/宋体，日文→Noto Serif CJK JP） |
-| `page_config` | `Option<PageConfig>` | `None` | 页面配置（尺寸、边距），优先级高于 CSS `@page` |
+| `page_config` | `Option<PageConfig>` | `None` | 页面配置（尺寸、边距、页眉页脚），优先级高于 CSS `@page` |
+
+**Builder 方法**：
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `with_font_family(&[&str])` | 字体家族列表 | 设置全局默认字体家族 |
+| `with_css(&str)` | CSS 字符串 | 设置用户 CSS 样式字符串 |
+| `with_css_file(PathBuf)` | CSS 文件路径 | 设置用户 CSS 样式文件路径 |
+| `with_strict(bool)` | 是否严格 | 设置严格模式 |
+| `with_auto_font(bool)` | 是否自动 | 设置自动字体检测 |
+| `with_page_config(PageConfig)` | 页面配置 | 设置页面尺寸、边距等 |
+| `with_header(&str)` | 页眉文本 | 设置页眉，支持 `{page}` / `{total}` 模板 |
+| `with_footer(&str)` | 页脚文本 | 设置页脚，支持 `{page}` / `{total}` 模板 |
+| `with_header_font_size(f32)` | 字号(pt) | 设置页眉字体大小，默认 9pt |
+| `with_footer_font_size(f32)` | 字号(pt) | 设置页脚字体大小，默认 9pt |
 
 **优先级（从低到高）**：
 1. 内置默认 CSS（`DEFAULT_CSS`）
@@ -770,6 +816,8 @@ pub enum Error {
 | A4 页面 | ✅ | 默认 |
 | 自定义页面尺寸 | ✅ | 通过 PageSettings |
 | 自定义边距 | ✅ | 通过 PageSettings |
+| 页眉 | ✅ | 支持 `{page}` / `{total}` 模板变量，带分隔线 |
+| 页脚/页码 | ✅ | 默认显示 `- {page} -`，支持模板变量 |
 | 自动分页 | ✅ | 行级分页，确保行完整 |
 | 列表缩进 | ✅ | 基于字体大小 2em 动态计算，支持 CSS `list-indent` 自定义 |
 | 有序列表起始编号 | ✅ | 支持 start 属性 |
@@ -954,10 +1002,9 @@ pub enum Error {
 ### 中期
 
 6. **主题系统**: 外部主题文件（YAML/TOML）支持
-7. **页眉页脚**: 支持页码、标题、日期等
-8. **目录生成**: 自动生成 Table of Contents
-9. **图片对齐**: 支持 float、居中、环绕等布局
-10. **自定义字体注册**: 改进字体注册 API，支持按文档配置字体文件
+7. **目录生成**: 自动生成 Table of Contents
+8. **图片对齐**: 支持 float、居中、环绕等布局
+9. **自定义字体注册**: 改进字体注册 API，支持按文档配置字体文件
 
 ### 长期
 

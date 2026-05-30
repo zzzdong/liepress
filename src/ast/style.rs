@@ -234,7 +234,7 @@ impl Default for Style {
 }
 
 /// 页面配置（从 CSS @page 规则提取）
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PageConfig {
     pub margin_top: Option<f32>,
     pub margin_bottom: Option<f32>,
@@ -242,4 +242,31 @@ pub struct PageConfig {
     pub margin_right: Option<f32>,
     pub width: Option<f32>,
     pub height: Option<f32>,
+
+    // ─── 页眉页脚 ──────────────────────────────────────────
+    /// 页眉文本（支持 {page} 和 {total} 模板变量）
+    pub header: Option<String>,
+    /// 页脚文本（支持 {page} 和 {total} 模板变量），默认显示页码
+    pub footer: Option<String>,
+    /// 页眉字体大小（pt）
+    pub header_font_size: Option<f32>,
+    /// 页脚字体大小（pt）
+    pub footer_font_size: Option<f32>,
+}
+
+impl Default for PageConfig {
+    fn default() -> Self {
+        Self {
+            margin_top: None,
+            margin_bottom: None,
+            margin_left: None,
+            margin_right: None,
+            width: None,
+            height: None,
+            header: None,
+            footer: Some("- {page} -".to_string()),
+            header_font_size: None,
+            footer_font_size: None,
+        }
+    }
 }

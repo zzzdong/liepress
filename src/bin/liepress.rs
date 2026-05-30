@@ -83,6 +83,21 @@ struct Args {
     /// language of the document (e.g. Chinese → Noto Serif SC, SimSun).
     #[arg(long = "no-auto-font", default_value_t = false)]
     no_auto_font: bool,
+
+    /// Page header text (supports {page} and {total} templates).
+    /// Empty string disables the header.
+    #[arg(long = "header", value_name = "TEXT")]
+    header: Option<String>,
+
+    /// Page footer text (supports {page} and {total} templates).
+    /// By default shows page number. Empty string disables the footer.
+    #[arg(long = "footer", value_name = "TEXT")]
+    footer: Option<String>,
+
+    /// Remove the default page number from the footer.
+    /// Equivalent to --footer "".
+    #[arg(long = "no-page-number", default_value_t = false)]
+    no_page_number: bool,
 }
 
 /// Parse a length string with unit (pt, mm, cm, in) into points (pt)
@@ -125,7 +140,7 @@ fn resolve_page_size(name: &str) -> (Option<f32>, Option<f32>) {
     }
 }
 
-/// Build a PageConfig from CLI args (returns None if no page args are given)
+/// Build a PageConfig from CLI args (returns None if no page/header/footer args are given)
 fn build_page_config(args: &Args) -> Option<PageConfig> {
     let has_page_args = args.page_size.is_some()
         || args.page_width.is_some()
@@ -136,7 +151,10 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
         || args.margin_top.is_some()
         || args.margin_bottom.is_some()
         || args.margin_left.is_some()
-        || args.margin_right.is_some();
+        || args.margin_right.is_some()
+        || args.header.is_some()
+        || args.footer.is_some()
+        || args.no_page_number;
 
     if !has_page_args {
         return None;
@@ -193,6 +211,25 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
     }
     if let Some(v) = &args.margin_right {
         config.margin_right = parse_length(v);
+    }
+
+    // ─── 页眉页脚 ───────────────────────────────────────
+    if let Some(header) = &args.header {
+        if header.is_empty() {
+            config.header = None;
+        } else {
+            config.header = Some(header.clone());
+        }
+    }
+    if let Some(footer) = &args.footer {
+        if footer.is_empty() {
+            config.footer = None;
+        } else {
+            config.footer = Some(footer.clone());
+        }
+    }
+    if args.no_page_number {
+        config.footer = None;
     }
 
     Some(config)

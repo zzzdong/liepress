@@ -219,7 +219,7 @@ struct GlyphRaw {
 /// - x = 该行最左字形相对于 layout 左侧的偏移
 /// - y = 该行顶部相对于 layout 顶部的累积偏移
 /// runs[].glyphs[].x/y = glyph 坐标 - 行原点，即相对行左上角的偏移
-fn extract_lines_from_parley(layout: &parley::Layout<Color>, full_text: &str) -> Vec<TextLine> {
+fn extract_lines_from_parley(layout: &parley::Layout<Color>, _full_text: &str) -> Vec<TextLine> {
     let mut lines = Vec::new();
     let mut row_top_rel = 0.0_f32;
     let mut full_text_pos = 0_usize;

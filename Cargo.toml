@@ -1,7 +1,18 @@
 [package]
 name = "liepress"
-version = "0.1.0"
+version = "0.1.0-beta.0"
+description = "A Markdown to PDF/SVG/PNG converter with CSS styling support"
+authors = ["zzzdong <kuwater@163.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zzzdong/liepress"
+homepage = "https://github.com/zzzdong/liepress"
+keywords = ["markdown", "pdf", "svg", "png", "document"]
+categories = ["command-line-utilities", "rendering", "text-processing"]
 edition = "2024"
+
+[[bin]]
+name = "liepress"
+path = "src/bin/liepress.rs"
 
 [dependencies]
 base64 = "0.22"
@@ -15,3 +26,8 @@ vello_cpu = "0.0.9"
 
 [dev-dependencies]
 lopdf = "0.40"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

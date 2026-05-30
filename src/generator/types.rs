@@ -11,7 +11,7 @@ use crate::generator::constants::{
 use crate::ast::PageConfig;
 
 /// 页面设置 - 可配置的页面尺寸和边距
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PageSettings {
     pub width_pt: f32,
     pub height_pt: f32,
@@ -19,6 +19,16 @@ pub struct PageSettings {
     pub margin_bottom_pt: f32,
     pub margin_left_pt: f32,
     pub margin_right_pt: f32,
+
+    // ─── 页眉页脚 ──────────────────────────────────────────
+    /// 页眉文本（支持 {page} 和 {total} 模板变量）
+    pub header: Option<String>,
+    /// 页脚文本（支持 {page} 和 {total} 模板变量）
+    pub footer: Option<String>,
+    /// 页眉字体大小（pt），默认 9pt
+    pub header_font_size: f32,
+    /// 页脚字体大小（pt），默认 9pt
+    pub footer_font_size: f32,
 }
 
 impl Default for PageSettings {
@@ -30,6 +40,10 @@ impl Default for PageSettings {
             margin_bottom_pt: PAGE_MARGIN_BOTTOM_PT,
             margin_left_pt: PAGE_MARGIN_LEFT_PT,
             margin_right_pt: PAGE_MARGIN_RIGHT_PT,
+            header: None,
+            footer: Some("- {page} -".to_string()),
+            header_font_size: 9.0,
+            footer_font_size: 9.0,
         }
     }
 }
@@ -88,6 +102,10 @@ impl From<PageConfig> for PageSettings {
             margin_bottom_pt: config.margin_bottom.unwrap_or(PAGE_MARGIN_BOTTOM_PT),
             margin_left_pt: config.margin_left.unwrap_or(PAGE_MARGIN_LEFT_PT),
             margin_right_pt: config.margin_right.unwrap_or(PAGE_MARGIN_RIGHT_PT),
+            header: config.header,
+            footer: config.footer,
+            header_font_size: config.header_font_size.unwrap_or(9.0),
+            footer_font_size: config.footer_font_size.unwrap_or(9.0),
         }
     }
 }

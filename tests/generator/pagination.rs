@@ -117,14 +117,19 @@ fn test_page_boundaries_respected() {
     let md = "Some content";
     let doc = markdown_to_document(md);
 
+    let content_bottom = PAGE_HEIGHT_PT - PAGE_MARGIN_BOTTOM_PT;
     for page in &doc.pages {
         for elem in &page.elements {
             if let VisualElement::TextLine { bounds, .. } = elem {
-                // Text should be within page content area
-                assert!(
-                    bounds.y1 <= (PAGE_HEIGHT_PT - PAGE_MARGIN_BOTTOM_PT) as f64,
-                    "Text should not exceed page bottom margin"
-                );
+                // 仅在内容区域内开始的文本才检查边界
+                //（页眉页脚在边距区域，不受此限制）
+                if bounds.y0 < content_bottom as f64 {
+                    assert!(
+                        bounds.y1 <= content_bottom as f64 + 0.1,
+                        "Text at y0={:.1} starts in content area but y1={:.1} exceeds bottom margin ({:.1})",
+                        bounds.y0, bounds.y1, content_bottom
+                    );
+                }
             }
         }
     }

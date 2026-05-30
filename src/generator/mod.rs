@@ -51,7 +51,14 @@ impl DocumentGenerator {
     }
 
     pub fn finish(self) -> Document {
-        self.page_context.finish()
+        let settings = self.page_context.settings.clone();
+        let has_header_footer = settings.header.is_some()
+            || settings.footer.is_some();
+        let mut document = self.page_context.finish();
+        if has_header_footer {
+            inject_header_footer_into_document(&mut document, &settings);
+        }
+        document
     }
 
     // ─── 公开布局入口 ───────────────────────────────────────
@@ -102,7 +109,7 @@ impl DocumentGenerator {
         margin_bottom: f32,
         splittable: bool,
     ) {
-        let settings = self.page_context.settings;
+        let settings = self.page_context.settings.clone();
         let content_height = settings.content_height();
         let content_x = settings.content_x();
         let content_y = settings.content_y();
@@ -153,6 +160,13 @@ impl DocumentGenerator {
             return;
         }
 
+        let align = match style.text_align {
+            crate::ast::TextAlign::Left => TextAlign::Left,
+            crate::ast::TextAlign::Center => TextAlign::Center,
+            crate::ast::TextAlign::Right => TextAlign::Right,
+            crate::ast::TextAlign::Justify => TextAlign::Left,
+        };
+
         let total_text: String = segments.iter().map(|(t, _)| t.as_str()).collect();
         let combined: Vec<(&str, &TextStyle)> =
             segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
@@ -166,7 +180,7 @@ impl DocumentGenerator {
                 let layout = layout_text_with_contexts(
                     &combined,
                     Some(available_width as f64),
-                    TextAlign::Left,
+                    align,
                     &mut fcx,
                     &mut lcx,
                 );
@@ -236,7 +250,7 @@ impl DocumentGenerator {
                     self.page_context.start_new_page();
                 }
 
-                let settings = self.page_context.settings;
+                let settings = self.page_context.settings.clone();
                 let content_height = settings.content_height();
 
                 // 第一步：将行分组到各页面
@@ -730,7 +744,7 @@ impl DocumentGenerator {
                             self.page_context.consume_height(first_line_height);
 
                             // 放置剩余的行
-                            let settings = self.page_context.settings;
+                            let settings = self.page_context.settings.clone();
                             let content_height = settings.content_height();
                             let mut current_page_y = self.page_context.current_y;
 
@@ -1231,6 +1245,138 @@ pub fn markdown_to_document_with_css_and_base_dir_strict(
     Ok(generator.finish())
 }
 
+// ─── 页眉页脚注入 ─────────────────────────────────────────
+
+/// 在所有页面中注入页眉和页脚视觉元素。
+///
+/// 页眉放置在内容区上方（顶部边距区域），页脚放置在内容区下方（底部边距区域）。
+/// 支持 `{page}`（当前页码）和 `{total}`（总页数）模板变量。
+fn inject_header_footer_into_document(doc: &mut Document, settings: &PageSettings) {
+    let total_pages = doc.pages.len();
+    if total_pages == 0 {
+        return;
+    }
+
+    let content_x = settings.content_x();
+    let content_y = settings.content_y();
+    let content_width = settings.content_width();
+    let content_height = settings.content_height();
+
+    for page in &mut doc.pages {
+        let page_num = page.index + 1;
+
+        // ── 页眉 ──
+        if let Some(ref header_template) = settings.header {
+            let text = header_template
+                .replace("{page}", &page_num.to_string())
+                .replace("{total}", &total_pages.to_string());
+
+            let header_style = TextStyle {
+                color: Color::new(100, 100, 100),
+                font_family: vec!["sans-serif".to_string()],
+                font_size: settings.header_font_size as f64,
+                font_weight: "normal".to_string(),
+                font_style: "normal".to_string(),
+                align: TextAlign::Center,
+                url: None,
+            };
+
+            let layout = crate::text::layout_text(
+                &[(text.as_str(), &header_style)],
+                Some(content_width as f64),
+                TextAlign::Center,
+            );
+
+            let header_total_height: f32 = layout.lines.iter().map(|l| l.line_height).sum();
+            let header_y = content_y - header_total_height - 4.0;
+
+            let mut rel_y = 0.0_f32;
+            for line in &layout.lines {
+                let line_width = line.bounds.width() as f32;
+                let x_offset = ((content_width - line_width) / 2.0).max(0.0);
+
+                let abs_left = content_x + x_offset;
+                let abs_top = header_y + rel_y;
+
+                let bounds = Rect::new(
+                    abs_left as f64,
+                    abs_top as f64,
+                    (abs_left + line_width) as f64,
+                    (abs_top + line.line_height) as f64,
+                );
+
+                page.elements.push(VisualElement::TextLine {
+                    runs: line.runs.clone(),
+                    bounds,
+                    line_height: line.line_height,
+                });
+
+                rel_y += line.line_height;
+            }
+
+            // 页眉分隔线（文字下方 2pt）
+            let line_y = header_y + rel_y + 2.0;
+            page.elements.push(VisualElement::Line {
+                start: Point::new(content_x as f64, line_y as f64),
+                end: Point::new((content_x + content_width) as f64, line_y as f64),
+                style: StrokeStyle {
+                    color: Color::new(200, 200, 200),
+                    width: 0.5,
+                },
+            });
+        }
+
+        // ── 页脚 ──
+        if let Some(ref footer_template) = settings.footer {
+            let text = footer_template
+                .replace("{page}", &page_num.to_string())
+                .replace("{total}", &total_pages.to_string());
+
+            let footer_style = TextStyle {
+                color: Color::new(100, 100, 100),
+                font_family: vec!["sans-serif".to_string()],
+                font_size: settings.footer_font_size as f64,
+                font_weight: "normal".to_string(),
+                font_style: "normal".to_string(),
+                align: TextAlign::Center,
+                url: None,
+            };
+
+            let layout = crate::text::layout_text(
+                &[(text.as_str(), &footer_style)],
+                Some(content_width as f64),
+                TextAlign::Center,
+            );
+
+            let footer_y = content_y + content_height + 4.0;
+
+            let mut rel_y = 0.0_f32;
+            for line in &layout.lines {
+                let line_width = line.bounds.width() as f32;
+                let x_offset = ((content_width - line_width) / 2.0).max(0.0);
+
+                let abs_left = content_x + x_offset;
+                let abs_top = footer_y + rel_y;
+
+                let bounds = Rect::new(
+                    abs_left as f64,
+                    abs_top as f64,
+                    (abs_left + line_width) as f64,
+                    (abs_top + line.line_height) as f64,
+                );
+
+                page.elements.push(VisualElement::TextLine {
+                    runs: line.runs.clone(),
+                    bounds,
+                    line_height: line.line_height,
+                });
+
+                rel_y += line.line_height;
+            }
+        }
+    }
+}
+
 /// 使用自定义 CSS 和页面配置覆盖将 Markdown 转换为 Document
 ///
 /// `page_config_override` 的优先级最高，会覆盖 CSS `@page` 规则中的同名字段。
@@ -1277,6 +1423,18 @@ pub fn markdown_to_document_with_css_and_page_config(
         }
         if let Some(v) = override_config.margin_right {
             page_config.margin_right = Some(v);
+        }
+        if let Some(v) = override_config.header.clone() {
+            page_config.header = Some(v);
+        }
+        if let Some(v) = override_config.footer.clone() {
+            page_config.footer = Some(v);
+        }
+        if let Some(v) = override_config.header_font_size {
+            page_config.header_font_size = Some(v);
+        }
+        if let Some(v) = override_config.footer_font_size {
+            page_config.footer_font_size = Some(v);
         }
     }
 
