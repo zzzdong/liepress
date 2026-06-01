@@ -18,8 +18,7 @@ use crate::text::{FONT_CONTEXT, LAYOUT_CONTEXT, TextAlign, TextStyle, layout_tex
 use crate::visual::{Color, VisualElement, FillStrokeStyle, StrokeStyle};
 use crate::generator::text::{collect_inline_segments, estimate_children_height, annotate_runs_with_urls};
 
-use image::GenericImageView;
-use image::guess_format;
+use image::ImageDecoder;
 
 /// 文档生成器
 pub struct DocumentGenerator {
@@ -349,37 +348,39 @@ impl DocumentGenerator {
         let margin_bottom = style.margin_bottom_pt;
         let image_result = self.load_image(src);
 
-        // 目标 DPI：图片将以该 DPI 渲染
-        const TARGET_DPI: f32 = 300.0;
         const PDF_DPI: f32 = 72.0;
-        // 像素到点的转换系数：pt = px * (72 / DPI)
-        let px_to_pt = PDF_DPI / TARGET_DPI;
+        const DEFAULT_IMAGE_DPI: f32 = 96.0;
 
-        // 1. 原始像素尺寸和转换后的点尺寸
-        let (pixel_width, pixel_height, image_data, image_format) = match &image_result {
-            Some((w, h, data)) => {
-                let format = detect_image_format(data);
-                (*w, *h, Some(data.clone()), format)
+        let (pixel_width, pixel_height, image_data, image_format, image_dpi) = match &image_result {
+            Some(result) => {
+                let format = format_to_string(result.format);
+                let dpi = result.dpi.unwrap_or((DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI));
+                (result.width, result.height, Some(result.data.clone()), format, dpi)
             }
             None => {
-                // 默认占位尺寸
-                let pw = (content_width / px_to_pt) as u32;
-                let ph = (content_width * 0.75 / px_to_pt) as u32;
-                (pw, ph, None, "jpeg".to_string())
+                let pw = (content_width * DEFAULT_IMAGE_DPI / PDF_DPI) as u32;
+                let ph = (content_width * 0.75 * DEFAULT_IMAGE_DPI / PDF_DPI) as u32;
+                (pw, ph, None, "jpeg".to_string(), (DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI))
             }
         };
 
-        // 2. 基于目标 DPI 计算显示尺寸（点），但不超过内容区宽度
-        let raw_display_width = pixel_width as f32 * px_to_pt;
-        let display_width = raw_display_width.min(content_width);
-        let display_height = pixel_height as f32 * px_to_pt * (display_width / raw_display_width);
+        let dpi_x = image_dpi.0;
 
-        // 3. 预计算标题高度（如果有 alt 文本）
-        // 图片标题样式：小字号(9pt)、灰色、居中
+        let native_width = pixel_width as f32 * PDF_DPI / dpi_x;
+        let density_at_content_width = pixel_width as f32 / content_width * PDF_DPI;
+
+        let (display_width, display_height) = if density_at_content_width >= 96.0 && native_width < content_width {
+            (content_width, pixel_height as f32 * content_width / pixel_width as f32)
+        } else if native_width > content_width {
+            (content_width, pixel_height as f32 * content_width / pixel_width as f32)
+        } else {
+            (native_width, pixel_height as f32 * native_width / pixel_width as f32)
+        };
+
         let caption_style = crate::text::TextStyle {
-            color: crate::visual::Color::new(102, 102, 102), // #666666 灰色
+            color: crate::visual::Color::new(102, 102, 102),
             font_family: style.font_family.clone(),
-            font_size: 9.0, // 9pt，比正文小
+            font_size: 9.0,
             font_weight: "normal".to_string(),
             font_style: "normal".to_string(),
             align: crate::text::TextAlign::Center,
@@ -400,17 +401,13 @@ impl DocumentGenerator {
                         &mut lcx,
                     );
 
-                    layout.height as f32 + 4.0 // 标题高度 + 4pt 间距
+                    layout.height as f32 + 4.0
                 })
             })
         } else {
             0.0
         };
 
-        // 4. 布局策略：
-        //    当前页：原始大小 → 按宽度缩放 → 换页
-        //    空白页：自适应缩放（以能放下为准）
-        //    总高度 = 图片高度 + 标题高度（如果有）+ 底部间距
         let total_height_needed = display_height + label_height + margin_bottom;
         let remaining = self.page_context.remaining_height();
         let fits_on_current = display_width <= content_width
@@ -435,7 +432,7 @@ impl DocumentGenerator {
                 } else {
                     let scale_w = content_width / display_width;
                     let scale_h = (remaining_h - label_height - margin_bottom) / display_height;
-                    let scale = scale_w.min(scale_h.max(0.1)); // 确保至少有一点空间
+                    let scale = scale_w.min(scale_h.max(0.1));
                     (display_width * scale, display_height * scale)
                 }
             }
@@ -453,7 +450,6 @@ impl DocumentGenerator {
             alt: alt.to_string(),
         });
 
-        // 计算图片底部位置（用于标题定位）
         let image_bottom = top + target_height;
 
         if !alt.is_empty() {
@@ -470,11 +466,9 @@ impl DocumentGenerator {
                         &mut lcx,
                     );
 
-                    // 标题显示在图片下方，有 4pt 间距
                     let label_top = image_bottom + 4.0;
 
                     for line in layout.lines.iter() {
-                        // 每行依次向下排列
                         let line_y = label_top + line.bounds.y0 as f32;
                         let line_width = line.bounds.width() as f32;
                         let line_x0 = line.bounds.x0 as f32;
@@ -493,7 +487,6 @@ impl DocumentGenerator {
                         });
                     }
 
-                    // 消费高度：图片高度 + 间距 4pt + 标题高度 + 底部间距
                     let actual_label_height = layout.height as f32;
                     self.page_context.consume_height(target_height + 4.0 + actual_label_height + margin_bottom);
                 })
@@ -992,7 +985,7 @@ impl DocumentGenerator {
 
     // ─── 图片加载 ─────────────────────────────────────────────
 
-    fn load_image(&self, url: &str) -> Option<(u32, u32, Vec<u8>)> {
+    fn load_image(&self, url: &str) -> Option<ImageLoadResult> {
         let path = match &self.base_dir {
             Some(base) => {
                 let p = Path::new(url);
@@ -1007,24 +1000,155 @@ impl DocumentGenerator {
         if !path.exists() {
             return None;
         }
-        if let Ok(data) = std::fs::read(&path)
-            && let Ok(img) = image::load_from_memory(&data) {
-                let (width, height) = img.dimensions();
-                return Some((width, height, data));
-            }
-        None
+
+        // 使用 ImageReader 读取图片，支持格式检测和 EXIF 读取
+        let file = std::fs::File::open(&path).ok()?;
+        let reader = image::ImageReader::new(std::io::BufReader::new(file));
+        let reader = reader.with_guessed_format().ok()?;
+
+        let format = reader.format()?;
+
+        // 获取 decoder 读取 EXIF 和尺寸
+        let mut decoder = reader.into_decoder().ok()?;
+        let (width, height) = decoder.dimensions();
+
+        // 读取 EXIF 元数据中的 DPI
+        let dpi = read_dpi_from_decoder(&mut decoder);
+
+        // 对于 PDF 支持的格式，读取原始文件数据；否则转换为 PNG
+        let (output_data, output_format) = if is_pdf_supported_format(format) {
+            // 重新读取原始文件数据
+            let data = std::fs::read(&path).ok()?;
+            (data, format)
+        } else {
+            // 转换为 PNG
+            let img = image::DynamicImage::from_decoder(decoder).ok()?;
+            let mut png_data = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png)
+                .ok()?;
+            (png_data, image::ImageFormat::Png)
+        };
+
+        Some(ImageLoadResult {
+            width,
+            height,
+            data: output_data,
+            dpi,
+            format: output_format,
+        })
     }
 }
 
-/// 通过 magic bytes 检测图片格式，返回渲染器使用的格式字符串
-fn detect_image_format(data: &[u8]) -> String {
-    match guess_format(data) {
-        Ok(image::ImageFormat::Png) => "png".to_string(),
-        Ok(image::ImageFormat::Jpeg) => "jpeg".to_string(),
-        Ok(image::ImageFormat::Gif) => "gif".to_string(),
-        Ok(image::ImageFormat::WebP) => "webp".to_string(),
-        _ => "jpeg".to_string(),
+/// PDF 内置支持的图片格式
+const PDF_SUPPORTED_FORMATS: &[image::ImageFormat] = &[
+    image::ImageFormat::Png,
+    image::ImageFormat::Jpeg,
+    image::ImageFormat::Gif,
+];
+
+fn is_pdf_supported_format(format: image::ImageFormat) -> bool {
+    PDF_SUPPORTED_FORMATS.contains(&format)
+}
+
+/// 将 image::ImageFormat 转换为渲染器使用的格式字符串
+fn format_to_string(format: image::ImageFormat) -> String {
+    match format {
+        image::ImageFormat::Png => "png".to_string(),
+        image::ImageFormat::Jpeg => "jpeg".to_string(),
+        image::ImageFormat::Gif => "gif".to_string(),
+        _ => "png".to_string(), // 其他格式已转换为 PNG
     }
+}
+
+struct ImageLoadResult {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+    dpi: Option<(f32, f32)>,
+    format: image::ImageFormat,
+}
+
+/// 通过 ImageDecoder 读取 EXIF 元数据中的 DPI
+fn read_dpi_from_decoder(decoder: &mut dyn image::ImageDecoder) -> Option<(f32, f32)> {
+    let exif_data = decoder.exif_metadata().ok()??;
+    parse_exif_dpi(&exif_data)
+}
+
+/// 使用 kamadak-exif 解析 EXIF 数据中的 DPI
+fn parse_exif_dpi(exif_data: &[u8]) -> Option<(f32, f32)> {
+    use exif::{In, Tag, Value};
+
+    let mut cursor = std::io::Cursor::new(exif_data);
+    let reader = exif::Reader::new();
+    let exif = reader.read_from_container(&mut cursor).ok()?;
+
+    let xres = exif.get_field(Tag::XResolution, In::PRIMARY)?;
+    let yres = exif.get_field(Tag::YResolution, In::PRIMARY)?;
+
+    let dpi_x = match &xres.value {
+        Value::Rational(v) if !v.is_empty() => v[0].to_f64() as f32,
+        _ => return None,
+    };
+    let dpi_y = match &yres.value {
+        Value::Rational(v) if !v.is_empty() => v[0].to_f64() as f32,
+        _ => return None,
+    };
+
+    if dpi_x <= 0.0 || dpi_y <= 0.0 {
+        return None;
+    }
+
+    let unit = exif
+        .get_field(Tag::ResolutionUnit, In::PRIMARY)
+        .and_then(|f| f.value.get_uint(0));
+
+    match unit {
+        Some(3) => Some((dpi_x * 2.54, dpi_y * 2.54)),
+        _ => Some((dpi_x, dpi_y)),
+    }
+}
+
+/// 从 PNG 数据中读取 DPI（pHYs 块）- 作为回退方案
+#[allow(dead_code)]
+fn read_png_dpi(data: &[u8]) -> Option<(f32, f32)> {
+    if data.len() < 8 || &data[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+
+    let mut pos = 8;
+    while pos + 12 <= data.len() {
+        let chunk_len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let chunk_type = &data[pos + 4..pos + 8];
+
+        if chunk_type == b"pHYs" && chunk_len >= 9 && pos + 12 + chunk_len <= data.len() {
+            let ppu_x = u32::from_be_bytes([
+                data[pos + 8],
+                data[pos + 9],
+                data[pos + 10],
+                data[pos + 11],
+            ]);
+            let ppu_y = u32::from_be_bytes([
+                data[pos + 12],
+                data[pos + 13],
+                data[pos + 14],
+                data[pos + 15],
+            ]);
+            let unit = data[pos + 16];
+            if unit == 1 && ppu_x > 0 && ppu_y > 0 {
+                let dpi_x = ppu_x as f32 * 0.0254;
+                let dpi_y = ppu_y as f32 * 0.0254;
+                return Some((dpi_x, dpi_y));
+            }
+        }
+
+        if chunk_type == b"IEND" {
+            break;
+        }
+
+        pos += 12 + chunk_len;
+    }
+    None
 }
 
 // ─── 辅助函数 ───────────────────────────────────────────────────
