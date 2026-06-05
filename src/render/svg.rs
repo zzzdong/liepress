@@ -303,6 +303,20 @@ impl PageRenderer for SvgRenderer {
             self.svg_content.push_str(&text_svg);
         }
         self.svg_content.push('\n');
+
+        // 绘制删除线
+        if run.decoration == crate::text::TextDecoration::LineThrough {
+            let line_x1 = position.x + first_glyph.x as f64;
+            let line_x2 = line_x1 + run.advance as f64;
+            let strike_y = y - font_size as f64 * 0.3;
+            let stroke_w = (font_size * 0.06).max(0.5);
+            let strike_svg = format!(
+                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.1}" />"#,
+                line_x1, strike_y, line_x2, strike_y, color, stroke_w
+            );
+            self.svg_content.push_str(&strike_svg);
+            self.svg_content.push('\n');
+        }
     }
 
     fn begin_group(&mut self, transform: Option<&Transform>) {

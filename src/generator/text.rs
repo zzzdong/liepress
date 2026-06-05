@@ -2,18 +2,43 @@
 //!
 //! 提供文本布局、行构建、内联段收集等功能。
 
-use crate::ast::{Node, computed_style_to_text_style};
+use crate::ast::{Node, NodeKind, computed_style_to_text_style};
 use crate::text::TextStyle;
 
 // ─── 文本处理函数 ─────────────────────────────────────────
 
 /// 收集内联子节点的文本段
+///
+/// 递归展开容器节点（Span、Strong、Emphasis、Link、Delete），
+/// 使得每个 Text 片段使用自己的样式。
 pub fn collect_inline_segments(children: &[Node]) -> Vec<(String, TextStyle)> {
     let mut segments = Vec::new();
     for child in children {
-        let text = child.kind.text_content();
-        if !text.is_empty() {
-            segments.push((text, computed_style_to_text_style(&child.style)));
+        match &child.kind {
+            NodeKind::Span { children: inner }
+            | NodeKind::Strong { children: inner }
+            | NodeKind::Emphasis { children: inner }
+            | NodeKind::Link { children: inner, .. }
+            | NodeKind::Delete { children: inner } => {
+                // 递归展开容器节点
+                segments.extend(collect_inline_segments(inner));
+            }
+            NodeKind::Text { text } => {
+                if !text.is_empty() {
+                    segments.push((text.clone(), computed_style_to_text_style(&child.style)));
+                }
+            }
+            NodeKind::InlineCode { code } => {
+                if !code.is_empty() {
+                    segments.push((code.clone(), computed_style_to_text_style(&child.style)));
+                }
+            }
+            _ => {
+                let text = child.kind.text_content();
+                if !text.is_empty() {
+                    segments.push((text, computed_style_to_text_style(&child.style)));
+                }
+            }
         }
     }
     segments

@@ -99,6 +99,19 @@ hr {
     display: block;
 }
 
+/* 居中容器 (center) */
+center {
+    display: block;
+    text-align: center;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* 行内容器 (span) */
+span {
+    display: inline;
+}
+
 /* 表格 */
 table {
     display: block;
@@ -135,6 +148,7 @@ a {
 /* 删除线 */
 del {
     display: inline;
+    text-decoration: line-through;
 }
 
 /* 普通文本 */
@@ -179,6 +193,7 @@ pub fn list_marker_style() -> Style {
         table_header_bg: None,
         table_alt_row_bg: None,
         link_url: None,
+        text_decoration: TextDecoration::None,
         list_indent_pt: None,
     }
 }
@@ -203,6 +218,7 @@ pub fn computed_style_to_text_style(style: &Style) -> crate::text::TextStyle {
         font_style: style.font_style.as_str().to_string(),
         align,
         url: style.link_url.clone(),
+        decoration: style.text_decoration,
     }
 }
 

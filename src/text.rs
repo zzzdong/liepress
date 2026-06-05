@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use vello_cpu::kurbo::Rect;
 
+// 重新导出 TextDecoration 供 renderer 使用
+pub use crate::ast::TextDecoration;
+
 /// 文本布局 - 包含排版后的行集合
 ///
 /// 由 [`layout_text`] / [`layout_text_with_contexts`] 生成。
@@ -66,6 +69,8 @@ pub struct TextRun {
     pub baseline_y: f32,
     /// 超链接 URL（如果有）
     pub url: Option<String>,
+    /// 文本修饰（none / underline / line-through）
+    pub decoration: TextDecoration,
 }
 
 /// 文本行 - 包含一行中的所有 Run
@@ -140,6 +145,8 @@ pub struct TextStyle {
     pub align: TextAlign,
     /// 超链接 URL（如果有）
     pub url: Option<String>,
+    /// 文本修饰（none / underline / line-through）
+    pub decoration: TextDecoration,
 }
 
 impl Default for TextStyle {
@@ -152,6 +159,7 @@ impl Default for TextStyle {
             font_style: "normal".to_string(),
             align: TextAlign::Left,
             url: None,
+            decoration: TextDecoration::None,
         }
     }
 }
@@ -219,7 +227,11 @@ struct GlyphRaw {
 /// - x = 该行最左字形相对于 layout 左侧的偏移
 /// - y = 该行顶部相对于 layout 顶部的累积偏移
 /// runs[].glyphs[].x/y = glyph 坐标 - 行原点，即相对行左上角的偏移
-fn extract_lines_from_parley(layout: &parley::Layout<Color>, _full_text: &str) -> Vec<TextLine> {
+fn extract_lines_from_parley(
+    layout: &parley::Layout<Color>,
+    _full_text: &str,
+    decoration_map: &[(std::ops::Range<usize>, TextDecoration)],
+) -> Vec<TextLine> {
     let mut lines = Vec::new();
     let mut row_top_rel = 0.0_f32;
     let mut full_text_pos = 0_usize;
@@ -333,6 +345,7 @@ fn extract_lines_from_parley(layout: &parley::Layout<Color>, _full_text: &str) -
                 baseline_x,
                 baseline_y,
                 url: None,
+                decoration: lookup_decoration(text_range.start, decoration_map),
             });
         }
 
@@ -353,6 +366,16 @@ fn extract_lines_from_parley(layout: &parley::Layout<Color>, _full_text: &str) -
     }
 
     lines
+}
+
+/// 查找 byte position 对应的文本修饰
+fn lookup_decoration(pos: usize, map: &[(std::ops::Range<usize>, TextDecoration)]) -> TextDecoration {
+    for (range, dec) in map {
+        if range.contains(&pos) {
+            return *dec;
+        }
+    }
+    TextDecoration::None
 }
 
 // ─── 公开布局函数 ────────────────────────────────────────
@@ -393,7 +416,8 @@ pub fn create_text_layout_with_contexts(
 
     let width = layout.width() as f64;
     let height = layout.height() as f64;
-    let lines = extract_lines_from_parley(&layout, text);
+    let decoration_map = [(0..text.len(), style.decoration)];
+    let lines = extract_lines_from_parley(&layout, text, &decoration_map);
 
     TextLayout { lines, width, height }
 }
@@ -473,7 +497,14 @@ pub fn layout_text_with_contexts(
 
     let width = layout.width() as f64;
     let height = layout.height() as f64;
-    let lines = extract_lines_from_parley(&layout, &combined);
+
+    // 构建 decoration map
+    let mut decoration_map: Vec<(std::ops::Range<usize>, TextDecoration)> = Vec::new();
+    for (i, (_, style)) in texts.iter().enumerate() {
+        let (start, end) = ranges[i];
+        decoration_map.push((start..end, style.decoration));
+    }
+    let lines = extract_lines_from_parley(&layout, &combined, &decoration_map);
 
     TextLayout { lines, width, height }
 }

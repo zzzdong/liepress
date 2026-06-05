@@ -178,6 +178,7 @@ impl PixmapRenderer {
             color: style.color,
             align: style.align,
             url: style.url.clone(),
+            decoration: style.decoration,
         };
 
         // 缩放最大宽度
@@ -374,6 +375,28 @@ impl PageRenderer for PixmapRenderer {
             .font_size(run.font_size)
             .glyph_transform(transform)
             .fill_glyphs(glyphs.into_iter());
+
+        // 绘制删除线
+        if run.decoration == crate::text::TextDecoration::LineThrough {
+            // 计算删除线位置（基线以上 0.3em）
+            let first_glyph = &run.glyphs[0];
+            let strike_y = position.y + first_glyph.y as f64 - run.font_size as f64 * 0.3;
+            let line_x1 = position.x + first_glyph.x as f64;
+            let line_x2 = line_x1 + run.advance as f64;
+            let stroke_w = (run.font_size as f64 * 0.06).max(0.5);
+
+            let scaled_start = self.scale_point(&Point::new(line_x1, strike_y));
+            let scaled_end = self.scale_point(&Point::new(line_x2, strike_y));
+
+            let color = run.color.as_vello_color();
+            self.ctx.set_paint(color);
+            self.ctx.set_stroke(KurboStroke::new(stroke_w * self.scale as f64));
+
+            let mut path = BezPath::new();
+            path.move_to(scaled_start);
+            path.line_to(scaled_end);
+            self.ctx.stroke_path(&path);
+        }
     }
 
     fn begin_group(&mut self, _transform: Option<&Transform>) {

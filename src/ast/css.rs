@@ -257,7 +257,7 @@ fn parse_simple_selector(s: &str) -> Option<SimpleSelector> {
 }
 
 /// 解析声明块
-fn parse_declarations(s: &str) -> Vec<Declaration> {
+pub(crate) fn parse_declarations(s: &str) -> Vec<Declaration> {
     let mut declarations = Vec::new();
     let s = s.trim();
 
@@ -449,6 +449,8 @@ pub fn node_tag_name(kind: &super::NodeKind) -> &'static str {
         super::NodeKind::InlineCode { .. } => "code",
         super::NodeKind::Link { .. } => "a",
         super::NodeKind::Delete { .. } => "del",
+        super::NodeKind::Span { .. } => "span",
+        super::NodeKind::Center { .. } => "center",
     }
 }
 
@@ -600,6 +602,16 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str) {
         "list-indent" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
                 style.list_indent_pt = Some(v);
+            }
+        }
+        "text-decoration" => {
+            let v = value.trim().to_lowercase();
+            if v == "line-through" {
+                style.text_decoration = crate::ast::TextDecoration::LineThrough;
+            } else if v == "underline" {
+                style.text_decoration = crate::ast::TextDecoration::Underline;
+            } else if v == "none" {
+                style.text_decoration = crate::ast::TextDecoration::None;
             }
         }
         _ => {
@@ -1149,6 +1161,16 @@ impl StyleResolver {
         }
 
         style
+    }
+
+    /// 解析并应用内联 CSS 样式字符串（style 属性值）
+    ///
+    /// 例如: `"color: red; font-size: 12pt"` → 应用到 style 上
+    pub fn apply_inline_style(&self, style: &mut Style, inline_css: &str) {
+        let declarations = parse_declarations(inline_css);
+        for decl in declarations {
+            apply_declaration(style, &decl.property, &decl.value);
+        }
     }
 }
 

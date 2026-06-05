@@ -448,7 +448,7 @@ impl PageRenderer for PdfRenderer<'_, '_> {
             rule: FillRule::NonZero,
         };
 
-        self.surface.set_fill(Some(fill));
+        self.surface.set_fill(Some(fill.clone()));
         self.surface.draw_glyphs(
             krilla_origin,
             &krilla_glyphs,
@@ -457,6 +457,40 @@ impl PageRenderer for PdfRenderer<'_, '_> {
             run.font_size,
             false,
         );
+
+        // 绘制删除线
+        if run.decoration == crate::text::TextDecoration::LineThrough {
+            // 删除线位置：基线以上 0.3em
+            let strike_y = position.y as f32 + run.baseline_y - run.font_size * 0.3;
+            let line_x1 = position.x as f32 + run.baseline_x;
+            let line_x2 = line_x1 + run.advance;
+            let stroke_w = (run.font_size * 0.06).max(0.5);
+
+            // 保存当前 fill，清除，设置 stroke
+            self.surface.set_fill(None);
+            let krilla_color = RgbColor::new(run.color.r, run.color.g, run.color.b);
+            let stroke = KrillaStroke {
+                paint: Paint::from(krilla_color),
+                opacity: NormalizedF32::new(run.color.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+                width: stroke_w,
+                miter_limit: 4.0,
+                line_cap: LineCap::default(),
+                line_join: LineJoin::default(),
+                dash: None,
+            };
+            self.surface.set_stroke(Some(stroke));
+
+            let mut pb = PathBuilder::new();
+            pb.move_to(line_x1, strike_y);
+            pb.line_to(line_x2, strike_y);
+            if let Some(path) = pb.finish() {
+                self.surface.draw_path(&path);
+            }
+
+            // 恢复 stroke 状态
+            self.surface.set_stroke(None);
+            self.surface.set_fill(Some(fill.clone()));
+        }
     }
 
     fn draw_image(&mut self, data: &[u8], format: &str, position: Point, size: (f64, f64)) {

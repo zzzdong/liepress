@@ -89,6 +89,13 @@ impl DocumentGenerator {
             NodeKind::Table { .. } => {
                 self.layout_table(node);
             }
+            NodeKind::Center { children } => {
+                self.layout_container(children, style, true);
+            }
+            NodeKind::Span { children } => {
+                // Span 作为顶级块级子节点时，作为段落处理
+                self.layout_paragraph_with_indent(children, style, 0.0);
+            }
             _ => {}
         }
     }
@@ -385,6 +392,7 @@ impl DocumentGenerator {
             font_style: "normal".to_string(),
             align: crate::text::TextAlign::Center,
             url: None,
+            decoration: crate::text::TextDecoration::None,
         };
 
         let label_height = if !alt.is_empty() {
@@ -897,7 +905,36 @@ impl DocumentGenerator {
         }
     }
 
-    // ─── 分隔线布局 ─────────────────────────────────────────────
+    // ─── 容器布局 (div / center) ─────────────────────────────
+
+    /// 布局块级容器（div、center），递归布局子节点。
+    ///
+    /// # 参数
+    /// - `children`: 子节点列表
+    /// - `style`: 容器的样式
+    /// - `centered`: 是否居中对齐子节点
+    fn layout_container(&mut self, children: &[Node], style: &Style, centered: bool) {
+        // 先估算高度判断是否需要分页
+        let estimated_height = estimate_children_height(children);
+        if estimated_height > self.page_context.remaining_height() && !self.page_context.is_empty() {
+            self.page_context.start_new_page();
+        }
+
+        self.page_context.consume_height(style.margin_top_pt);
+
+        for child in children {
+            if centered {
+                // 强制居中的容器：将子节点的 text-align 覆盖为 center
+                let mut child = child.clone();
+                child.style.text_align = crate::ast::TextAlign::Center;
+                self.layout_node(&child);
+            } else {
+                self.layout_node(child);
+            }
+        }
+
+        self.page_context.consume_height(style.margin_bottom_pt);
+    }
 
     fn layout_thematic_break(&mut self, style: &Style) {
         let content_x = self.page_context.settings.content_x();
@@ -1419,6 +1456,7 @@ fn inject_header_footer_into_document(doc: &mut Document, settings: &PageSetting
                 font_style: "normal".to_string(),
                 align: TextAlign::Center,
                 url: None,
+                decoration: crate::text::TextDecoration::None,
             };
 
             let layout = crate::text::layout_text(
@@ -1480,6 +1518,7 @@ fn inject_header_footer_into_document(doc: &mut Document, settings: &PageSetting
                 font_style: "normal".to_string(),
                 align: TextAlign::Center,
                 url: None,
+                decoration: crate::text::TextDecoration::None,
             };
 
             let layout = crate::text::layout_text(

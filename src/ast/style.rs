@@ -94,6 +94,15 @@ pub enum ObjectFit {
     None,
 }
 
+// ─── 文本修饰 ───
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextDecoration {
+    None,
+    Underline,
+    LineThrough,
+}
+
 // ─── 计算样式 ───
 
 /// 计算后的样式值（所有单位已解析为 pt）
@@ -146,6 +155,9 @@ pub struct Style {
     // 链接
     pub link_url: Option<String>,
 
+    // 文本修饰
+    pub text_decoration: TextDecoration,
+
     // 列表
     pub list_indent_pt: Option<f32>,
 }
@@ -190,6 +202,7 @@ impl Style {
             table_header_bg: parent.table_header_bg,
             table_alt_row_bg: parent.table_alt_row_bg,
             link_url: parent.link_url.clone(),
+            text_decoration: parent.text_decoration,
             list_indent_pt: None,
         }
     }
@@ -228,6 +241,7 @@ impl Default for Style {
             table_header_bg: None,
             table_alt_row_bg: None,
             link_url: None,
+            text_decoration: TextDecoration::None,
             list_indent_pt: None,
         }
     }
