@@ -205,3 +205,172 @@ fn test_parse_image() {
         _ => panic!("Expected Document root"),
     }
 }
+
+// ─── 任务列表测试 ───
+
+#[test]
+fn test_parse_unchecked_task_list() {
+    let md = "- [ ] Buy groceries\n- [ ] Clean the house";
+    let node = parse_markdown(md).unwrap();
+
+    match &node.kind {
+        NodeKind::Document { children } => {
+            assert_eq!(children.len(), 1);
+            match &children[0].kind {
+                NodeKind::List { ordered, children: items, .. } => {
+                    assert!(!ordered);
+                    assert_eq!(items.len(), 2);
+
+                    // 每个都是未勾选的任务列表项
+                    match &items[0].kind {
+                        NodeKind::TaskListItem { checked, children } => {
+                            assert!(!checked, "First item should be unchecked");
+                            assert!(!children.is_empty());
+                        }
+                        _ => panic!("Expected TaskListItem, got {:?}", items[0].kind),
+                    }
+                    match &items[1].kind {
+                        NodeKind::TaskListItem { checked, .. } => {
+                            assert!(!checked, "Second item should be unchecked");
+                        }
+                        _ => panic!("Expected TaskListItem"),
+                    }
+                }
+                _ => panic!("Expected List node"),
+            }
+        }
+        _ => panic!("Expected Document root"),
+    }
+}
+
+#[test]
+fn test_parse_checked_task_list() {
+    let md = "- [x] Completed task\n- [X] Another done";
+    let node = parse_markdown(md).unwrap();
+
+    match &node.kind {
+        NodeKind::Document { children } => {
+            match &children[0].kind {
+                NodeKind::List { children: items, .. } => {
+                    assert_eq!(items.len(), 2);
+
+                    // 第一个已勾选（小写 x）
+                    match &items[0].kind {
+                        NodeKind::TaskListItem { checked, .. } => {
+                            assert!(*checked, "First item should be checked");
+                        }
+                        _ => panic!("Expected TaskListItem"),
+                    }
+                    // 第二个已勾选（大写 X，GFM 标准也支持）
+                    match &items[1].kind {
+                        NodeKind::TaskListItem { checked, .. } => {
+                            assert!(*checked, "Second item (with X) should be checked");
+                        }
+                        _ => panic!("Expected TaskListItem"),
+                    }
+                }
+                _ => panic!("Expected List node"),
+            }
+        }
+        _ => panic!("Expected Document root"),
+    }
+}
+
+#[test]
+fn test_parse_mixed_task_list() {
+    let md = "- Regular item\n- [x] Task done\n- Another regular\n- [ ] Task pending";
+    let node = parse_markdown(md).unwrap();
+
+    match &node.kind {
+        NodeKind::Document { children } => {
+            match &children[0].kind {
+                NodeKind::List { children: items, .. } => {
+                    assert_eq!(items.len(), 4);
+
+                    // 第 1 项：普通列表项
+                    assert!(matches!(items[0].kind, NodeKind::ListItem { .. }),
+                        "Item 0 should be ListItem");
+                    // 第 2 项：已勾选任务
+                    match &items[1].kind {
+                        NodeKind::TaskListItem { checked, .. } => assert!(*checked),
+                        _ => panic!("Item 1 should be TaskListItem"),
+                    }
+                    // 第 3 项：普通列表项
+                    assert!(matches!(items[2].kind, NodeKind::ListItem { .. }),
+                        "Item 2 should be ListItem");
+                    // 第 4 项：未勾选任务
+                    match &items[3].kind {
+                        NodeKind::TaskListItem { checked, .. } => assert!(!*checked),
+                        _ => panic!("Item 3 should be TaskListItem"),
+                    }
+                }
+                _ => panic!("Expected List node"),
+            }
+        }
+        _ => panic!("Expected Document root"),
+    }
+}
+
+#[test]
+fn test_task_list_text_content() {
+    use liepress::ast::collect_text;
+
+    let md = "- [ ] Buy groceries\n- [x] Pay bills";
+    let node = parse_markdown(md).unwrap();
+    let text = collect_text(&node);
+
+    assert!(text.contains("Buy groceries"));
+    assert!(text.contains("Pay bills"));
+}
+
+#[test]
+fn test_task_list_with_nested_content() {
+    let md = "- [x] **Bold task**\n- [ ] *Italic subtask*";
+    let node = parse_markdown(md).unwrap();
+
+    match &node.kind {
+        NodeKind::Document { children } => {
+            match &children[0].kind {
+                NodeKind::List { children: items, .. } => {
+                    assert_eq!(items.len(), 2);
+
+                    // 第一个任务项：已勾选，且内容包含 Strong（在 Paragraph 内）
+                    match &items[0].kind {
+                        NodeKind::TaskListItem { checked, children } => {
+                            assert!(*checked);
+                            assert!(!children.is_empty());
+                            // 子节点应为 Paragraph，其中包含 Strong
+                            let has_paragraph_with_strong = children.iter().any(|c| {
+                                if let NodeKind::Paragraph { children: para_children } = &c.kind {
+                                    para_children.iter().any(|pc| matches!(pc.kind, NodeKind::Strong { .. }))
+                                } else {
+                                    false
+                                }
+                            });
+                            assert!(has_paragraph_with_strong, "Task item should contain Paragraph > Strong");
+                        }
+                        _ => panic!("Expected TaskListItem"),
+                    }
+
+                    // 第二个任务项：未勾选，且内容包含 Emphasis（在 Paragraph 内）
+                    match &items[1].kind {
+                        NodeKind::TaskListItem { checked, children } => {
+                            assert!(!*checked);
+                            let has_paragraph_with_em = children.iter().any(|c| {
+                                if let NodeKind::Paragraph { children: para_children } = &c.kind {
+                                    para_children.iter().any(|pc| matches!(pc.kind, NodeKind::Emphasis { .. }))
+                                } else {
+                                    false
+                                }
+                            });
+                            assert!(has_paragraph_with_em, "Task item should contain Paragraph > Emphasis");
+                        }
+                        _ => panic!("Expected TaskListItem"),
+                    }
+                }
+                _ => panic!("Expected List node"),
+            }
+        }
+        _ => panic!("Expected Document root"),
+    }
+}

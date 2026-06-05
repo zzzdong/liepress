@@ -566,21 +566,28 @@ impl DocumentGenerator {
         let content_indent = indent + marker_area + marker_gap; // 内容实际缩进
 
         for (index, item) in children.iter().enumerate() {
-            if let NodeKind::ListItem { children } = &item.kind {
-                if children.is_empty() {
-                    continue;
-                }
+            let (item_children, is_task, checked) = match &item.kind {
+                NodeKind::ListItem { children } => (children, false, false),
+                NodeKind::TaskListItem { checked, children } => (children, true, *checked),
+                _ => continue,
+            };
 
-                // 生成列表标记
-                let marker = if ordered {
-                    format!("{}.", start + index as u32)
-                } else {
-                    "•".to_string()
-                };
+            if item_children.is_empty() {
+                continue;
+            }
+
+            // 生成列表标记
+            let marker = if is_task {
+                if checked { "☑".to_string() } else { "⬜".to_string() }
+            } else if ordered {
+                format!("{}.", start + index as u32)
+            } else {
+                "•".to_string()
+            };
 
                 // 布局列表项内容，同时处理标记
                 let mut is_first = true;
-                for grandchild in children {
+                for grandchild in item_children {
                     if is_first {
                         // 第一个子节点：放置标记和内容的第一行
                         self.layout_list_item_first_child(
@@ -599,7 +606,6 @@ impl DocumentGenerator {
                     }
                 }
             }
-        }
     }
 
     /// 计算有序列表的最大标记宽度
@@ -643,6 +649,9 @@ impl DocumentGenerator {
         // 创建标记布局
         let marker_layout = create_text_layout(marker, &text_style, None);
         let marker_line = marker_layout.lines.first();
+        let marker_advance = marker_line
+            .and_then(|line| line.runs.first().map(|r| r.advance))
+            .unwrap_or(0.0);
 
         match &node.kind {
             NodeKind::Paragraph { children } => {
@@ -658,12 +667,12 @@ impl DocumentGenerator {
                     // 没有文本内容，只放置标记
                     if let Some(m_line) = marker_line {
                         let line_y = content_y + self.page_context.current_y;
-                        let marker_left = content_x + marker_x + marker_area - m_line.bounds.width() as f32;
+                        let marker_left = content_x + marker_x + marker_area - marker_advance;
 
                         let bounds = vello_cpu::kurbo::Rect::new(
                             marker_left as f64,
                             line_y as f64,
-                            (marker_left + m_line.bounds.width() as f32) as f64,
+                            (marker_left + marker_advance) as f64,
                             (line_y + m_line.line_height) as f64,
                         );
 
@@ -672,6 +681,7 @@ impl DocumentGenerator {
                             bounds,
                             line_height: m_line.line_height,
                         });
+                        self.page_context.consume_height(m_line.line_height);
                     }
                     return;
                 }
@@ -701,14 +711,20 @@ impl DocumentGenerator {
                         // 放置标记和内容的第一行
                         if let (Some(m_line), Some(first_line)) = (marker_line, lines.first()) {
                             let line_y = content_y + self.page_context.current_y;
-                            let marker_left = content_x + marker_x + marker_area - m_line.bounds.width() as f32;
+                            let marker_left = content_x + marker_x + marker_area - marker_advance;
 
-                            // 放置标记
+                            // 计算标记和内容第一行的基线偏移，使两者基线对齐
+                            let marker_baseline = m_line.runs.first().map(|r| r.baseline_y).unwrap_or(0.0);
+                            let content_baseline = first_line.runs.first().map(|r| r.baseline_y).unwrap_or(0.0);
+                            let baseline_offset = content_baseline - marker_baseline;
+
+                            // 放置标记（垂直偏移使基线对齐）
+                            let marker_y = line_y + baseline_offset;
                             let marker_bounds = vello_cpu::kurbo::Rect::new(
                                 marker_left as f64,
-                                line_y as f64,
-                                (marker_left + m_line.bounds.width() as f32) as f64,
-                                (line_y + m_line.line_height) as f64,
+                                marker_y as f64,
+                                (marker_left + marker_advance) as f64,
+                                (marker_y + m_line.line_height) as f64,
                             );
 
                             self.page_context.add_element(crate::visual::VisualElement::TextLine {
@@ -733,7 +749,7 @@ impl DocumentGenerator {
                             });
 
                             // 消费第一行的高度
-                            let first_line_height = first_line.line_height.max(m_line.line_height);
+                            let first_line_height = first_line.line_height.max(m_line.line_height + baseline_offset);
                             self.page_context.consume_height(first_line_height);
 
                             // 放置剩余的行
@@ -780,12 +796,12 @@ impl DocumentGenerator {
                 // 非段落节点：先放置标记，再布局节点
                 if let Some(m_line) = marker_line {
                     let line_y = content_y + self.page_context.current_y;
-                    let marker_left = content_x + marker_x + marker_area - m_line.bounds.width() as f32;
+                    let marker_left = content_x + marker_x + marker_area - marker_advance;
 
                     let bounds = vello_cpu::kurbo::Rect::new(
                         marker_left as f64,
                         line_y as f64,
-                        (marker_left + m_line.bounds.width() as f32) as f64,
+                        (marker_left + marker_advance) as f64,
                         (line_y + m_line.line_height) as f64,
                     );
 

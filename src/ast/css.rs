@@ -436,7 +436,7 @@ pub fn node_tag_name(kind: &super::NodeKind) -> &'static str {
         super::NodeKind::List { ordered, .. } => {
             if *ordered { "ol" } else { "ul" }
         }
-        super::NodeKind::ListItem { .. } => "li",
+        super::NodeKind::ListItem { .. } | super::NodeKind::TaskListItem { .. } => "li",
         super::NodeKind::Image { .. } => "img",
         super::NodeKind::CodeBlock { .. } => "pre",
         super::NodeKind::Blockquote { .. } => "blockquote",

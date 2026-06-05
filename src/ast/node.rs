@@ -70,6 +70,9 @@ pub enum NodeKind {
     /// 列表项
     ListItem { children: Vec<Node> },
 
+    /// 任务列表项（GFM 复选框）
+    TaskListItem { checked: bool, children: Vec<Node> },
+
     /// 图片
     Image {
         src: String,
@@ -138,6 +141,7 @@ impl NodeKind {
             NodeKind::Heading { children, .. }
             | NodeKind::Paragraph { children }
             | NodeKind::ListItem { children }
+            | NodeKind::TaskListItem { children, .. }
             | NodeKind::Blockquote { children }
             | NodeKind::TableRow { children } => {
                 let mut s = String::new();
@@ -275,11 +279,18 @@ fn build_node(
                 .iter()
                 .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
-            Node::new(
-                NodeKind::ListItem { children },
-                style,
-                true,
-            )
+            match item.checked {
+                Some(checked) => Node::new(
+                    NodeKind::TaskListItem { checked, children },
+                    style,
+                    true,
+                ),
+                None => Node::new(
+                    NodeKind::ListItem { children },
+                    style,
+                    true,
+                ),
+            }
         }
 
         mdast::Node::Blockquote(blockquote) => {
@@ -514,6 +525,7 @@ where
         | NodeKind::Paragraph { children }
         | NodeKind::List { children, .. }
         | NodeKind::ListItem { children }
+        | NodeKind::TaskListItem { children, .. }
         | NodeKind::Blockquote { children }
         | NodeKind::Table { children, .. }
         | NodeKind::TableRow { children }
