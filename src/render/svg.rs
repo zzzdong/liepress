@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::generator::Page;
 use crate::render::PageRenderer;
 use crate::visual::{Color, FillStrokeStyle, GradientDef, Stroke, StrokeStyle, Transform};
+use base64::Engine;
 use std::collections::HashMap;
 use vello_cpu::kurbo::{BezPath, PathSeg, Point, Rect};
 
@@ -385,7 +386,7 @@ impl PageRenderer for SvgRenderer {
         };
 
         // 将图片数据编码为 Base64
-        let base64_data = base64::encode(data);
+        let base64_data = base64::engine::general_purpose::STANDARD.encode(data);
         let data_uri = format!("data:{};base64,{}", mime_type, base64_data);
 
         // 创建 <image> 元素
