@@ -1,0 +1,16 @@
+[package]
+name = "liepress-site"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[dependencies]
+liepress = { path = ".." }
+wasm-bindgen = "0.2"
+base64 = "0.22"

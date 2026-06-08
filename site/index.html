@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>liepress - Markdown to PDF</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>liepress <span class="badge">WASM</span></h1>
+    <p class="subtitle">Markdown -> PDF (WASM build)</p>
+  </header>
+
+  <main class="container">
+    <section class="panel editor">
+      <div class="panel-toolbar">
+        <div class="toolbar-group">
+          <button id="render-pdf" class="btn btn-primary">Render PDF</button>
+        </div>
+      </div>
+      <div id="monacoEditor" class="editor-surface"></div>
+    </section>
+
+    <section class="panel output">
+      <div class="output-toolbar">
+        <label>Output</label>
+        <button id="download-pdf" class="btn" disabled>Download PDF</button>
+      </div>
+      <div id="pdf-host" class="pdf-host"></div>
+      <div id="output" class="output-box hidden"></div>
+      <div id="status" class="status">ready</div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

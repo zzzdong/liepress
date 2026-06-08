@@ -1,6 +1,6 @@
 [package]
 name = "liepress"
-version = "0.1.0-beta.0"
+version = "0.1.0-beta.1"
 description = "A Markdown to PDF/SVG/PNG converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
@@ -32,3 +32,9 @@ lopdf = "0.40"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+[workspace]
+members = ["site"]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
