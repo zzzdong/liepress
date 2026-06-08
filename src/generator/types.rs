@@ -2,13 +2,12 @@
 //!
 //! 定义 Document、Page、PageContext 等核心数据结构。
 
-use crate::visual::VisualElement;
-use crate::generator::constants::{
-    PAGE_WIDTH_PT, PAGE_HEIGHT_PT,
-    PAGE_MARGIN_TOP_PT, PAGE_MARGIN_BOTTOM_PT,
-    PAGE_MARGIN_LEFT_PT, PAGE_MARGIN_RIGHT_PT,
-};
 use crate::ast::PageConfig;
+use crate::generator::constants::{
+    PAGE_HEIGHT_PT, PAGE_MARGIN_BOTTOM_PT, PAGE_MARGIN_LEFT_PT, PAGE_MARGIN_RIGHT_PT,
+    PAGE_MARGIN_TOP_PT, PAGE_WIDTH_PT,
+};
+use crate::visual::VisualElement;
 
 /// 页面设置 - 可配置的页面尺寸和边距
 #[derive(Debug, Clone)]

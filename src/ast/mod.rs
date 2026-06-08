@@ -66,14 +66,16 @@ pub fn parse_markdown(markdown: &str) -> Result<Node, String> {
 /// let user_css = "h1 { color: red; font-size: 32pt; }";
 /// let (ast, _page_config) = parse_markdown_with_css(markdown, user_css).unwrap();
 /// ```
-pub fn parse_markdown_with_css(markdown: &str, user_css: &str) -> Result<(Node, PageConfig), String> {
-    let mdast =
-        markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
-            mdast::Node::Root(mdast::Root {
-                children: vec![],
-                position: None,
-            })
-        });
+pub fn parse_markdown_with_css(
+    markdown: &str,
+    user_css: &str,
+) -> Result<(Node, PageConfig), String> {
+    let mdast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
+        mdast::Node::Root(mdast::Root {
+            children: vec![],
+            position: None,
+        })
+    });
 
     // 从 MDAST 中提取 <style> 标签内的 CSS
     let style_css = extract_style_css(&mdast);
@@ -117,14 +119,16 @@ pub fn parse_markdown_with_css(markdown: &str, user_css: &str) -> Result<(Node, 
 /// let user_css = "h1 { color: red; font-size: 32pt; }";
 /// let (ast, _page_config) = parse_markdown_with_css_strict(markdown, user_css).unwrap();
 /// ```
-pub fn parse_markdown_with_css_strict(markdown: &str, user_css: &str) -> Result<(Node, PageConfig), String> {
-    let mdast =
-        markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
-            mdast::Node::Root(mdast::Root {
-                children: vec![],
-                position: None,
-            })
-        });
+pub fn parse_markdown_with_css_strict(
+    markdown: &str,
+    user_css: &str,
+) -> Result<(Node, PageConfig), String> {
+    let mdast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
+        mdast::Node::Root(mdast::Root {
+            children: vec![],
+            position: None,
+        })
+    });
 
     // 从 MDAST 中提取 <style> 标签内的 CSS
     let style_css = extract_style_css(&mdast);
@@ -154,13 +158,12 @@ pub fn parse_markdown_with_css_strict(markdown: &str, user_css: &str) -> Result<
 /// 注意：此函数不提取 Markdown 内的 `<style>` 标签。
 /// 如果需要内联样式支持，请使用 `parse_markdown_with_css`。
 pub fn parse_markdown_with_resolver(markdown: &str, resolver: &StyleResolver) -> Node {
-    let mdast =
-        markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
-            mdast::Node::Root(mdast::Root {
-                children: vec![],
-                position: None,
-            })
-        });
+    let mdast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
+        mdast::Node::Root(mdast::Root {
+            children: vec![],
+            position: None,
+        })
+    });
 
     node::build_ast(&mdast, resolver)
 }
@@ -177,9 +180,10 @@ fn extract_style_css(node: &mdast::Node) -> String {
 /// 递归收集所有 <style> 标签内的 CSS
 fn collect_style_css(node: &mdast::Node, css_parts: &mut Vec<String>) {
     if let mdast::Node::Html(html) = node
-        && let Some(css) = extract_style_text(&html.value) {
-            css_parts.push(css);
-        }
+        && let Some(css) = extract_style_text(&html.value)
+    {
+        css_parts.push(css);
+    }
 
     if let Some(children) = mdast_children(node) {
         for child in children {
@@ -199,7 +203,11 @@ fn extract_style_text(html: &str) -> Option<String> {
     let remaining = &html[content_start..];
     let close_end = remaining.find("</style>")?;
     let css = remaining[..close_end].trim();
-    if css.is_empty() { None } else { Some(css.to_string()) }
+    if css.is_empty() {
+        None
+    } else {
+        Some(css.to_string())
+    }
 }
 
 /// 获取 mdast 节点的子节点列表

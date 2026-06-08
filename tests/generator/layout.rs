@@ -1,17 +1,20 @@
 //! 布局测试
 
+use liepress::generator::constants::*;
 use liepress::generator::markdown_to_document;
 use liepress::visual::VisualElement;
-use liepress::generator::constants::*;
 
 /// 获取元素的边界框
 fn get_element_bounds(elem: &VisualElement) -> (f64, f64, f64, f64) {
     match elem {
         VisualElement::TextLine { bounds, .. } => (bounds.x0, bounds.y0, bounds.x1, bounds.y1),
         VisualElement::Rect { rect, .. } => (rect.x0, rect.y0, rect.x1, rect.y1),
-        VisualElement::Image { position, size, .. } => {
-            (position.x, position.y, position.x + size.x as f64, position.y + size.y as f64)
-        }
+        VisualElement::Image { position, size, .. } => (
+            position.x,
+            position.y,
+            position.x + size.x as f64,
+            position.y + size.y as f64,
+        ),
         _ => (0.0, 0.0, 0.0, 0.0),
     }
 }
@@ -28,8 +31,14 @@ fn test_heading_layout() {
     // Check that elements are within content area
     for elem in &first_page.elements {
         let bounds = get_element_bounds(elem);
-        assert!(bounds.0 >= CONTENT_AREA_X_PT as f64, "Element should be within left margin");
-        assert!(bounds.1 >= CONTENT_AREA_Y_PT as f64, "Element should be within top margin");
+        assert!(
+            bounds.0 >= CONTENT_AREA_X_PT as f64,
+            "Element should be within left margin"
+        );
+        assert!(
+            bounds.1 >= CONTENT_AREA_Y_PT as f64,
+            "Element should be within top margin"
+        );
     }
 }
 
@@ -57,10 +66,15 @@ fn test_list_layout() {
 
     let first_page = &doc.pages[0];
     // Should have text lines for list items
-    let text_count = first_page.elements.iter()
+    let text_count = first_page
+        .elements
+        .iter()
         .filter(|e| matches!(e, VisualElement::TextLine { .. }))
         .count();
-    assert!(text_count >= 3, "Should have at least 3 text lines for list items");
+    assert!(
+        text_count >= 3,
+        "Should have at least 3 text lines for list items"
+    );
 }
 
 #[test]
@@ -70,10 +84,15 @@ fn test_code_block_has_background() {
 
     let first_page = &doc.pages[0];
     // Should have at least one rect (background)
-    let rect_count = first_page.elements.iter()
+    let rect_count = first_page
+        .elements
+        .iter()
         .filter(|e| matches!(e, VisualElement::Rect { .. }))
         .count();
-    assert!(rect_count > 0, "Code block should have background rectangle");
+    assert!(
+        rect_count > 0,
+        "Code block should have background rectangle"
+    );
 }
 
 #[test]
@@ -93,7 +112,9 @@ fn test_thematic_break_as_line() {
 
     let first_page = &doc.pages[0];
     // Thematic break should be rendered as a line
-    let line_count = first_page.elements.iter()
+    let line_count = first_page
+        .elements
+        .iter()
         .filter(|e| matches!(e, VisualElement::Line { .. }))
         .count();
     assert!(line_count > 0, "Thematic break should be a line");
@@ -103,7 +124,8 @@ fn test_thematic_break_as_line() {
 
 /// 提取页面上所有文本行的文本内容
 fn extract_texts(page: &liepress::generator::Page) -> Vec<String> {
-    page.elements.iter()
+    page.elements
+        .iter()
         .filter_map(|e| {
             if let VisualElement::TextLine { runs, .. } = e {
                 let text: String = runs.iter().map(|r| r.text.as_str()).collect();
@@ -172,13 +194,35 @@ fn test_tasklist_debug_elements() {
         eprintln!("Page {}: {} elements", pi, page.elements.len());
         for (ei, elem) in page.elements.iter().enumerate() {
             match elem {
-                VisualElement::TextLine { runs, bounds, line_height } => {
-                    let text_info: Vec<String> = runs.iter().map(|r| {
-                        let glyph_info: Vec<String> = r.glyphs.iter().map(|g| format!("id={}", g.id)).collect();
-                        format!("text={:?} gl={} adv={:.1} glyphs=[{}]", r.text, r.glyphs.len(), r.advance, glyph_info.join(","))
-                    }).collect();
-                    eprintln!("  [{}] TextLine b=({:.0},{:.0})-({:.0},{:.0}) lh={} {}",
-                        ei, bounds.x0, bounds.y0, bounds.x1, bounds.y1, line_height, text_info.join(" | "));
+                VisualElement::TextLine {
+                    runs,
+                    bounds,
+                    line_height,
+                } => {
+                    let text_info: Vec<String> = runs
+                        .iter()
+                        .map(|r| {
+                            let glyph_info: Vec<String> =
+                                r.glyphs.iter().map(|g| format!("id={}", g.id)).collect();
+                            format!(
+                                "text={:?} gl={} adv={:.1} glyphs=[{}]",
+                                r.text,
+                                r.glyphs.len(),
+                                r.advance,
+                                glyph_info.join(",")
+                            )
+                        })
+                        .collect();
+                    eprintln!(
+                        "  [{}] TextLine b=({:.0},{:.0})-({:.0},{:.0}) lh={} {}",
+                        ei,
+                        bounds.x0,
+                        bounds.y0,
+                        bounds.x1,
+                        bounds.y1,
+                        line_height,
+                        text_info.join(" | ")
+                    );
                 }
                 _ => eprintln!("  [{}] {:?}", ei, elem),
             }
@@ -225,7 +269,16 @@ fn test_marker_char_glyphs() {
             for run in &line.runs {
                 let ids: Vec<u32> = run.glyphs.iter().map(|g| g.id).collect();
                 let adv = run.advance;
-                eprintln!("{} ({:>8}): glyph_ids=[{}], advance={:.1}", desc, ch, ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(","), adv);
+                eprintln!(
+                    "{} ({:>8}): glyph_ids=[{}], advance={:.1}",
+                    desc,
+                    ch,
+                    ids.iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    adv
+                );
             }
         }
     }

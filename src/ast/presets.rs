@@ -163,7 +163,12 @@ span {
 /// 不由 CSS 系统控制（标记是自动生成的），因此保留为硬编码函数。
 pub fn list_marker_style() -> Style {
     Style {
-        font_family: vec!["serif".to_string()],
+        // 使用 Source Han Serif SC 作为列表标记字体，确保在 WASM 环境中字符可显示
+        font_family: vec![
+            "Source Han Serif SC".to_string(),
+            "Noto Sans SC".to_string(),
+            "serif".to_string(),
+        ],
         font_size_pt: 10.5,
         font_weight: FontWeight::Normal,
         font_style: FontStyle::Normal,

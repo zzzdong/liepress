@@ -2,15 +2,15 @@
 //!
 //! 生成输出文件用于人工检查
 
+use crate::common::{diag_output_dir, ensure_test_image};
 use liepress::{markdown_to_pdf, markdown_to_svg};
 use std::fs;
-use crate::common::{diag_output_dir, ensure_test_image};
 use std::path::PathBuf;
 
 fn output_dir_markdown_to_svg(md: &str, output_dir: &std::path::PathBuf, name: &str) {
+    use liepress::PageRenderer;
     use liepress::generator::markdown_to_document;
     use liepress::render::SvgRenderer;
-    use liepress::PageRenderer;
 
     let doc = markdown_to_document(md);
     for (i, page) in doc.pages.iter().enumerate() {
@@ -78,7 +78,10 @@ fn test_pagination_diagnostic() {
 
     let mut md = String::from("# Pagination Test\n\n");
     for i in 0..50 {
-        md.push_str(&format!("Paragraph {} with enough text to test pagination across multiple pages. ", i));
+        md.push_str(&format!(
+            "Paragraph {} with enough text to test pagination across multiple pages. ",
+            i
+        ));
         md.push_str("Lorem ipsum dolor sit amet, consectetur adipiscing elit. ");
         md.push_str("Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n\n");
     }

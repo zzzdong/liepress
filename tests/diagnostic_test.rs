@@ -1,5 +1,5 @@
-use liepress::visual::VisualElement;
 use liepress::generator::markdown_to_document;
+use liepress::visual::VisualElement;
 
 #[test]
 fn diag_trace_url() {
@@ -12,8 +12,10 @@ fn diag_trace_url() {
             if let VisualElement::TextLine { runs, bounds, .. } = elem {
                 println!("  TextLine bounds={:?}", bounds);
                 for (ri, run) in runs.iter().enumerate() {
-                    println!("    Run[{}]: text={:?}, url={:?}, baseline_x={}, advance={}, font_size={}", 
-                        ri, run.text, run.url, run.baseline_x, run.advance, run.font_size);
+                    println!(
+                        "    Run[{}]: text={:?}, url={:?}, baseline_x={}, advance={}, font_size={}",
+                        ri, run.text, run.url, run.baseline_x, run.advance, run.font_size
+                    );
                 }
             }
         }
@@ -28,8 +30,10 @@ fn diag_trace_url() {
             if let VisualElement::TextLine { runs, bounds, .. } = elem {
                 println!("  TextLine bounds={:?}", bounds);
                 for (ri, run) in runs.iter().enumerate() {
-                    println!("    Run[{}]: text={:?}, url={:?}, baseline_x={}, advance={}, font_size={}", 
-                        ri, run.text, run.url, run.baseline_x, run.advance, run.font_size);
+                    println!(
+                        "    Run[{}]: text={:?}, url={:?}, baseline_x={}, advance={}, font_size={}",
+                        ri, run.text, run.url, run.baseline_x, run.advance, run.font_size
+                    );
                 }
             }
         }

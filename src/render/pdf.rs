@@ -2,10 +2,14 @@
 
 use std::collections::HashMap;
 
+use krilla::action::{Action, LinkAction};
+use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::color::Color as KrillaColor;
 use krilla::color::rgb::Color as RgbColor;
 use krilla::document::Document;
-use krilla::geom::{PathBuilder, Point as KrillaPoint, Rect as KrillaRect, Size, Transform as KrillaTransform};
+use krilla::geom::{
+    PathBuilder, Point as KrillaPoint, Rect as KrillaRect, Size, Transform as KrillaTransform,
+};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::{
@@ -14,8 +18,6 @@ use krilla::paint::{
 };
 use krilla::surface::Surface;
 use krilla::text::Font;
-use krilla::annotation::{Annotation, LinkAnnotation, Target};
-use krilla::action::{Action, LinkAction};
 use vello_cpu::kurbo::{BezPath, PathEl, Point, Rect, Shape};
 
 use crate::error::Result;
@@ -412,7 +414,8 @@ impl PageRenderer for PdfRenderer<'_, '_> {
             let link_y = position.y as f32;
             let link_w = run.advance;
             let link_h = run.font_size * 1.4;
-            self.links.push((link_x, link_y, link_w, link_h, url.clone()));
+            self.links
+                .push((link_x, link_y, link_w, link_h, url.clone()));
         }
 
         let mut krilla_glyphs = Vec::new();
@@ -471,7 +474,8 @@ impl PageRenderer for PdfRenderer<'_, '_> {
             let krilla_color = RgbColor::new(run.color.r, run.color.g, run.color.b);
             let stroke = KrillaStroke {
                 paint: Paint::from(krilla_color),
-                opacity: NormalizedF32::new(run.color.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+                opacity: NormalizedF32::new(run.color.a as f32 / 255.0)
+                    .unwrap_or(NormalizedF32::ONE),
                 width: stroke_w,
                 miter_limit: 4.0,
                 line_cap: LineCap::default(),

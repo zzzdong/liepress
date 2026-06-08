@@ -9,17 +9,9 @@ fn extract_text_elements(page: &liepress::generator::Page) -> Vec<(f64, f64, f64
 
     for elem in &page.elements {
         if let VisualElement::TextLine { runs, bounds, .. } = elem {
-            let text: String = runs.iter()
-                .map(|r| r.text.as_str())
-                .collect();
+            let text: String = runs.iter().map(|r| r.text.as_str()).collect();
 
-            texts.push((
-                bounds.x0,
-                bounds.y0,
-                bounds.x1,
-                bounds.y1,
-                text,
-            ));
+            texts.push((bounds.x0, bounds.y0, bounds.x1, bounds.y1, text));
         }
     }
 
@@ -78,7 +70,10 @@ fn test_long_document_paginates() {
     // Create a long document that should span multiple pages
     let mut md = String::new();
     for i in 0..100 {
-        md.push_str(&format!("# Heading {}\n\nThis is paragraph {} with some text content.\n\n", i, i));
+        md.push_str(&format!(
+            "# Heading {}\n\nThis is paragraph {} with some text content.\n\n",
+            i, i
+        ));
     }
 
     let doc = markdown_to_document(&md);
@@ -95,18 +90,17 @@ fn test_long_document_paginates() {
 fn test_each_page_has_content() {
     let mut md = String::new();
     for i in 0..50 {
-        md.push_str(&format!("Paragraph {} with enough text to ensure proper layout. ", i));
+        md.push_str(&format!(
+            "Paragraph {} with enough text to ensure proper layout. ",
+            i
+        ));
     }
 
     let doc = markdown_to_document(&md);
 
     // Each page should have some content
     for (i, page) in doc.pages.iter().enumerate() {
-        assert!(
-            !page.elements.is_empty(),
-            "Page {} should have content",
-            i
-        );
+        assert!(!page.elements.is_empty(), "Page {} should have content", i);
     }
 }
 
@@ -127,7 +121,9 @@ fn test_page_boundaries_respected() {
                     assert!(
                         bounds.y1 <= content_bottom as f64 + 0.1,
                         "Text at y0={:.1} starts in content area but y1={:.1} exceeds bottom margin ({:.1})",
-                        bounds.y0, bounds.y1, content_bottom
+                        bounds.y0,
+                        bounds.y1,
+                        content_bottom
                     );
                 }
             }

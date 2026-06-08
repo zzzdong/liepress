@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 use liepress::{
-    markdown_file_to_pdf_with_options, markdown_file_to_svg_with_options,
-    markdown_file_to_png_with_options, ConvertOptions, PageConfig,
+    ConvertOptions, PageConfig, markdown_file_to_pdf_with_options,
+    markdown_file_to_png_with_options, markdown_file_to_svg_with_options,
 };
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -187,19 +187,21 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
             config.height = Some(595.276);
         }
     } else if args.portrait
-        && let (Some(w), Some(h)) = (config.width, config.height) {
-            config.width = Some(w.min(h));
-            config.height = Some(w.max(h));
-        }
+        && let (Some(w), Some(h)) = (config.width, config.height)
+    {
+        config.width = Some(w.min(h));
+        config.height = Some(w.max(h));
+    }
 
     // Margins
     if let Some(m) = &args.margin
-        && let Some(v) = parse_length(m) {
-            config.margin_top = Some(v);
-            config.margin_bottom = Some(v);
-            config.margin_left = Some(v);
-            config.margin_right = Some(v);
-        }
+        && let Some(v) = parse_length(m)
+    {
+        config.margin_top = Some(v);
+        config.margin_bottom = Some(v);
+        config.margin_left = Some(v);
+        config.margin_right = Some(v);
+    }
     if let Some(v) = &args.margin_top {
         config.margin_top = parse_length(v);
     }
@@ -263,8 +265,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::fs::write(&args.output, &svgs[0])?;
                 println!("SVG saved to: {}", args.output.display());
             } else {
-                let stem = args.output.file_stem().unwrap_or_default().to_string_lossy();
-                let ext = args.output.extension().unwrap_or_default().to_string_lossy();
+                let stem = args
+                    .output
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let ext = args
+                    .output
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy();
                 let parent = args.output.parent().unwrap_or(std::path::Path::new("."));
                 for (i, svg) in svgs.iter().enumerate() {
                     let filename = format!("{}_{}.{}", stem, i + 1, ext);
@@ -280,8 +290,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::fs::write(&args.output, &pngs[0])?;
                 println!("PNG saved to: {}", args.output.display());
             } else {
-                let stem = args.output.file_stem().unwrap_or_default().to_string_lossy();
-                let ext = args.output.extension().unwrap_or_default().to_string_lossy();
+                let stem = args
+                    .output
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let ext = args
+                    .output
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy();
                 let parent = args.output.parent().unwrap_or(std::path::Path::new("."));
                 for (i, png) in pngs.iter().enumerate() {
                     let filename = format!("{}_{}.{}", stem, i + 1, ext);

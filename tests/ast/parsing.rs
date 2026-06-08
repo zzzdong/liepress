@@ -1,6 +1,6 @@
 //! AST 解析测试
 
-use liepress::ast::{parse_markdown, NodeKind};
+use liepress::ast::{NodeKind, parse_markdown};
 
 #[test]
 fn test_parse_simple_paragraph() {

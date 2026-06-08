@@ -18,7 +18,9 @@ pub fn collect_inline_segments(children: &[Node]) -> Vec<(String, TextStyle)> {
             NodeKind::Span { children: inner }
             | NodeKind::Strong { children: inner }
             | NodeKind::Emphasis { children: inner }
-            | NodeKind::Link { children: inner, .. }
+            | NodeKind::Link {
+                children: inner, ..
+            }
             | NodeKind::Delete { children: inner } => {
                 // 递归展开容器节点
                 segments.extend(collect_inline_segments(inner));

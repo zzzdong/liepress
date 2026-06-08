@@ -1,7 +1,7 @@
+pub mod ast;
 pub mod error;
 pub mod generator;
 pub mod render;
-pub mod ast;
 pub mod text;
 pub mod visual;
 
@@ -10,17 +10,15 @@ use std::path::Path;
 use std::path::PathBuf;
 
 pub use render::{
-    PixmapDocumentGenerator, PixmapRenderer,
+    PageRenderer, PdfDocumentGenerator, PdfRenderer, PixmapDocumentGenerator, PixmapRenderer,
     SvgDocumentGenerator, SvgRenderer,
-    PdfDocumentGenerator, PdfRenderer, PageRenderer,
 };
 
 pub use ast::PageConfig;
 
 use generator::{
-    markdown_to_document, markdown_to_document_with_base_dir,
+    Document, markdown_to_document, markdown_to_document_with_base_dir,
     markdown_to_document_with_css_and_page_config,
-    Document,
 };
 
 /// Markdown 转换配置
@@ -269,7 +267,8 @@ impl ScriptRange {
             //   CJK 扩展 F (2CEB0-2EBE0)
             //   CJK 兼容表意文字 (F900-FAFF)
             //   CJK 兼容表意文字补充 (2F800-2FA1F)
-            0x3400..=0x4DBF | 0x4E00..=0x9FFF
+            0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
             | 0xF900..=0xFAFF
             | 0x20000..=0x2A6DF
             | 0x2A700..=0x2B73F
@@ -337,33 +336,71 @@ fn infer_font_family(markdown: &str) -> Vec<String> {
     }
 
     // 找出占比最高的脚本
-    let dominant = counts.iter().max_by_key(|&(_, count)| *count).map(|(k, _)| *k).unwrap_or(ScriptRange::Other);
+    let dominant = counts
+        .iter()
+        .max_by_key(|&(_, count)| *count)
+        .map(|(k, _)| *k)
+        .unwrap_or(ScriptRange::Other);
+
+    // 基础中文字体列表（作为所有语言场景的回退）
+    // 包含衬线体（Serif）和无衬线体（Sans-serif）
+    let chinese_serif_fonts = vec![
+        "Noto Serif SC".to_string(),
+        "Source Han Serif SC".to_string(),
+        "SimSun".to_string(),
+        "SimSun-ExtB".to_string(),
+    ];
+    let chinese_sans_fonts = vec![
+        "Noto Sans SC".to_string(),
+        "Source Han Sans SC".to_string(),
+        "Microsoft YaHei".to_string(),
+        "WenQuanYi Micro Hei".to_string(),
+    ];
 
     match dominant {
-        ScriptRange::Han => vec![
-            "Noto Serif SC".to_string(),
-            "Source Han Serif SC".to_string(),
-            "SimSun".to_string(),
-            "SimSun-ExtB".to_string(),
-            "serif".to_string(),
-        ],
+        ScriptRange::Han => {
+            let mut fonts = chinese_serif_fonts;
+            fonts.extend(chinese_sans_fonts);
+            fonts.push("serif".to_string());
+            fonts.push("sans-serif".to_string());
+            fonts
+        }
         ScriptRange::Japanese => vec![
             "Noto Serif CJK JP".to_string(),
             "Noto Serif JP".to_string(),
+            "Noto Sans CJK JP".to_string(),
+            "Noto Sans JP".to_string(),
             "serif".to_string(),
+            "sans-serif".to_string(),
         ],
         ScriptRange::Korean => vec![
             "Noto Serif CJK KR".to_string(),
             "Noto Serif KR".to_string(),
+            "Noto Sans CJK KR".to_string(),
+            "Noto Sans KR".to_string(),
             "serif".to_string(),
+            "sans-serif".to_string(),
         ],
-        ScriptRange::Latin => vec![
-            "Noto Serif".to_string(),
-            "Georgia".to_string(),
-            "Times New Roman".to_string(),
-            "serif".to_string(),
-        ],
-        ScriptRange::Other => vec!["serif".to_string()],
+        ScriptRange::Latin => {
+            // 英文为主时，优先使用拉丁字体，但保留中文字体作为回退
+            let mut fonts = vec![
+                "Noto Serif".to_string(),
+                "Georgia".to_string(),
+                "Times New Roman".to_string(),
+            ];
+            fonts.extend(chinese_serif_fonts);
+            fonts.extend(chinese_sans_fonts);
+            fonts.push("serif".to_string());
+            fonts.push("sans-serif".to_string());
+            fonts
+        }
+        ScriptRange::Other => {
+            let mut fonts = chinese_serif_fonts;
+            fonts.extend(chinese_sans_fonts);
+            fonts.push("serif".to_string());
+            fonts.push("sans-serif".to_string());
+            fonts
+        }
     }
 }
 
@@ -381,8 +418,8 @@ fn resolve_user_css(
     // 判断用户是否已经显式设置了 font-family（通过 CSS 字符串）
     // 注意：这里做简单启发式判断。更严谨的做法是在 CSS 解析阶段
     // 检查是否有 body { font-family: ... } 规则。当前先以显式 font_family 为首要考虑。
-    let user_has_font_css = file_css.contains("font-family")
-        || options.user_css.contains("font-family");
+    let user_has_font_css =
+        file_css.contains("font-family") || options.user_css.contains("font-family");
 
     // 优先级：用户 CSS > auto-font > font_family
     let font_css = if user_has_font_css || !options.font_family.is_empty() {
@@ -426,10 +463,14 @@ fn resolve_user_css(
         String::new()
     };
 
-    let parts: Vec<&str> = [font_css.as_str(), options.user_css.as_str(), file_css.as_str()]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect();
+    let parts: Vec<&str> = [
+        font_css.as_str(),
+        options.user_css.as_str(),
+        file_css.as_str(),
+    ]
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect();
 
     if parts.is_empty() {
         Ok(String::new())
@@ -459,7 +500,9 @@ pub fn markdown_file_to_pdf(path: &Path) -> crate::error::Result<Vec<u8>> {
 
 pub fn markdown_file_to_svg(path: &Path) -> crate::error::Result<Vec<String>> {
     let (markdown, base_dir) = read_markdown_file(path)?;
-    Ok(render_svg(&markdown_to_document_with_base_dir(&markdown, base_dir)))
+    Ok(render_svg(&markdown_to_document_with_base_dir(
+        &markdown, base_dir,
+    )))
 }
 
 pub fn markdown_file_to_png(path: &Path) -> crate::error::Result<Vec<Vec<u8>>> {
@@ -476,11 +519,19 @@ pub fn markdown_to_pdf_with_options(
     let user_css = resolve_user_css(options, Some(markdown))?;
     let doc = (if options.strict {
         markdown_to_document_with_css_and_page_config(
-            markdown, &user_css, options.page_config.clone(), None, true,
+            markdown,
+            &user_css,
+            options.page_config.clone(),
+            None,
+            true,
         )
     } else {
         markdown_to_document_with_css_and_page_config(
-            markdown, &user_css, options.page_config.clone(), None, false,
+            markdown,
+            &user_css,
+            options.page_config.clone(),
+            None,
+            false,
         )
     })
     .map_err(crate::error::Error::CssParseError)?;
@@ -494,11 +545,19 @@ pub fn markdown_to_svg_with_options(
     let user_css = resolve_user_css(options, Some(markdown))?;
     let doc = (if options.strict {
         markdown_to_document_with_css_and_page_config(
-            markdown, &user_css, options.page_config.clone(), None, true,
+            markdown,
+            &user_css,
+            options.page_config.clone(),
+            None,
+            true,
         )
     } else {
         markdown_to_document_with_css_and_page_config(
-            markdown, &user_css, options.page_config.clone(), None, false,
+            markdown,
+            &user_css,
+            options.page_config.clone(),
+            None,
+            false,
         )
     })
     .map_err(crate::error::Error::CssParseError)?;
@@ -512,11 +571,19 @@ pub fn markdown_to_png_with_options(
     let user_css = resolve_user_css(options, Some(markdown))?;
     let doc = (if options.strict {
         markdown_to_document_with_css_and_page_config(
-            markdown, &user_css, options.page_config.clone(), None, true,
+            markdown,
+            &user_css,
+            options.page_config.clone(),
+            None,
+            true,
         )
     } else {
         markdown_to_document_with_css_and_page_config(
-            markdown, &user_css, options.page_config.clone(), None, false,
+            markdown,
+            &user_css,
+            options.page_config.clone(),
+            None,
+            false,
         )
     })
     .map_err(crate::error::Error::CssParseError)?;
@@ -531,11 +598,19 @@ pub fn markdown_file_to_pdf_with_options(
     let user_css = resolve_user_css(options, Some(&markdown))?;
     let doc = (if options.strict {
         markdown_to_document_with_css_and_page_config(
-            &markdown, &user_css, options.page_config.clone(), base_dir, true,
+            &markdown,
+            &user_css,
+            options.page_config.clone(),
+            base_dir,
+            true,
         )
     } else {
         markdown_to_document_with_css_and_page_config(
-            &markdown, &user_css, options.page_config.clone(), base_dir, false,
+            &markdown,
+            &user_css,
+            options.page_config.clone(),
+            base_dir,
+            false,
         )
     })
     .map_err(crate::error::Error::CssParseError)?;
@@ -550,11 +625,19 @@ pub fn markdown_file_to_svg_with_options(
     let user_css = resolve_user_css(options, Some(&markdown))?;
     let doc = (if options.strict {
         markdown_to_document_with_css_and_page_config(
-            &markdown, &user_css, options.page_config.clone(), base_dir, true,
+            &markdown,
+            &user_css,
+            options.page_config.clone(),
+            base_dir,
+            true,
         )
     } else {
         markdown_to_document_with_css_and_page_config(
-            &markdown, &user_css, options.page_config.clone(), base_dir, false,
+            &markdown,
+            &user_css,
+            options.page_config.clone(),
+            base_dir,
+            false,
         )
     })
     .map_err(crate::error::Error::CssParseError)?;
@@ -569,11 +652,19 @@ pub fn markdown_file_to_png_with_options(
     let user_css = resolve_user_css(options, Some(&markdown))?;
     let doc = (if options.strict {
         markdown_to_document_with_css_and_page_config(
-            &markdown, &user_css, options.page_config.clone(), base_dir, true,
+            &markdown,
+            &user_css,
+            options.page_config.clone(),
+            base_dir,
+            true,
         )
     } else {
         markdown_to_document_with_css_and_page_config(
-            &markdown, &user_css, options.page_config.clone(), base_dir, false,
+            &markdown,
+            &user_css,
+            options.page_config.clone(),
+            base_dir,
+            false,
         )
     })
     .map_err(crate::error::Error::CssParseError)?;

@@ -184,12 +184,9 @@ fn build_node(
             let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
             let mut new_ancestors = ancestor_tags.to_vec();
             new_ancestors.push(tag.to_string());
-            let children = build_html_aware_children(&root.children, resolver, &new_ancestors, &style);
-            Node::new(
-                NodeKind::Document { children },
-                style,
-                false,
-            )
+            let children =
+                build_html_aware_children(&root.children, resolver, &new_ancestors, &style);
+            Node::new(NodeKind::Document { children }, style, false)
         }
 
         mdast::Node::Paragraph(_para) => {
@@ -198,23 +195,24 @@ fn build_node(
             let mut new_ancestors = ancestor_tags.to_vec();
             new_ancestors.push(tag.to_string());
             let children = build_inline_children(&_para.children, resolver, &new_ancestors, &style);
-            Node::new(
-                NodeKind::Paragraph { children },
-                style,
-                true,
-            )
+            Node::new(NodeKind::Paragraph { children }, style, true)
         }
 
         mdast::Node::Heading(heading) => {
             let tag = match heading.depth {
-                1 => "h1", 2 => "h2", 3 => "h3",
-                4 => "h4", 5 => "h5", 6 => "h6",
+                1 => "h1",
+                2 => "h2",
+                3 => "h3",
+                4 => "h4",
+                5 => "h5",
+                6 => "h6",
                 _ => "h1",
             };
             let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
             let mut new_ancestors = ancestor_tags.to_vec();
             new_ancestors.push(tag.to_string());
-            let children = build_inline_children(&heading.children, resolver, &new_ancestors, &style);
+            let children =
+                build_inline_children(&heading.children, resolver, &new_ancestors, &style);
             Node::new(
                 NodeKind::Heading {
                     level: heading.depth,
@@ -284,16 +282,10 @@ fn build_node(
                 .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
             match item.checked {
-                Some(checked) => Node::new(
-                    NodeKind::TaskListItem { checked, children },
-                    style,
-                    true,
-                ),
-                None => Node::new(
-                    NodeKind::ListItem { children },
-                    style,
-                    true,
-                ),
+                Some(checked) => {
+                    Node::new(NodeKind::TaskListItem { checked, children }, style, true)
+                }
+                None => Node::new(NodeKind::ListItem { children }, style, true),
             }
         }
 
@@ -307,21 +299,13 @@ fn build_node(
                 .iter()
                 .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
-            Node::new(
-                NodeKind::Blockquote { children },
-                style,
-                true,
-            )
+            Node::new(NodeKind::Blockquote { children }, style, true)
         }
 
         mdast::Node::ThematicBreak(_) => {
             let tag = "hr";
             let style = resolver.resolve_style(tag, &[], ancestor_tags, parent_style);
-            Node::new(
-                NodeKind::ThematicBreak,
-                style,
-                false,
-            )
+            Node::new(NodeKind::ThematicBreak, style, false)
         }
 
         mdast::Node::Table(table) => {
@@ -344,11 +328,7 @@ fn build_node(
                 .iter()
                 .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
-            Node::new(
-                NodeKind::Table { children, align },
-                style,
-                false,
-            )
+            Node::new(NodeKind::Table { children, align }, style, false)
         }
 
         mdast::Node::TableRow(row) => {
@@ -361,11 +341,7 @@ fn build_node(
                 .iter()
                 .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
-            Node::new(
-                NodeKind::TableRow { children },
-                style,
-                false,
-            )
+            Node::new(NodeKind::TableRow { children }, style, false)
         }
 
         mdast::Node::TableCell(cell) => {
@@ -375,11 +351,7 @@ fn build_node(
             let mut new_ancestors = ancestor_tags.to_vec();
             new_ancestors.push(tag.to_string());
             let children = build_inline_children(&cell.children, resolver, &new_ancestors, &style);
-            Node::new(
-                NodeKind::Paragraph { children },
-                style,
-                true,
-            )
+            Node::new(NodeKind::Paragraph { children }, style, true)
         }
 
         // ── 内联节点 ──
@@ -405,11 +377,7 @@ fn build_node(
                 .iter()
                 .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
-            Node::new(
-                NodeKind::Strong { children },
-                style,
-                true,
-            )
+            Node::new(NodeKind::Strong { children }, style, true)
         }
 
         mdast::Node::Emphasis(emph) => {
@@ -422,11 +390,7 @@ fn build_node(
                 .iter()
                 .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
-            Node::new(
-                NodeKind::Emphasis { children },
-                style,
-                true,
-            )
+            Node::new(NodeKind::Emphasis { children }, style, true)
         }
 
         mdast::Node::InlineCode(code) => {
@@ -475,11 +439,7 @@ fn build_node(
                 .iter()
                 .map(|child| build_node(child, resolver, &new_ancestors, &style))
                 .collect();
-            Node::new(
-                NodeKind::Delete { children },
-                style,
-                true,
-            )
+            Node::new(NodeKind::Delete { children }, style, true)
         }
 
         // HTML 节点——提取 <style> CSS 的已在 extract_style_css 中处理，
@@ -494,7 +454,9 @@ fn build_node(
                             false,
                         ),
                         _ => Node::new(
-                            NodeKind::Text { text: String::new() },
+                            NodeKind::Text {
+                                text: String::new(),
+                            },
                             Style::default(),
                             false,
                         ),
@@ -503,7 +465,8 @@ fn build_node(
                     // 开放标签作为空容器等待配对——由 build_html_aware_children 处理
                     // 单独出现时（不在配对中），视为空 Div
                     let tag = &info.tag;
-                    let style = resolver.resolve_style(tag, &info.classes, ancestor_tags, parent_style);
+                    let style =
+                        resolver.resolve_style(tag, &info.classes, ancestor_tags, parent_style);
                     let mut style = style;
                     if let Some(inline_css) = &info.inline_style {
                         resolver.apply_inline_style(&mut style, inline_css);
@@ -512,7 +475,9 @@ fn build_node(
                         "center" => Node::new(NodeKind::Center { children: vec![] }, style, true),
                         "span" => Node::new(NodeKind::Span { children: vec![] }, style, true),
                         _ => Node::new(
-                            NodeKind::Text { text: String::new() },
+                            NodeKind::Text {
+                                text: String::new(),
+                            },
                             Style::default(),
                             false,
                         ),
@@ -520,7 +485,9 @@ fn build_node(
                 }
             } else {
                 Node::new(
-                    NodeKind::Text { text: String::new() },
+                    NodeKind::Text {
+                        text: String::new(),
+                    },
                     Style::default(),
                     false,
                 )
@@ -641,7 +608,9 @@ pub(crate) fn parse_html_tag(html: &str) -> Option<TagInfo> {
 
     // 读取标签名
     let tag_start = pos;
-    while pos < chars.len() && (chars[pos].is_alphanumeric() || chars[pos] == '-' || chars[pos] == '_') {
+    while pos < chars.len()
+        && (chars[pos].is_alphanumeric() || chars[pos] == '-' || chars[pos] == '_')
+    {
         pos += 1;
     }
     if pos == tag_start {
@@ -736,17 +705,18 @@ pub(crate) fn parse_html_tag(html: &str) -> Option<TagInfo> {
 
         match attr_name.as_str() {
             "class" => {
-                classes = attr_value.split_whitespace().map(|s| s.to_string()).collect();
+                classes = attr_value
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect();
             }
             "id" => {
                 if !attr_value.is_empty() {
                     id = Some(attr_value);
                 }
             }
-            "style" => {
-                if !attr_value.is_empty() {
-                    inline_style = Some(attr_value);
-                }
+            "style" if !attr_value.is_empty() => {
+                inline_style = Some(attr_value);
             }
             _ => {}
         }
@@ -784,55 +754,58 @@ fn build_html_aware_children(
         let node = &nodes[i];
 
         // 检查是否是 block-level HTML 开放标签
-        if let mdast::Node::Html(html) = node {
-            if let Some(info) = parse_html_tag(&html.value) {
-                if !info.is_close && !info.is_self_closing {
-                    let is_container = matches!(info.tag.as_str(), "center");
+        if let mdast::Node::Html(html) = node
+            && let Some(info) = parse_html_tag(&html.value)
+            && !info.is_close
+            && !info.is_self_closing
+        {
+            let is_container = matches!(info.tag.as_str(), "center");
 
-                    if is_container {
-                        // 找到匹配的关闭标签
-                        let mut inner_nodes: Vec<mdast::Node> = Vec::new();
-                        let mut depth = 1;
-                        let mut j = i + 1;
-                        while j < nodes.len() && depth > 0 {
-                            if let mdast::Node::Html(inner_html) = &nodes[j] {
-                                if let Some(inner_info) = parse_html_tag(&inner_html.value) {
-                                    if inner_info.is_close && inner_info.tag == info.tag {
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            j += 1;
-                                            break;
-                                        }
-                                    } else if !inner_info.is_close && !inner_info.is_self_closing
-                                        && inner_info.tag == info.tag
-                                    {
-                                        depth += 1;
-                                    }
-                                }
+            if is_container {
+                // 找到匹配的关闭标签
+                let mut inner_nodes: Vec<mdast::Node> = Vec::new();
+                let mut depth = 1;
+                let mut j = i + 1;
+                while j < nodes.len() && depth > 0 {
+                    if let mdast::Node::Html(inner_html) = &nodes[j]
+                        && let Some(inner_info) = parse_html_tag(&inner_html.value)
+                    {
+                        if inner_info.is_close && inner_info.tag == info.tag {
+                            depth -= 1;
+                            if depth == 0 {
+                                j += 1;
+                                break;
                             }
-                            if depth > 0 {
-                                inner_nodes.push(nodes[j].clone());
-                            }
-                            j += 1;
+                        } else if !inner_info.is_close
+                            && !inner_info.is_self_closing
+                            && inner_info.tag == info.tag
+                        {
+                            depth += 1;
                         }
-
-                        // 解析信息
-                        let style = resolver.resolve_style("center", &info.classes, ancestor_tags, parent_style);
-                        let mut style = style;
-                        if let Some(inline_css) = &info.inline_style {
-                            resolver.apply_inline_style(&mut style, inline_css);
-                        }
-                        let mut new_ancestors = ancestor_tags.to_vec();
-                        new_ancestors.push("center".to_string());
-
-                        let children = build_html_aware_children(&inner_nodes, resolver, &new_ancestors, &style);
-
-                        let node = Node::new(NodeKind::Center { children }, style, true);
-                        result.push(node);
-                        i = j;
-                        continue;
                     }
+                    if depth > 0 {
+                        inner_nodes.push(nodes[j].clone());
+                    }
+                    j += 1;
                 }
+
+                // 解析信息
+                let style =
+                    resolver.resolve_style("center", &info.classes, ancestor_tags, parent_style);
+                let mut style = style;
+                if let Some(inline_css) = &info.inline_style {
+                    resolver.apply_inline_style(&mut style, inline_css);
+                }
+                let mut new_ancestors = ancestor_tags.to_vec();
+                new_ancestors.push("center".to_string());
+
+                let children =
+                    build_html_aware_children(&inner_nodes, resolver, &new_ancestors, &style);
+
+                let node = Node::new(NodeKind::Center { children }, style, true);
+                result.push(node);
+                i = j;
+                continue;
             }
         }
 
@@ -857,43 +830,48 @@ pub(crate) fn build_inline_html_aware_children(
     while i < nodes.len() {
         let node = &nodes[i];
 
-        if let mdast::Node::Html(html) = node {
-            if let Some(info) = parse_html_tag(&html.value) {
-                if !info.is_close && !info.is_self_closing && info.tag == "span" {
-                    // 找到 </span>
-                    let mut inner_nodes: Vec<mdast::Node> = Vec::new();
-                    let mut j = i + 1;
-                    let mut found_close = false;
-                    while j < nodes.len() {
-                        if let mdast::Node::Html(inner_html) = &nodes[j] {
-                            if let Some(inner_info) = parse_html_tag(&inner_html.value) {
-                                if inner_info.is_close && inner_info.tag == "span" {
-                                    found_close = true;
-                                    j += 1;
-                                    break;
-                                }
-                            }
-                        }
-                        inner_nodes.push(nodes[j].clone());
-                        j += 1;
-                    }
-
-                    if found_close {
-                        let style = resolver.resolve_style("span", &info.classes, ancestor_tags, parent_style);
-                        let mut style = style;
-                        if let Some(inline_css) = &info.inline_style {
-                            resolver.apply_inline_style(&mut style, inline_css);
-                        }
-                        let mut new_ancestors = ancestor_tags.to_vec();
-                        new_ancestors.push("span".to_string());
-                        let children = build_inline_html_aware_children(
-                            &inner_nodes, resolver, &new_ancestors, &style,
-                        );
-                        result.push(Node::new(NodeKind::Span { children }, style, true));
-                        i = j;
-                        continue;
-                    }
+        if let mdast::Node::Html(html) = node
+            && let Some(info) = parse_html_tag(&html.value)
+            && !info.is_close
+            && !info.is_self_closing
+            && info.tag == "span"
+        {
+            // 找到 </span>
+            let mut inner_nodes: Vec<mdast::Node> = Vec::new();
+            let mut j = i + 1;
+            let mut found_close = false;
+            while j < nodes.len() {
+                if let mdast::Node::Html(inner_html) = &nodes[j]
+                    && let Some(inner_info) = parse_html_tag(&inner_html.value)
+                    && inner_info.is_close
+                    && inner_info.tag == "span"
+                {
+                    found_close = true;
+                    j += 1;
+                    break;
                 }
+                inner_nodes.push(nodes[j].clone());
+                j += 1;
+            }
+
+            if found_close {
+                let style =
+                    resolver.resolve_style("span", &info.classes, ancestor_tags, parent_style);
+                let mut style = style;
+                if let Some(inline_css) = &info.inline_style {
+                    resolver.apply_inline_style(&mut style, inline_css);
+                }
+                let mut new_ancestors = ancestor_tags.to_vec();
+                new_ancestors.push("span".to_string());
+                let children = build_inline_html_aware_children(
+                    &inner_nodes,
+                    resolver,
+                    &new_ancestors,
+                    &style,
+                );
+                result.push(Node::new(NodeKind::Span { children }, style, true));
+                i = j;
+                continue;
             }
         }
 

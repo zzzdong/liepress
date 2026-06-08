@@ -3,10 +3,12 @@
 //! 包含多个示例 Markdown 文档，生成 PDF 后使用 lopdf 验证结构，
 //! 同时输出到文件供人工查看。
 
+use crate::common::{
+    PdfReport, assert_has_link, assert_link_count, extract_links, group_links_by_url,
+};
 use liepress::markdown_to_pdf;
 use std::fs;
 use std::path::PathBuf;
-use crate::common::{extract_links, assert_has_link, assert_link_count, group_links_by_url, PdfReport};
 
 /// 获取测试输出目录
 fn test_output_dir() -> PathBuf {
@@ -256,12 +258,12 @@ const SAMPLE_WRAPPED_LINKS: &str = r#"# 长链接断行测试
 fn test_pdf_basic_document() {
     let pdf_data = markdown_to_pdf(SAMPLE_BASIC).expect("PDF should generate");
     let path = save_pdf("01_basic", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     assert!(report.has_valid_header, "PDF should have valid header");
     assert!(report.page_count > 0, "PDF should have at least one page");
-    
+
     println!("✅ Basic document: {} page(s)", report.page_count);
     println!("   Output: {:?}", path);
 }
@@ -278,7 +280,8 @@ fn test_link_simple() {
 
 #[test]
 fn test_link_multiple() {
-    let md = r#"Link one: [Example](http://example.com) and link two: [Rust](https://rust-lang.org)."#;
+    let md =
+        r#"Link one: [Example](http://example.com) and link two: [Rust](https://rust-lang.org)."#;
     let pdf_data = markdown_to_pdf(md).expect("PDF should generate");
     let doc = crate::common::assert_valid_pdf(&pdf_data);
 
@@ -316,9 +319,23 @@ fn test_link_rect_valid() {
     for (url, rect) in &links {
         assert_eq!(url, "http://example.com");
         assert!(!rect.is_empty(), "Rect should have values, got: {:?}", rect);
-        assert!(rect.len() >= 4, "Rect should have 4 values [x1, y1, x2, y2], got {:?}", rect);
-        assert!(rect[2] > rect[0], "x2 ({}) should be > x1 ({})", rect[2], rect[0]);
-        assert!(rect[3] > rect[1], "y2 ({}) should be > y1 ({})", rect[3], rect[1]);
+        assert!(
+            rect.len() >= 4,
+            "Rect should have 4 values [x1, y1, x2, y2], got {:?}",
+            rect
+        );
+        assert!(
+            rect[2] > rect[0],
+            "x2 ({}) should be > x1 ({})",
+            rect[2],
+            rect[0]
+        );
+        assert!(
+            rect[3] > rect[1],
+            "y2 ({}) should be > y1 ({})",
+            rect[3],
+            rect[1]
+        );
     }
 }
 
@@ -326,11 +343,11 @@ fn test_link_rect_valid() {
 fn test_pdf_formatting() {
     let pdf_data = markdown_to_pdf(SAMPLE_FORMATTING).expect("PDF should generate");
     let path = save_pdf("02_formatting", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     assert!(report.page_count > 0, "PDF should have pages");
-    
+
     println!("✅ Formatting document: {} page(s)", report.page_count);
     println!("   Output: {:?}", path);
 }
@@ -339,25 +356,30 @@ fn test_pdf_formatting() {
 fn test_pdf_links() {
     let pdf_data = markdown_to_pdf(SAMPLE_LINKS).expect("PDF should generate");
     let path = save_pdf("03_links", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     // 统计链接数量
-    let total_links: usize = report.pages.iter()
-        .map(|p| p.annotations.len())
-        .sum();
-    
-    assert!(total_links >= 5, "Should have at least 5 links, found {}", total_links);
-    
-    println!("✅ Links document: {} page(s), {} link(s)", report.page_count, total_links);
-    
+    let total_links: usize = report.pages.iter().map(|p| p.annotations.len()).sum();
+
+    assert!(
+        total_links >= 5,
+        "Should have at least 5 links, found {}",
+        total_links
+    );
+
+    println!(
+        "✅ Links document: {} page(s), {} link(s)",
+        report.page_count, total_links
+    );
+
     // 打印所有链接
     for page in &report.pages {
         for link in &page.annotations {
             println!("   Page {}: {} -> {:?}", page.number, link.url, link.rect);
         }
     }
-    
+
     println!("   Output: {:?}", path);
 }
 
@@ -365,11 +387,11 @@ fn test_pdf_links() {
 fn test_pdf_lists() {
     let pdf_data = markdown_to_pdf(SAMPLE_LISTS).expect("PDF should generate");
     let path = save_pdf("04_lists", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     assert!(report.page_count > 0, "PDF should have pages");
-    
+
     println!("✅ Lists document: {} page(s)", report.page_count);
     println!("   Output: {:?}", path);
 }
@@ -378,11 +400,11 @@ fn test_pdf_lists() {
 fn test_pdf_tables() {
     let pdf_data = markdown_to_pdf(SAMPLE_TABLES).expect("PDF should generate");
     let path = save_pdf("05_tables", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     assert!(report.page_count > 0, "PDF should have pages");
-    
+
     println!("✅ Tables document: {} page(s)", report.page_count);
     println!("   Output: {:?}", path);
 }
@@ -391,11 +413,11 @@ fn test_pdf_tables() {
 fn test_pdf_quotes() {
     let pdf_data = markdown_to_pdf(SAMPLE_QUOTES).expect("PDF should generate");
     let path = save_pdf("06_quotes", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     assert!(report.page_count > 0, "PDF should have pages");
-    
+
     println!("✅ Quotes document: {} page(s)", report.page_count);
     println!("   Output: {:?}", path);
 }
@@ -404,17 +426,22 @@ fn test_pdf_quotes() {
 fn test_pdf_complex() {
     let pdf_data = markdown_to_pdf(SAMPLE_COMPLEX).expect("PDF should generate");
     let path = save_pdf("07_complex", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     // 验证链接
-    let total_links: usize = report.pages.iter()
-        .map(|p| p.annotations.len())
-        .sum();
-    
-    assert!(total_links >= 4, "Complex doc should have at least 4 links, found {}", total_links);
-    
-    println!("✅ Complex document: {} page(s), {} link(s)", report.page_count, total_links);
+    let total_links: usize = report.pages.iter().map(|p| p.annotations.len()).sum();
+
+    assert!(
+        total_links >= 4,
+        "Complex doc should have at least 4 links, found {}",
+        total_links
+    );
+
+    println!(
+        "✅ Complex document: {} page(s), {} link(s)",
+        report.page_count, total_links
+    );
     println!("   Output: {:?}", path);
 }
 
@@ -422,12 +449,16 @@ fn test_pdf_complex() {
 fn test_pdf_multipage() {
     let pdf_data = markdown_to_pdf(SAMPLE_MULTIPAGE).expect("PDF should generate");
     let path = save_pdf("08_multipage", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     // 多页文档应该至少有 2 页
-    assert!(report.page_count >= 2, "Should have multiple pages, found {}", report.page_count);
-    
+    assert!(
+        report.page_count >= 2,
+        "Should have multiple pages, found {}",
+        report.page_count
+    );
+
     println!("✅ Multipage document: {} page(s)", report.page_count);
     println!("   Output: {:?}", path);
 }
@@ -437,31 +468,39 @@ fn test_pdf_multipage() {
 fn test_pdf_wrapped_links() {
     let pdf_data = markdown_to_pdf(SAMPLE_WRAPPED_LINKS).expect("PDF should generate");
     let path = save_pdf("09_wrapped_links", &pdf_data);
-    
+
     let report = validate_pdf_structure(&pdf_data).expect("Should validate PDF");
-    
+
     // 统计链接
-    let total_links: usize = report.pages.iter()
-        .map(|p| p.annotations.len())
-        .sum();
-    
+    let total_links: usize = report.pages.iter().map(|p| p.annotations.len()).sum();
+
     // 应该有至少 5 个链接，因为长链接会被断行成多个 run，每个 run 产生一个链接 annotation
-    assert!(total_links >= 5, "Should have at least 5 link annotations, found {}", total_links);
-    
-    println!("✅ Wrapped links document: {} page(s), {} link annotation(s)", report.page_count, total_links);
-    
+    assert!(
+        total_links >= 5,
+        "Should have at least 5 link annotations, found {}",
+        total_links
+    );
+
+    println!(
+        "✅ Wrapped links document: {} page(s), {} link annotation(s)",
+        report.page_count, total_links
+    );
+
     // 打印所有链接的区域信息，用于验证多行链接
     for page in &report.pages {
         for link in &page.annotations {
-            println!("   Page {}: {} -> rect=[{:.2}, {:.2}, {:.2}, {:.2}]", 
-                page.number, link.url,
+            println!(
+                "   Page {}: {} -> rect=[{:.2}, {:.2}, {:.2}, {:.2}]",
+                page.number,
+                link.url,
                 link.rect.first().copied().unwrap_or(0.0),
                 link.rect.get(1).copied().unwrap_or(0.0),
                 link.rect.get(2).copied().unwrap_or(0.0),
-                link.rect.get(3).copied().unwrap_or(0.0));
+                link.rect.get(3).copied().unwrap_or(0.0)
+            );
         }
     }
-    
+
     // 验证同一个 URL 在不同行上有不同的 y 坐标（说明链接被断行）
     let link_groups = group_links_by_url(&report);
     for (url, rects) in &link_groups {
@@ -470,11 +509,21 @@ fn test_pdf_wrapped_links() {
             let min_y = y_positions.iter().cloned().fold(f32::MAX, f32::min);
             let max_y = y_positions.iter().cloned().fold(f32::MIN, f32::max);
             let y_diff = max_y - min_y;
-            assert!(y_diff > 10.0, "Multi-line link '{}' should have annotations at different Y positions (diff={:.2}), indicating line wrapping", url, y_diff);
-            println!("   ✅ Multi-line link '{}': {} annotations spanning {:.2}pt vertically", url, rects.len(), y_diff);
+            assert!(
+                y_diff > 10.0,
+                "Multi-line link '{}' should have annotations at different Y positions (diff={:.2}), indicating line wrapping",
+                url,
+                y_diff
+            );
+            println!(
+                "   ✅ Multi-line link '{}': {} annotations spanning {:.2}pt vertically",
+                url,
+                rects.len(),
+                y_diff
+            );
         }
     }
-    
+
     println!("   Output: {:?}", path);
 }
 
@@ -483,7 +532,7 @@ fn test_all_samples() {
     println!("\n{}", "=".repeat(60));
     println!("PDF 验证测试套件");
     println!("{}", "=".repeat(60));
-    
+
     let samples = vec![
         ("基础文档", SAMPLE_BASIC),
         ("文本格式", SAMPLE_FORMATTING),
@@ -495,27 +544,40 @@ fn test_all_samples() {
         ("多页文档", SAMPLE_MULTIPAGE),
         ("长链接断行", SAMPLE_WRAPPED_LINKS),
     ];
-    
+
     let mut total_pages = 0;
     let mut total_links = 0;
-    
+
     for (i, (name, content)) in samples.iter().enumerate() {
-        let pdf_data = markdown_to_pdf(content).expect(&format!("PDF should generate for {}", name));
-        let report = validate_pdf_structure(&pdf_data).expect(&format!("Should validate PDF for {}", name));
-        
+        let pdf_data =
+            markdown_to_pdf(content).expect(&format!("PDF should generate for {}", name));
+        let report =
+            validate_pdf_structure(&pdf_data).expect(&format!("Should validate PDF for {}", name));
+
         let links: usize = report.pages.iter().map(|p| p.annotations.len()).sum();
         total_pages += report.page_count;
         total_links += links;
-        
-        println!("\n{}. {}: {} 页, {} 链接", i + 1, name, report.page_count, links);
-        
+
+        println!(
+            "\n{}. {}: {} 页, {} 链接",
+            i + 1,
+            name,
+            report.page_count,
+            links
+        );
+
         // 保存文件
         let filename = format!("{:02}_{}", i + 1, name);
         save_pdf(&filename, &pdf_data);
     }
-    
+
     println!("\n{}", "=".repeat(60));
-    println!("总计: {} 个样本, {} 页, {} 链接", samples.len(), total_pages, total_links);
+    println!(
+        "总计: {} 个样本, {} 页, {} 链接",
+        samples.len(),
+        total_pages,
+        total_links
+    );
     println!("输出目录: {:?}", test_output_dir());
     println!("{}", "=".repeat(60));
 }

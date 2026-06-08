@@ -1,8 +1,8 @@
 //! PDF 渲染测试
 
-use liepress::markdown_to_pdf;
-use crate::common::{save_test_output, test_output_dir, assert_valid_pdf, pdf_page_count};
 use crate::common::samples;
+use crate::common::{assert_valid_pdf, pdf_page_count, save_test_output, test_output_dir};
+use liepress::markdown_to_pdf;
 
 #[test]
 fn test_pdf_generation_basic() {

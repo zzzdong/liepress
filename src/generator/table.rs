@@ -7,13 +7,12 @@
 //! 1. compute_layout_info — 纯计算，返回列宽、行高等布局数据
 //! 2. generate_rows — 按行区间生成视觉元素，支持跨页分割
 
-use crate::ast::{Node, NodeKind, TextAlign, Style, computed_style_to_text_style};
-use crate::generator::text::{collect_inline_segments, annotate_runs_with_urls};
+use crate::ast::{Node, NodeKind, Style, TextAlign, computed_style_to_text_style};
+use crate::generator::text::{annotate_runs_with_urls, collect_inline_segments};
 use crate::text::{
-    FONT_CONTEXT, LAYOUT_CONTEXT,
-    layout_text_with_contexts, TextStyle, TextAlign as TextAlign2,
+    FONT_CONTEXT, LAYOUT_CONTEXT, TextAlign as TextAlign2, TextStyle, layout_text_with_contexts,
 };
-use crate::visual::{VisualElement, StrokeStyle, FillStrokeStyle};
+use crate::visual::{FillStrokeStyle, StrokeStyle, VisualElement};
 use vello_cpu::kurbo::{Point, Rect};
 
 // ─── 内部数据结构 ───
@@ -123,7 +122,12 @@ pub fn generate_rows(
         if has_header && abs_row_idx == 0 {
             if let Some(bg) = style.table_header_bg {
                 elements.push(VisualElement::Rect {
-                    rect: Rect::new(0.0, row_y as f64, chunk_table_width as f64, (row_y + row_h) as f64),
+                    rect: Rect::new(
+                        0.0,
+                        row_y as f64,
+                        chunk_table_width as f64,
+                        (row_y + row_h) as f64,
+                    ),
                     style: FillStrokeStyle {
                         fill: Some(bg),
                         stroke: None,
@@ -134,7 +138,12 @@ pub fn generate_rows(
             // 偶数行（非表头）使用交替行背景
             if let Some(bg) = style.table_alt_row_bg {
                 elements.push(VisualElement::Rect {
-                    rect: Rect::new(0.0, row_y as f64, chunk_table_width as f64, (row_y + row_h) as f64),
+                    rect: Rect::new(
+                        0.0,
+                        row_y as f64,
+                        chunk_table_width as f64,
+                        (row_y + row_h) as f64,
+                    ),
                     style: FillStrokeStyle {
                         fill: Some(bg),
                         stroke: None,
@@ -235,22 +244,14 @@ fn measure_cell(cell: &Node, padding_h: f32) -> CellMeasure {
         };
     }
 
-    let texts: Vec<(&str, &TextStyle)> = segments
-        .iter()
-        .map(|(t, s)| (t.as_str(), s))
-        .collect();
+    let texts: Vec<(&str, &TextStyle)> = segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
 
     let ideal_width = FONT_CONTEXT.with(|font_cx| {
         LAYOUT_CONTEXT.with(|layout_cx| {
             let mut fcx = font_cx.borrow_mut();
             let mut lcx = layout_cx.borrow_mut();
-            let layout = layout_text_with_contexts(
-                &texts,
-                None,
-                TextAlign2::Left,
-                &mut fcx,
-                &mut lcx,
-            );
+            let layout =
+                layout_text_with_contexts(&texts, None, TextAlign2::Left, &mut fcx, &mut lcx);
             layout.width as f32
         })
     });
@@ -350,11 +351,7 @@ fn calculate_column_widths(
 
 // ─── 计算行高 ───
 
-fn calculate_row_heights(
-    rows: &[Vec<&Node>],
-    col_widths: &[f32],
-    num_cols: usize,
-) -> Vec<f32> {
+fn calculate_row_heights(rows: &[Vec<&Node>], col_widths: &[f32], num_cols: usize) -> Vec<f32> {
     let padding_h = 4.0;
     let padding_v = 2.0;
     let mut heights = Vec::with_capacity(rows.len());
@@ -374,10 +371,8 @@ fn calculate_row_heights(
                 continue;
             }
 
-            let texts: Vec<(&str, &TextStyle)> = segments
-                .iter()
-                .map(|(t, s)| (t.as_str(), s))
-                .collect();
+            let texts: Vec<(&str, &TextStyle)> =
+                segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
 
             let height = FONT_CONTEXT.with(|font_cx| {
                 LAYOUT_CONTEXT.with(|layout_cx| {
@@ -422,11 +417,7 @@ fn compute_column_starts(col_widths: &[f32]) -> Vec<f32> {
 }
 
 /// 计算 [row_start..row_end) 范围内的行起始 Y 坐标（相对值）
-fn compute_row_starts_range(
-    row_heights: &[f32],
-    row_start: usize,
-    row_end: usize,
-) -> Vec<f32> {
+fn compute_row_starts_range(row_heights: &[f32], row_start: usize, row_end: usize) -> Vec<f32> {
     let mut starts = Vec::with_capacity(row_end - row_start);
     let mut y = 0.0_f32;
     for i in row_start..row_end {
@@ -476,10 +467,8 @@ fn layout_cell_texts(
                 continue;
             }
 
-            let texts: Vec<(&str, &TextStyle)> = segments
-                .iter()
-                .map(|(t, s)| (t.as_str(), s))
-                .collect();
+            let texts: Vec<(&str, &TextStyle)> =
+                segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
 
             FONT_CONTEXT.with(|font_cx| {
                 LAYOUT_CONTEXT.with(|layout_cx| {
@@ -539,13 +528,15 @@ fn draw_table_borders_range(
     };
 
     // 该区间的总宽度
-    let table_width: f32 = col_starts.last().copied().unwrap_or(0.0)
-        + col_widths.last().copied().unwrap_or(0.0);
+    let table_width: f32 =
+        col_starts.last().copied().unwrap_or(0.0) + col_widths.last().copied().unwrap_or(0.0);
 
     // 该区间的高度范围
     let chunk_first_y = row_starts.first().copied().unwrap_or(0.0);
     let chunk_last_y = row_starts.last().copied().unwrap_or(0.0)
-        + if let (Some(&last_h), Some(_last_start)) = (row_heights.get(row_end - 1), row_starts.last()) {
+        + if let (Some(&last_h), Some(_last_start)) =
+            (row_heights.get(row_end - 1), row_starts.last())
+        {
             last_h
         } else {
             0.0
@@ -575,8 +566,7 @@ fn draw_table_borders_range(
         } else if c < col_starts.len() {
             col_starts[c]
         } else {
-            col_starts.last().copied().unwrap_or(0.0)
-                + col_widths.last().copied().unwrap_or(0.0)
+            col_starts.last().copied().unwrap_or(0.0) + col_widths.last().copied().unwrap_or(0.0)
         };
 
         elements.push(VisualElement::Line {

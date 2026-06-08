@@ -3,10 +3,10 @@
 //! 测试表格 AST → VisualElement 转换的正确性，
 //! 包括跨页分割、边框、背景、文本布局等。
 
-use liepress::generator::markdown_to_document;
-use liepress::visual::VisualElement;
-use liepress::generator::{constants::*, Document, Page};
 use crate::common::samples;
+use liepress::generator::markdown_to_document;
+use liepress::generator::{Document, Page, constants::*};
+use liepress::visual::VisualElement;
 
 // ─── 辅助函数 ───
 
@@ -25,9 +25,21 @@ fn extract_text_elements(page: &liepress::generator::Page) -> Vec<(f64, f64, f64
 
 /// 统计页面上特定类型的元素数量
 fn count_elements(page: &liepress::generator::Page) -> (usize, usize, usize) {
-    let text_lines = page.elements.iter().filter(|e| matches!(e, VisualElement::TextLine { .. })).count();
-    let lines = page.elements.iter().filter(|e| matches!(e, VisualElement::Line { .. })).count();
-    let rects = page.elements.iter().filter(|e| matches!(e, VisualElement::Rect { .. })).count();
+    let text_lines = page
+        .elements
+        .iter()
+        .filter(|e| matches!(e, VisualElement::TextLine { .. }))
+        .count();
+    let lines = page
+        .elements
+        .iter()
+        .filter(|e| matches!(e, VisualElement::Line { .. }))
+        .count();
+    let rects = page
+        .elements
+        .iter()
+        .filter(|e| matches!(e, VisualElement::Rect { .. }))
+        .count();
     (text_lines, lines, rects)
 }
 
@@ -36,15 +48,26 @@ fn count_elements(page: &liepress::generator::Page) -> (usize, usize, usize) {
 #[test]
 fn test_simple_table_renders_elements() {
     let doc = markdown_to_document(samples::SIMPLE_TABLE);
-    assert!(!doc.pages.is_empty(), "Table document should have at least one page");
+    assert!(
+        !doc.pages.is_empty(),
+        "Table document should have at least one page"
+    );
 
     let page = &doc.pages[0];
     let (text_lines, border_lines, _rects) = count_elements(page);
 
     // 应该有文本行（每行每列都有内容）
-    assert!(text_lines > 0, "Table should have text line elements, got {}", text_lines);
+    assert!(
+        text_lines > 0,
+        "Table should have text line elements, got {}",
+        text_lines
+    );
     // 应该有边框线
-    assert!(border_lines > 0, "Table should have border line elements, got {}", border_lines);
+    assert!(
+        border_lines > 0,
+        "Table should have border line elements, got {}",
+        border_lines
+    );
 }
 
 #[test]
@@ -52,15 +75,19 @@ fn test_table_has_borders() {
     let doc = markdown_to_document(samples::SIMPLE_TABLE);
     let page = &doc.pages[0];
 
-    let line_elements: Vec<&VisualElement> = page.elements.iter()
+    let line_elements: Vec<&VisualElement> = page
+        .elements
+        .iter()
         .filter(|e| matches!(e, VisualElement::Line { .. }))
         .collect();
 
     // 一个 3 行 × 2 列表格至少有：顶部 + 底部 + 每行底部 + 左右垂直 = 至少 8 条线
     // 但实际可能更多，取决于实现
-    assert!(line_elements.len() >= 4,
+    assert!(
+        line_elements.len() >= 4,
         "Table should have at least 4 border lines (top, bottom, left, right), got {}",
-        line_elements.len());
+        line_elements.len()
+    );
 }
 
 #[test]
@@ -71,10 +98,22 @@ fn test_table_text_content() {
 
     let all_text: String = texts.iter().map(|t| t.4.as_str()).collect();
     // 应该包含所有单元格文本
-    assert!(all_text.contains("Header 1"), "Table should contain 'Header 1'");
-    assert!(all_text.contains("Header 2"), "Table should contain 'Header 2'");
-    assert!(all_text.contains("Cell A1"), "Table should contain 'Cell A1'");
-    assert!(all_text.contains("Cell B2"), "Table should contain 'Cell B2'");
+    assert!(
+        all_text.contains("Header 1"),
+        "Table should contain 'Header 1'"
+    );
+    assert!(
+        all_text.contains("Header 2"),
+        "Table should contain 'Header 2'"
+    );
+    assert!(
+        all_text.contains("Cell A1"),
+        "Table should contain 'Cell A1'"
+    );
+    assert!(
+        all_text.contains("Cell B2"),
+        "Table should contain 'Cell B2'"
+    );
 }
 
 #[test]
@@ -84,10 +123,20 @@ fn test_table_text_within_content_bounds() {
     let texts = extract_text_elements(page);
 
     for (x0, _y0, x1, _y1, text) in &texts {
-        assert!(*x0 >= CONTENT_AREA_X_PT as f64,
-            "Text '{}' starts outside content area (left bound {:.1} < {})", text, x0, CONTENT_AREA_X_PT);
-        assert!(*x1 <= (CONTENT_AREA_X_PT + CONTENT_AREA_WIDTH_PT) as f64,
-            "Text '{}' ends outside content area (right bound {:.1} > {})", text, x1, CONTENT_AREA_X_PT + CONTENT_AREA_WIDTH_PT);
+        assert!(
+            *x0 >= CONTENT_AREA_X_PT as f64,
+            "Text '{}' starts outside content area (left bound {:.1} < {})",
+            text,
+            x0,
+            CONTENT_AREA_X_PT
+        );
+        assert!(
+            *x1 <= (CONTENT_AREA_X_PT + CONTENT_AREA_WIDTH_PT) as f64,
+            "Text '{}' ends outside content area (right bound {:.1} > {})",
+            text,
+            x1,
+            CONTENT_AREA_X_PT + CONTENT_AREA_WIDTH_PT
+        );
     }
 }
 
@@ -112,8 +161,7 @@ fn test_wide_table() {
 #[test]
 fn test_aligned_table() {
     let doc = markdown_to_document(samples::ALIGNED_TABLE);
-    assert!(!doc.pages.is_empty(),
-        "Aligned table should render");
+    assert!(!doc.pages.is_empty(), "Aligned table should render");
 
     let page = &doc.pages[0];
     let (_text_lines, border_lines, _rects) = count_elements(page);
@@ -131,12 +179,25 @@ fn test_formatted_table() {
     let texts = extract_text_elements(page);
 
     let all_text: String = texts.iter().map(|t| t.4.as_str()).collect();
-    assert!(all_text.contains("Bold"), "Formatted table should contain bold text");
-    assert!(all_text.contains("Italic"), "Formatted table should contain italic text");
-    assert!(all_text.contains("inline code"), "Formatted table should contain inline code");
+    assert!(
+        all_text.contains("Bold"),
+        "Formatted table should contain bold text"
+    );
+    assert!(
+        all_text.contains("Italic"),
+        "Formatted table should contain italic text"
+    );
+    assert!(
+        all_text.contains("inline code"),
+        "Formatted table should contain inline code"
+    );
 
     // 文本行数量应该够
-    assert!(texts.len() >= 3, "Should have text for header + 3 rows, got {}", texts.len());
+    assert!(
+        texts.len() >= 3,
+        "Should have text for header + 3 rows, got {}",
+        texts.len()
+    );
 }
 
 // ─── 空表格 ───
@@ -166,7 +227,10 @@ fn test_table_with_no_rows_does_not_crash() {
 fn find_text_overlaps(page: &Page) -> Vec<(usize, usize, f64, f64)> {
     use liepress::visual::VisualElement;
     // 收集所有 TextLine 的 Y 范围
-    let mut text_y: Vec<(f64, f64, usize)> = page.elements.iter().enumerate()
+    let mut text_y: Vec<(f64, f64, usize)> = page
+        .elements
+        .iter()
+        .enumerate()
         .filter_map(|(i, e)| {
             if let VisualElement::TextLine { bounds, .. } = e {
                 Some((bounds.y0, bounds.y1, i))
@@ -200,15 +264,10 @@ fn find_text_overlaps(page: &Page) -> Vec<(usize, usize, f64, f64)> {
     // 检查组间是否有重叠
     let mut overlaps = Vec::new();
     for k in 1..groups.len() {
-        let prev_bottom = groups[k-1].iter().map(|g| g.1).fold(0.0_f64, f64::max);
+        let prev_bottom = groups[k - 1].iter().map(|g| g.1).fold(0.0_f64, f64::max);
         let curr_top = groups[k].iter().map(|g| g.0).fold(f64::INFINITY, f64::min);
         if curr_top < prev_bottom - 0.1 {
-            overlaps.push((
-                groups[k-1][0].2,
-                groups[k][0].2,
-                prev_bottom,
-                curr_top,
-            ));
+            overlaps.push((groups[k - 1][0].2, groups[k][0].2, prev_bottom, curr_top));
         }
     }
     overlaps
@@ -225,9 +284,13 @@ fn test_cell_text_wrapping_no_overlap() {
 
     for (page_idx, page) in doc.pages.iter().enumerate() {
         let overlaps = find_text_overlaps(page);
-        assert!(overlaps.is_empty(),
+        assert!(
+            overlaps.is_empty(),
             "Page {}: found {} text overlaps between row groups: {:?}",
-            page_idx, overlaps.len(), overlaps);
+            page_idx,
+            overlaps.len(),
+            overlaps
+        );
     }
 }
 
@@ -247,8 +310,11 @@ fn test_large_table_spans_multiple_pages() {
     let doc = markdown_to_document(&md);
 
     // 大表应该跨多页
-    assert!(doc.pages.len() >= 2,
-        "Large table with 80 rows should span multiple pages, got {} pages", doc.pages.len());
+    assert!(
+        doc.pages.len() >= 2,
+        "Large table with 80 rows should span multiple pages, got {} pages",
+        doc.pages.len()
+    );
 }
 
 #[test]
@@ -265,8 +331,7 @@ fn test_table_pagination_continuity() {
 
     // 每页应该都有内容
     for (i, page) in doc.pages.iter().enumerate() {
-        assert!(!page.elements.is_empty(),
-            "Page {} should have elements", i);
+        assert!(!page.elements.is_empty(), "Page {} should have elements", i);
     }
 }
 
@@ -282,17 +347,20 @@ fn test_table_rows_distributed_across_pages() {
     let doc = markdown_to_document(&md);
 
     // 收集所有页的文本
-    let all_texts: Vec<String> = doc.pages.iter()
-        .flat_map(|page| {
-            extract_text_elements(page).into_iter().map(|t| t.4)
-        })
+    let all_texts: Vec<String> = doc
+        .pages
+        .iter()
+        .flat_map(|page| extract_text_elements(page).into_iter().map(|t| t.4))
         .collect();
 
     // 所有文本内容应该完整
     let joined = all_texts.join(" ");
     for name in &["Item 1", "Item 40", "Item 80"] {
-        assert!(joined.contains(name),
-            "Table content '{}' should appear somewhere in the document", name);
+        assert!(
+            joined.contains(name),
+            "Table content '{}' should appear somewhere in the document",
+            name
+        );
     }
 }
 
@@ -309,12 +377,17 @@ fn test_table_pagination_borders_on_each_page() {
 
     // 每页都应该有边框线
     for (i, page) in doc.pages.iter().enumerate() {
-        let line_count = page.elements.iter()
+        let line_count = page
+            .elements
+            .iter()
             .filter(|e| matches!(e, VisualElement::Line { .. }))
             .count();
-        assert!(line_count >= 2,
+        assert!(
+            line_count >= 2,
             "Page {} should have at least 2 border lines (top + bottom), got {}",
-            i, line_count);
+            i,
+            line_count
+        );
     }
 }
 
@@ -362,9 +435,15 @@ fn test_table_pagination_no_text_overlap() {
         for k in 1..groups.len() {
             let prev_bottom = groups[k - 1].1;
             let curr_top = groups[k].0;
-            assert!(curr_top >= prev_bottom - 0.1,
+            assert!(
+                curr_top >= prev_bottom - 0.1,
                 "Page {}: row groups {} and {} overlap (prev bottom={:.1}, curr top={:.1})",
-                page_idx, k - 1, k, prev_bottom, curr_top);
+                page_idx,
+                k - 1,
+                k,
+                prev_bottom,
+                curr_top
+            );
         }
     }
 }
@@ -403,8 +482,10 @@ fn test_table_followed_by_paragraph() {
     let texts = extract_text_elements(page);
     let all_text: String = texts.iter().map(|t| t.4.as_str()).collect();
 
-    assert!(all_text.contains("After the table"),
-        "Table should be followed by paragraph text");
+    assert!(
+        all_text.contains("After the table"),
+        "Table should be followed by paragraph text"
+    );
 }
 
 // ─── 表头背景 ───
@@ -415,14 +496,19 @@ fn test_table_header_background() {
     let page = &doc.pages[0];
 
     // 表头应该有 Rect 作为背景
-    let rect_count = page.elements.iter()
+    let rect_count = page
+        .elements
+        .iter()
         .filter(|e| matches!(e, VisualElement::Rect { .. }))
         .count();
 
     // 有表头时应有至少一个背景矩形
     // （可能同时有交替行背景，所以 >= 1）
-    assert!(rect_count >= 1,
-        "Table header should have background rectangle, got {}", rect_count);
+    assert!(
+        rect_count >= 1,
+        "Table header should have background rectangle, got {}",
+        rect_count
+    );
 }
 
 // ─── 元素顺序 ───
@@ -436,8 +522,10 @@ fn test_table_elements_in_reading_order() {
 
         // 文本行应该按从上到下的阅读顺序排列
         for i in 1..texts.len() {
-            assert!(texts[i].1 >= texts[i - 1].1 - 0.1,
-                "Text lines should be in reading order (top to bottom)");
+            assert!(
+                texts[i].1 >= texts[i - 1].1 - 0.1,
+                "Text lines should be in reading order (top to bottom)"
+            );
         }
     }
 }
@@ -449,8 +537,12 @@ fn test_table_y_positions_increase() {
     for page in &doc.pages {
         let texts = extract_text_elements(page);
         for i in 1..texts.len() {
-            assert!(texts[i].1 > texts[i - 1].1 - 0.1,
-                "Row {} should be below row {}", i, i - 1);
+            assert!(
+                texts[i].1 > texts[i - 1].1 - 0.1,
+                "Row {} should be below row {}",
+                i,
+                i - 1
+            );
         }
     }
 }

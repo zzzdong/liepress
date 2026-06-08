@@ -1,7 +1,9 @@
 use crate::error::Error;
 use crate::visual::Color;
 use parley::fontique::GenericFamily;
-use parley::style::{FontFamily, FontFamilyName, FontStyle as ParleyFontStyle, FontWeight, StyleProperty};
+use parley::style::{
+    FontFamily, FontFamilyName, FontStyle as ParleyFontStyle, FontWeight, StyleProperty,
+};
 use parley::{Alignment, AlignmentOptions, FontContext, LayoutContext};
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -123,7 +125,6 @@ pub fn with_text_contexts<R, F: FnOnce(&mut FontContext, &mut LayoutContext<Colo
         LAYOUT_CONTEXT.with(|layout_cx| f(&mut font_cx.borrow_mut(), &mut layout_cx.borrow_mut()))
     })
 }
-
 
 /// 文本对齐方式
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -313,8 +314,7 @@ fn extract_lines_from_parley(
 
         for (start_idx, end_idx) in run_glyph_ranges.iter() {
             let run_idx = glyph_data[*start_idx].1;
-            let (color, font_data, font_size, _run, first_glyph_x) =
-                &run_infos[run_idx];
+            let (color, font_data, font_size, _run, first_glyph_x) = &run_infos[run_idx];
 
             let glyph_count = end_idx - start_idx;
             let text_range = full_text_pos..full_text_pos + glyph_count;
@@ -369,7 +369,10 @@ fn extract_lines_from_parley(
 }
 
 /// 查找 byte position 对应的文本修饰
-fn lookup_decoration(pos: usize, map: &[(std::ops::Range<usize>, TextDecoration)]) -> TextDecoration {
+fn lookup_decoration(
+    pos: usize,
+    map: &[(std::ops::Range<usize>, TextDecoration)],
+) -> TextDecoration {
     for (range, dec) in map {
         if range.contains(&pos) {
             return *dec;
@@ -407,8 +410,12 @@ pub fn create_text_layout_with_contexts(
     builder.push_default(StyleProperty::FontFamily(font_stack));
     builder.push_default(StyleProperty::FontSize(style.font_size as f32));
     builder.push_default(StyleProperty::Brush(style.color));
-    builder.push_default(StyleProperty::FontStyle(to_parley_font_style(&style.font_style)));
-    builder.push_default(StyleProperty::FontWeight(to_parley_font_weight(&style.font_weight)));
+    builder.push_default(StyleProperty::FontStyle(to_parley_font_style(
+        &style.font_style,
+    )));
+    builder.push_default(StyleProperty::FontWeight(to_parley_font_weight(
+        &style.font_weight,
+    )));
 
     let mut layout = builder.build(text);
     layout.break_all_lines(max_width.map(|w| w as f32));
@@ -419,7 +426,11 @@ pub fn create_text_layout_with_contexts(
     let decoration_map = [(0..text.len(), style.decoration)];
     let lines = extract_lines_from_parley(&layout, text, &decoration_map);
 
-    TextLayout { lines, width, height }
+    TextLayout {
+        lines,
+        width,
+        height,
+    }
 }
 
 /// 将多段不同样式的文本合并在一个 TextLayout 中。
@@ -467,8 +478,12 @@ pub fn layout_text_with_contexts(
     builder.push_default(StyleProperty::FontFamily(default_font_stack));
     builder.push_default(StyleProperty::FontSize(first_style.font_size as f32));
     builder.push_default(StyleProperty::Brush(first_style.color));
-    builder.push_default(StyleProperty::FontStyle(to_parley_font_style(&first_style.font_style)));
-    builder.push_default(StyleProperty::FontWeight(to_parley_font_weight(&first_style.font_weight)));
+    builder.push_default(StyleProperty::FontStyle(to_parley_font_style(
+        &first_style.font_style,
+    )));
+    builder.push_default(StyleProperty::FontWeight(to_parley_font_weight(
+        &first_style.font_weight,
+    )));
 
     for (i, (_, style)) in texts.iter().enumerate().skip(1) {
         let (start, end) = ranges[i];
@@ -481,8 +496,14 @@ pub fn layout_text_with_contexts(
         );
         builder.push(StyleProperty::FontSize(style.font_size as f32), start..end);
         builder.push(StyleProperty::Brush(style.color), start..end);
-        builder.push(StyleProperty::FontStyle(to_parley_font_style(&style.font_style)), start..end);
-        builder.push(StyleProperty::FontWeight(to_parley_font_weight(&style.font_weight)), start..end);
+        builder.push(
+            StyleProperty::FontStyle(to_parley_font_style(&style.font_style)),
+            start..end,
+        );
+        builder.push(
+            StyleProperty::FontWeight(to_parley_font_weight(&style.font_weight)),
+            start..end,
+        );
     }
 
     let mut layout = builder.build(&combined);
@@ -506,7 +527,11 @@ pub fn layout_text_with_contexts(
     }
     let lines = extract_lines_from_parley(&layout, &combined, &decoration_map);
 
-    TextLayout { lines, width, height }
+    TextLayout {
+        lines,
+        width,
+        height,
+    }
 }
 
 /// 将字体家族列表（Vec<String>）转换为 parley 的 FontFamily::List。

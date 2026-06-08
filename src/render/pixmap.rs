@@ -6,10 +6,10 @@ use crate::render::PageRenderer;
 use crate::text::{TextLayout, TextStyle, layout_text};
 use crate::visual::{Color, FillStrokeStyle, GradientDef, Stroke, StrokeStyle, Transform};
 use std::sync::Arc;
-use vello_cpu::peniko::{Extend, ImageSampler, ImageQuality};
 use vello_cpu::RenderContext;
 use vello_cpu::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape, Stroke as KurboStroke};
 use vello_cpu::peniko::color::AlphaColor;
+use vello_cpu::peniko::{Extend, ImageQuality, ImageSampler};
 use vello_cpu::{Image, ImageSource, Pixmap, Resources};
 
 pub struct PixmapDocumentGenerator {
@@ -92,7 +92,6 @@ impl PixmapRenderer {
 
         Ok(png)
     }
-
 
     fn color_to_vello(color: &Color) -> AlphaColor<vello_cpu::color::Srgb> {
         AlphaColor::from_rgba8(color.r, color.g, color.b, color.a)
@@ -191,8 +190,6 @@ impl PixmapRenderer {
             style.align,
         ))
     }
-
-    
 }
 
 impl PageRenderer for PixmapRenderer {
@@ -356,8 +353,8 @@ impl PageRenderer for PixmapRenderer {
             .iter()
             .map(|g| vello_cpu::Glyph {
                 id: g.id,
-                x: g.x,  // 相对 run.start 的偏移
-                y: g.y,  // 相对 run.start 的偏移
+                x: g.x, // 相对 run.start 的偏移
+                y: g.y, // 相对 run.start 的偏移
             })
             .collect();
 
@@ -390,7 +387,8 @@ impl PageRenderer for PixmapRenderer {
 
             let color = run.color.as_vello_color();
             self.ctx.set_paint(color);
-            self.ctx.set_stroke(KurboStroke::new(stroke_w * self.scale as f64));
+            self.ctx
+                .set_stroke(KurboStroke::new(stroke_w * self.scale as f64));
 
             let mut path = BezPath::new();
             path.move_to(scaled_start);

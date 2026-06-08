@@ -9,13 +9,30 @@ const FONTS_TO_LOAD = [
         name: 'JetBrains Mono',
         url: 'https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/ttf/JetBrainsMono-Regular.ttf',
     },
+    // 中文宋体（Noto Sans Serif SC）
     {
-        name: 'Noto Serif SC',
-        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf',
+        name: 'Noto Sans Serif SC',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf',
     },
+    // 中文黑体（Noto Sans SC）
     {
         name: 'Noto Sans SC',
-        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf',
+    },
+    // 拉丁衬线字体（Noto Serif）
+    {
+        name: 'Noto Serif',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSerif/NotoSerif-Regular.ttf',
+    },
+    // 拉丁无衬线字体（Noto Sans）
+    {
+        name: 'Noto Sans',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf',
+    },
+    // 拉丁等宽字体（Noto Sans Mono）
+    {
+        name: 'Noto Sans Mono',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansMono/NotoSansMono-Regular.ttf',
     },
 ];
 
@@ -222,10 +239,11 @@ async function renderPdf() {
 
     try {
         console.log('Calling markdown_to_pdf_base64 with:', markdown.substring(0, 50) + '...');
-        // Use 'Noto Serif SC' as primary font for Chinese documents
-        const base64 = wasmModule.markdown_to_pdf_base64(markdown, 'Noto Serif SC, Noto Sans SC, sans-serif', '');
+        // Use comprehensive font stack: Latin fonts first, then Chinese fonts as fallback
+        const base64 = wasmModule.markdown_to_pdf_base64(markdown, 'Noto Serif, Source Han Serif SC, Noto Sans SC, Georgia, serif', '');
         console.log('PDF generated, base64 length:', base64.length);
         currentPdfBase64 = base64;
+        
         await displayPdf(base64);
         setStatus('PDF rendered successfully');
         

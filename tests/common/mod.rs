@@ -82,27 +82,27 @@ fn url_from_annot_dict(doc: &Document, annot_dict: &lopdf::Dictionary) -> String
         .ok()
         .and_then(|a| {
             doc.dereference(a).ok().and_then(|(_, obj)| {
-                obj.as_dict().ok().and_then(|d| {
-                    d.get(b"URI").ok().and_then(|u| u.as_str().ok())
-                })
+                obj.as_dict()
+                    .ok()
+                    .and_then(|d| d.get(b"URI").ok().and_then(|u| u.as_str().ok()))
             })
         })
         .map(|s| String::from_utf8_lossy(s).to_string())
         .or_else(|| {
-            annot_dict
-                .get(b"URI")
-                .ok()
-                .and_then(|u| {
-                    u.as_str().ok()
-                        .map(|s| String::from_utf8_lossy(s).to_string())
-                })
+            annot_dict.get(b"URI").ok().and_then(|u| {
+                u.as_str()
+                    .ok()
+                    .map(|s| String::from_utf8_lossy(s).to_string())
+            })
         })
         .unwrap_or_default()
 }
 
 /// 将 PDF 对象转换为 f32（兼容 Integer 和 Real）
 fn obj_to_f32(obj: &lopdf::Object) -> Option<f32> {
-    obj.as_f32().ok().or_else(|| obj.as_i64().ok().map(|v| v as f32))
+    obj.as_f32()
+        .ok()
+        .or_else(|| obj.as_i64().ok().map(|v| v as f32))
 }
 
 /// 从注解字典中提取矩形区域
@@ -143,13 +143,22 @@ pub fn extract_links(doc: &Document) -> Vec<(String, Vec<f32>)> {
 pub fn assert_has_link(doc: &Document, expected_url: &str) {
     let links = extract_links(doc);
     let found = links.iter().any(|(url, _)| url == expected_url);
-    assert!(found, "Should find link to {}, found: {:?}", expected_url, links);
+    assert!(
+        found,
+        "Should find link to {}, found: {:?}",
+        expected_url, links
+    );
 }
 
 /// 验证 PDF 中链接数量至少为 N
 pub fn assert_link_count(doc: &Document, min: usize) -> Vec<(String, Vec<f32>)> {
     let links = extract_links(doc);
-    assert!(links.len() >= min, "Should have at least {} links, found {}", min, links.len());
+    assert!(
+        links.len() >= min,
+        "Should have at least {} links, found {}",
+        min,
+        links.len()
+    );
     links
 }
 
@@ -214,10 +223,14 @@ pub fn validate_pdf_structure(data: &[u8]) -> PdfReport {
 
 /// 按 URL 对链接矩形分组
 pub fn group_links_by_url(report: &PdfReport) -> std::collections::HashMap<String, Vec<Vec<f32>>> {
-    let mut groups: std::collections::HashMap<String, Vec<Vec<f32>>> = std::collections::HashMap::new();
+    let mut groups: std::collections::HashMap<String, Vec<Vec<f32>>> =
+        std::collections::HashMap::new();
     for page in &report.pages {
         for link in &page.annotations {
-            groups.entry(link.url.clone()).or_default().push(link.rect.clone());
+            groups
+                .entry(link.url.clone())
+                .or_default()
+                .push(link.rect.clone());
         }
     }
     groups

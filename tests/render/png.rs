@@ -1,8 +1,8 @@
 //! PNG 渲染测试
 
-use liepress::markdown_to_png;
-use crate::common::{test_output_dir, save_test_output};
 use crate::common::samples;
+use crate::common::{save_test_output, test_output_dir};
+use liepress::markdown_to_png;
 
 #[test]
 fn test_png_generation_basic() {

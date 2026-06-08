@@ -1,6 +1,6 @@
 //! 文档生成测试
 
-use liepress::generator::{markdown_to_document, constants::*};
+use liepress::generator::{constants::*, markdown_to_document};
 
 #[test]
 fn test_basic_document_structure() {
@@ -8,11 +8,17 @@ fn test_basic_document_structure() {
     let doc = markdown_to_document(md);
 
     // Should have at least one page
-    assert!(!doc.pages.is_empty(), "Document should have at least one page");
+    assert!(
+        !doc.pages.is_empty(),
+        "Document should have at least one page"
+    );
 
     // First page should have elements
     let first_page = &doc.pages[0];
-    assert!(!first_page.elements.is_empty(), "First page should have elements");
+    assert!(
+        !first_page.elements.is_empty(),
+        "First page should have elements"
+    );
 }
 
 #[test]
@@ -22,8 +28,14 @@ fn test_page_dimensions() {
 
     for page in &doc.pages {
         // Check page dimensions match A4
-        assert!((page.width - PAGE_WIDTH_PT).abs() < 0.1, "Page width should be A4");
-        assert!((page.height - PAGE_HEIGHT_PT).abs() < 0.1, "Page height should be A4");
+        assert!(
+            (page.width - PAGE_WIDTH_PT).abs() < 0.1,
+            "Page width should be A4"
+        );
+        assert!(
+            (page.height - PAGE_HEIGHT_PT).abs() < 0.1,
+            "Page height should be A4"
+        );
     }
 }
 
@@ -41,7 +53,11 @@ fn test_single_paragraph() {
     let md = "Just one paragraph.";
     let doc = markdown_to_document(md);
 
-    assert_eq!(doc.pages.len(), 1, "Single paragraph should fit on one page");
+    assert_eq!(
+        doc.pages.len(),
+        1,
+        "Single paragraph should fit on one page"
+    );
 }
 
 #[test]

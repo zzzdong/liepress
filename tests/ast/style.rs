@@ -1,6 +1,6 @@
 //! AST 样式测试
 
-use liepress::ast::{parse_markdown, NodeKind, Style, FontWeight, FontStyle};
+use liepress::ast::{FontStyle, FontWeight, NodeKind, Style, parse_markdown};
 
 #[test]
 fn test_paragraph_has_style() {
@@ -96,10 +96,7 @@ fn test_link_has_color() {
                             assert_eq!(child.style.color.g, 0);
                             assert_eq!(child.style.color.b, 255);
                             // Links have URL set
-                            assert_eq!(
-                                child.style.link_url.as_deref(),
-                                Some("http://example.com")
-                            );
+                            assert_eq!(child.style.link_url.as_deref(), Some("http://example.com"));
                             return;
                         }
                     }
@@ -118,20 +115,18 @@ fn test_strong_has_bold_weight() {
     let node = parse_markdown(md).unwrap();
 
     match &node.kind {
-        NodeKind::Document { children } => {
-            match &children[0].kind {
-                NodeKind::Paragraph { children } => {
-                    for child in children {
-                        if let NodeKind::Strong { .. } = &child.kind {
-                            assert_eq!(child.style.font_weight, FontWeight::Bold);
-                            return;
-                        }
+        NodeKind::Document { children } => match &children[0].kind {
+            NodeKind::Paragraph { children } => {
+                for child in children {
+                    if let NodeKind::Strong { .. } = &child.kind {
+                        assert_eq!(child.style.font_weight, FontWeight::Bold);
+                        return;
                     }
-                    panic!("Expected Strong node");
                 }
-                _ => panic!("Expected Paragraph"),
+                panic!("Expected Strong node");
             }
-        }
+            _ => panic!("Expected Paragraph"),
+        },
         _ => panic!("Expected Document"),
     }
 }
@@ -142,20 +137,18 @@ fn test_emphasis_has_italic_style() {
     let node = parse_markdown(md).unwrap();
 
     match &node.kind {
-        NodeKind::Document { children } => {
-            match &children[0].kind {
-                NodeKind::Paragraph { children } => {
-                    for child in children {
-                        if let NodeKind::Emphasis { .. } = &child.kind {
-                            assert_eq!(child.style.font_style, FontStyle::Italic);
-                            return;
-                        }
+        NodeKind::Document { children } => match &children[0].kind {
+            NodeKind::Paragraph { children } => {
+                for child in children {
+                    if let NodeKind::Emphasis { .. } = &child.kind {
+                        assert_eq!(child.style.font_style, FontStyle::Italic);
+                        return;
                     }
-                    panic!("Expected Emphasis node");
                 }
-                _ => panic!("Expected Paragraph"),
+                panic!("Expected Emphasis node");
             }
-        }
+            _ => panic!("Expected Paragraph"),
+        },
         _ => panic!("Expected Document"),
     }
 }

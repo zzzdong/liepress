@@ -158,10 +158,7 @@ impl Clone for VisualElement {
                 format: format.clone(),
                 alt: alt.clone(),
             },
-            VisualElement::ZGroup {
-                z_index,
-                children,
-            } => VisualElement::ZGroup {
+            VisualElement::ZGroup { z_index, children } => VisualElement::ZGroup {
                 z_index: *z_index,
                 children: children.clone(),
             },
@@ -247,10 +244,7 @@ impl std::fmt::Debug for VisualElement {
                 .field("format", format)
                 .field("alt", alt)
                 .finish(),
-            VisualElement::ZGroup {
-                z_index,
-                children,
-            } => f
+            VisualElement::ZGroup { z_index, children } => f
                 .debug_struct("ZGroup")
                 .field("z_index", z_index)
                 .field("children", children)

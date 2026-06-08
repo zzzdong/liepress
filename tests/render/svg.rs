@@ -1,8 +1,8 @@
 //! SVG 渲染测试
 
-use liepress::markdown_to_svg;
-use crate::common::{test_output_dir, save_test_output};
 use crate::common::samples;
+use crate::common::{save_test_output, test_output_dir};
+use liepress::markdown_to_svg;
 
 #[test]
 fn test_svg_generation_basic() {
@@ -19,7 +19,10 @@ fn test_svg_generation_basic() {
 
         // Should contain SVG tags
         assert!(svg_data.contains("<svg"), "Should contain SVG opening tag");
-        assert!(svg_data.contains("</svg>"), "Should contain SVG closing tag");
+        assert!(
+            svg_data.contains("</svg>"),
+            "Should contain SVG closing tag"
+        );
 
         // Save for manual inspection
         let output_path = output_dir.join(format!("test_basic_page_{}.svg", i));
@@ -46,7 +49,10 @@ fn test_svg_multipage() {
     // Create a long document that should span multiple pages
     let mut md = String::new();
     for i in 0..50 {
-        md.push_str(&format!("# Heading {}\n\nParagraph {} with some text content.\n\n", i, i));
+        md.push_str(&format!(
+            "# Heading {}\n\nParagraph {} with some text content.\n\n",
+            i, i
+        ));
     }
 
     let output_dir = test_output_dir("svg_multipage");

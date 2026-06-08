@@ -4,19 +4,21 @@
 //! 负责分页、文本排版、图片处理等。
 
 pub mod constants;
-pub mod types;
-pub mod text;
 mod table;
+pub mod text;
+pub mod types;
 
 pub use constants::*;
 pub use types::*;
 
+use crate::ast::{self, Node, NodeKind, Style};
+use crate::generator::text::{
+    annotate_runs_with_urls, collect_inline_segments, estimate_children_height,
+};
+use crate::text::{FONT_CONTEXT, LAYOUT_CONTEXT, TextAlign, TextStyle, layout_text_with_contexts};
+use crate::visual::{Color, FillStrokeStyle, StrokeStyle, VisualElement};
 use std::path::{Path, PathBuf};
 use vello_cpu::kurbo::{Point, Rect};
-use crate::ast::{self, Node, NodeKind, Style};
-use crate::text::{FONT_CONTEXT, LAYOUT_CONTEXT, TextAlign, TextStyle, layout_text_with_contexts};
-use crate::visual::{Color, VisualElement, FillStrokeStyle, StrokeStyle};
-use crate::generator::text::{collect_inline_segments, estimate_children_height, annotate_runs_with_urls};
 
 use image::ImageDecoder;
 
@@ -51,8 +53,7 @@ impl DocumentGenerator {
 
     pub fn finish(self) -> Document {
         let settings = self.page_context.settings.clone();
-        let has_header_footer = settings.header.is_some()
-            || settings.footer.is_some();
+        let has_header_footer = settings.header.is_some() || settings.footer.is_some();
         let mut document = self.page_context.finish();
         if has_header_footer {
             inject_header_footer_into_document(&mut document, &settings);
@@ -77,7 +78,11 @@ impl DocumentGenerator {
             NodeKind::Image { src, alt, title: _ } => {
                 self.layout_image(src, alt, style);
             }
-            NodeKind::List { ordered, children, start } => {
+            NodeKind::List {
+                ordered,
+                children,
+                start,
+            } => {
                 self.layout_list(children, *ordered, start.unwrap_or(1), style);
             }
             NodeKind::Blockquote { children } => {
@@ -332,11 +337,10 @@ impl DocumentGenerator {
 
                     if is_last {
                         // 最后一页：消耗实际使用的高度
-                        let last_group_height: f32 = line_indices
-                            .iter()
-                            .map(|&i| lines[i].line_height)
-                            .sum();
-                        self.page_context.consume_height(last_group_height + margin_bottom);
+                        let last_group_height: f32 =
+                            line_indices.iter().map(|&i| lines[i].line_height).sum();
+                        self.page_context
+                            .consume_height(last_group_height + margin_bottom);
                     } else {
                         // 非最后一页：结束当前页，移至下一页
                         self.page_context.start_new_page();
@@ -362,12 +366,24 @@ impl DocumentGenerator {
             Some(result) => {
                 let format = format_to_string(result.format);
                 let dpi = result.dpi.unwrap_or((DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI));
-                (result.width, result.height, Some(result.data.clone()), format, dpi)
+                (
+                    result.width,
+                    result.height,
+                    Some(result.data.clone()),
+                    format,
+                    dpi,
+                )
             }
             None => {
                 let pw = (content_width * DEFAULT_IMAGE_DPI / PDF_DPI) as u32;
                 let ph = (content_width * 0.75 * DEFAULT_IMAGE_DPI / PDF_DPI) as u32;
-                (pw, ph, None, "jpeg".to_string(), (DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI))
+                (
+                    pw,
+                    ph,
+                    None,
+                    "jpeg".to_string(),
+                    (DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI),
+                )
             }
         };
 
@@ -376,13 +392,23 @@ impl DocumentGenerator {
         let native_width = pixel_width as f32 * PDF_DPI / dpi_x;
         let density_at_content_width = pixel_width as f32 / content_width * PDF_DPI;
 
-        let (display_width, display_height) = if density_at_content_width >= 96.0 && native_width < content_width {
-            (content_width, pixel_height as f32 * content_width / pixel_width as f32)
-        } else if native_width > content_width {
-            (content_width, pixel_height as f32 * content_width / pixel_width as f32)
-        } else {
-            (native_width, pixel_height as f32 * native_width / pixel_width as f32)
-        };
+        let (display_width, display_height) =
+            if density_at_content_width >= 96.0 && native_width < content_width {
+                (
+                    content_width,
+                    pixel_height as f32 * content_width / pixel_width as f32,
+                )
+            } else if native_width > content_width {
+                (
+                    content_width,
+                    pixel_height as f32 * content_width / pixel_width as f32,
+                )
+            } else {
+                (
+                    native_width,
+                    pixel_height as f32 * native_width / pixel_width as f32,
+                )
+            };
 
         let caption_style = crate::text::TextStyle {
             color: crate::visual::Color::new(102, 102, 102),
@@ -418,8 +444,7 @@ impl DocumentGenerator {
 
         let total_height_needed = display_height + label_height + margin_bottom;
         let remaining = self.page_context.remaining_height();
-        let fits_on_current = display_width <= content_width
-            && total_height_needed <= remaining;
+        let fits_on_current = display_width <= content_width && total_height_needed <= remaining;
 
         let (target_width, target_height) = if fits_on_current {
             (display_width, display_height)
@@ -496,11 +521,13 @@ impl DocumentGenerator {
                     }
 
                     let actual_label_height = layout.height as f32;
-                    self.page_context.consume_height(target_height + 4.0 + actual_label_height + margin_bottom);
+                    self.page_context
+                        .consume_height(target_height + 4.0 + actual_label_height + margin_bottom);
                 })
             });
         } else {
-            self.page_context.consume_height(target_height + margin_bottom);
+            self.page_context
+                .consume_height(target_height + margin_bottom);
         }
     }
 
@@ -586,34 +613,38 @@ impl DocumentGenerator {
 
             // 生成列表标记
             let marker = if is_task {
-                if checked { "☑".to_string() } else { "⬜".to_string() }
+                if checked {
+                    "☑".to_string()
+                } else {
+                    "⬜".to_string()
+                }
             } else if ordered {
                 format!("{}.", start + index as u32)
             } else {
                 "•".to_string()
             };
 
-                // 布局列表项内容，同时处理标记
-                let mut is_first = true;
-                for grandchild in item_children {
-                    if is_first {
-                        // 第一个子节点：放置标记和内容的第一行
-                        self.layout_list_item_first_child(
-                            grandchild,
-                            content_indent,
-                            &marker,
-                            indent,
-                            marker_area,
-                            ordered,
-                            start,
-                            style,
-                        );
-                        is_first = false;
-                    } else {
-                        self.layout_node_with_indent(grandchild, content_indent, ordered, start, style);
-                    }
+            // 布局列表项内容，同时处理标记
+            let mut is_first = true;
+            for grandchild in item_children {
+                if is_first {
+                    // 第一个子节点：放置标记和内容的第一行
+                    self.layout_list_item_first_child(
+                        grandchild,
+                        content_indent,
+                        &marker,
+                        indent,
+                        marker_area,
+                        ordered,
+                        start,
+                        style,
+                    );
+                    is_first = false;
+                } else {
+                    self.layout_node_with_indent(grandchild, content_indent, ordered, start, style);
                 }
             }
+        }
     }
 
     /// 计算有序列表的最大标记宽度
@@ -647,7 +678,7 @@ impl DocumentGenerator {
         start: u32,
         style: &Style,
     ) {
-        use crate::text::{create_text_layout, layout_text_with_contexts, TextAlign};
+        use crate::text::{TextAlign, create_text_layout, layout_text_with_contexts};
 
         let content_x = self.page_context.settings.content_x();
         let content_y = self.page_context.settings.content_y();
@@ -684,11 +715,12 @@ impl DocumentGenerator {
                             (line_y + m_line.line_height) as f64,
                         );
 
-                        self.page_context.add_element(crate::visual::VisualElement::TextLine {
-                            runs: m_line.runs.clone(),
-                            bounds,
-                            line_height: m_line.line_height,
-                        });
+                        self.page_context
+                            .add_element(crate::visual::VisualElement::TextLine {
+                                runs: m_line.runs.clone(),
+                                bounds,
+                                line_height: m_line.line_height,
+                            });
                         self.page_context.consume_height(m_line.line_height);
                     }
                     return;
@@ -722,8 +754,10 @@ impl DocumentGenerator {
                             let marker_left = content_x + marker_x + marker_area - marker_advance;
 
                             // 计算标记和内容第一行的基线偏移，使两者基线对齐
-                            let marker_baseline = m_line.runs.first().map(|r| r.baseline_y).unwrap_or(0.0);
-                            let content_baseline = first_line.runs.first().map(|r| r.baseline_y).unwrap_or(0.0);
+                            let marker_baseline =
+                                m_line.runs.first().map(|r| r.baseline_y).unwrap_or(0.0);
+                            let content_baseline =
+                                first_line.runs.first().map(|r| r.baseline_y).unwrap_or(0.0);
                             let baseline_offset = content_baseline - marker_baseline;
 
                             // 放置标记（垂直偏移使基线对齐）
@@ -735,14 +769,16 @@ impl DocumentGenerator {
                                 (marker_y + m_line.line_height) as f64,
                             );
 
-                            self.page_context.add_element(crate::visual::VisualElement::TextLine {
-                                runs: m_line.runs.clone(),
-                                bounds: marker_bounds,
-                                line_height: m_line.line_height,
-                            });
+                            self.page_context
+                                .add_element(crate::visual::VisualElement::TextLine {
+                                    runs: m_line.runs.clone(),
+                                    bounds: marker_bounds,
+                                    line_height: m_line.line_height,
+                                });
 
                             // 放置内容的第一行
-                            let content_left = content_x + content_indent + first_line.bounds.x0 as f32;
+                            let content_left =
+                                content_x + content_indent + first_line.bounds.x0 as f32;
                             let content_bounds = vello_cpu::kurbo::Rect::new(
                                 content_left as f64,
                                 line_y as f64,
@@ -750,14 +786,17 @@ impl DocumentGenerator {
                                 (line_y + first_line.line_height) as f64,
                             );
 
-                            self.page_context.add_element(crate::visual::VisualElement::TextLine {
-                                runs: first_line.runs.clone(),
-                                bounds: content_bounds,
-                                line_height: first_line.line_height,
-                            });
+                            self.page_context
+                                .add_element(crate::visual::VisualElement::TextLine {
+                                    runs: first_line.runs.clone(),
+                                    bounds: content_bounds,
+                                    line_height: first_line.line_height,
+                                });
 
                             // 消费第一行的高度
-                            let first_line_height = first_line.line_height.max(m_line.line_height + baseline_offset);
+                            let first_line_height = first_line
+                                .line_height
+                                .max(m_line.line_height + baseline_offset);
                             self.page_context.consume_height(first_line_height);
 
                             // 放置剩余的行
@@ -768,13 +807,15 @@ impl DocumentGenerator {
                             for line in lines.iter().skip(1) {
                                 let line_bottom_rel = current_page_y + line.line_height;
 
-                                if line_bottom_rel > content_height && !self.page_context.is_empty() {
+                                if line_bottom_rel > content_height && !self.page_context.is_empty()
+                                {
                                     self.page_context.finalize_current_page();
                                     self.page_context.start_new_page();
                                     current_page_y = 0.0;
                                 }
 
-                                let line_abs_left = content_x + content_indent + line.bounds.x0 as f32;
+                                let line_abs_left =
+                                    content_x + content_indent + line.bounds.x0 as f32;
                                 let line_abs_top = content_y + current_page_y;
 
                                 let bounds = vello_cpu::kurbo::Rect::new(
@@ -784,17 +825,20 @@ impl DocumentGenerator {
                                     (line_abs_top + line.line_height) as f64,
                                 );
 
-                                self.page_context.add_element(crate::visual::VisualElement::TextLine {
-                                    runs: line.runs.clone(),
-                                    bounds,
-                                    line_height: line.line_height,
-                                });
+                                self.page_context.add_element(
+                                    crate::visual::VisualElement::TextLine {
+                                        runs: line.runs.clone(),
+                                        bounds,
+                                        line_height: line.line_height,
+                                    },
+                                );
 
                                 current_page_y += line.line_height;
                             }
 
                             // 消费剩余高度和底部边距
-                            let consumed = current_page_y - self.page_context.current_y + margin_bottom;
+                            let consumed =
+                                current_page_y - self.page_context.current_y + margin_bottom;
                             self.page_context.consume_height(consumed);
                         }
                     })
@@ -813,11 +857,12 @@ impl DocumentGenerator {
                         (line_y + m_line.line_height) as f64,
                     );
 
-                    self.page_context.add_element(crate::visual::VisualElement::TextLine {
-                        runs: m_line.runs.clone(),
-                        bounds,
-                        line_height: m_line.line_height,
-                    });
+                    self.page_context
+                        .add_element(crate::visual::VisualElement::TextLine {
+                            runs: m_line.runs.clone(),
+                            bounds,
+                            line_height: m_line.line_height,
+                        });
                 }
                 self.layout_node_with_indent(node, content_indent, ordered, start, style);
             }
@@ -862,7 +907,8 @@ impl DocumentGenerator {
         let content_y = self.page_context.settings.content_y();
         let estimated_height = estimate_children_height(children) + 16.0;
 
-        if estimated_height > self.page_context.remaining_height() && !self.page_context.is_empty() {
+        if estimated_height > self.page_context.remaining_height() && !self.page_context.is_empty()
+        {
             self.page_context.start_new_page();
         }
 
@@ -896,7 +942,11 @@ impl DocumentGenerator {
             NodeKind::Paragraph { children } => {
                 self.layout_paragraph_with_indent(children, &node.style, 24.0);
             }
-            NodeKind::List { ordered, children, start } => {
+            NodeKind::List {
+                ordered,
+                children,
+                start,
+            } => {
                 self.layout_list_with_indent(children, *ordered, start.unwrap_or(1), 24.0, style);
             }
             _ => {
@@ -916,7 +966,8 @@ impl DocumentGenerator {
     fn layout_container(&mut self, children: &[Node], style: &Style, centered: bool) {
         // 先估算高度判断是否需要分页
         let estimated_height = estimate_children_height(children);
-        if estimated_height > self.page_context.remaining_height() && !self.page_context.is_empty() {
+        if estimated_height > self.page_context.remaining_height() && !self.page_context.is_empty()
+        {
             self.page_context.start_new_page();
         }
 
@@ -951,10 +1002,7 @@ impl DocumentGenerator {
 
         let line = VisualElement::Line {
             start: Point::new(content_x as f64, top as f64),
-            end: Point::new(
-                (content_x + content_width) as f64,
-                top as f64,
-            ),
+            end: Point::new((content_x + content_width) as f64, top as f64),
             style: StrokeStyle {
                 color: Color::new(200, 200, 200),
                 width: 1.0,
@@ -1077,8 +1125,11 @@ impl DocumentGenerator {
             // 转换为 PNG
             let img = image::DynamicImage::from_decoder(decoder).ok()?;
             let mut png_data = Vec::new();
-            img.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png)
-                .ok()?;
+            img.write_to(
+                &mut std::io::Cursor::new(&mut png_data),
+                image::ImageFormat::Png,
+            )
+            .ok()?;
             (png_data, image::ImageFormat::Png)
         };
 
@@ -1175,12 +1226,8 @@ fn read_png_dpi(data: &[u8]) -> Option<(f32, f32)> {
         let chunk_type = &data[pos + 4..pos + 8];
 
         if chunk_type == b"pHYs" && chunk_len >= 9 && pos + 12 + chunk_len <= data.len() {
-            let ppu_x = u32::from_be_bytes([
-                data[pos + 8],
-                data[pos + 9],
-                data[pos + 10],
-                data[pos + 11],
-            ]);
+            let ppu_x =
+                u32::from_be_bytes([data[pos + 8], data[pos + 9], data[pos + 10], data[pos + 11]]);
             let ppu_y = u32::from_be_bytes([
                 data[pos + 12],
                 data[pos + 13],
@@ -1302,12 +1349,13 @@ pub fn markdown_to_document(markdown: &str) -> Document {
 
 /// 使用内置默认样式和基础路径将 Markdown 转换为 Document
 pub fn markdown_to_document_with_base_dir(markdown: &str, base_dir: Option<PathBuf>) -> Document {
-    let styled_root = crate::ast::parse_markdown(markdown)
-        .unwrap_or_else(|_| crate::ast::Node::new(
+    let styled_root = crate::ast::parse_markdown(markdown).unwrap_or_else(|_| {
+        crate::ast::Node::new(
             crate::ast::NodeKind::Document { children: vec![] },
             crate::ast::Style::default(),
             false,
-        ));
+        )
+    });
 
     let mut generator = DocumentGenerator::new();
     if let Some(dir) = base_dir {
@@ -1372,12 +1420,13 @@ pub fn markdown_to_document_with_settings_and_base_dir(
     settings: PageSettings,
     base_dir: Option<PathBuf>,
 ) -> Document {
-    let styled_root = crate::ast::parse_markdown(markdown)
-        .unwrap_or_else(|_| crate::ast::Node::new(
+    let styled_root = crate::ast::parse_markdown(markdown).unwrap_or_else(|_| {
+        crate::ast::Node::new(
             crate::ast::NodeKind::Document { children: vec![] },
             crate::ast::Style::default(),
             false,
-        ));
+        )
+    });
 
     let mut generator = DocumentGenerator::with_settings(settings);
     if let Some(dir) = base_dir {
@@ -1396,7 +1445,10 @@ pub fn markdown_to_document_with_settings_and_base_dir(
 /// 使用自定义 CSS 将 Markdown 转换为 Document（严格模式）
 ///
 /// 与 `markdown_to_document_with_css` 不同，此函数在 CSS 解析失败时返回错误。
-pub fn markdown_to_document_with_css_strict(markdown: &str, user_css: &str) -> Result<Document, String> {
+pub fn markdown_to_document_with_css_strict(
+    markdown: &str,
+    user_css: &str,
+) -> Result<Document, String> {
     markdown_to_document_with_css_and_base_dir_strict(markdown, user_css, None)
 }
 
@@ -1406,7 +1458,8 @@ pub fn markdown_to_document_with_css_and_base_dir_strict(
     user_css: &str,
     base_dir: Option<PathBuf>,
 ) -> Result<Document, String> {
-    let (styled_root, page_config) = crate::ast::parse_markdown_with_css_strict(markdown, user_css)?;
+    let (styled_root, page_config) =
+        crate::ast::parse_markdown_with_css_strict(markdown, user_css)?;
     let settings = PageSettings::from(page_config);
     let mut generator = DocumentGenerator::with_settings(settings);
     if let Some(dir) = base_dir {

@@ -1,20 +1,52 @@
 //! Debug 渲染器 - 用于测试验证
 
 use liepress::PageRenderer;
-use liepress::visual::{FillStrokeStyle, Stroke, StrokeStyle, Transform, GradientDef};
 use liepress::text::TextRun;
+use liepress::visual::{FillStrokeStyle, GradientDef, Stroke, StrokeStyle, Transform};
 use vello_cpu::kurbo::{BezPath, Point, Rect};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum DebugElement {
-    Rect { rect: Rect, fill: Option<(u8, u8, u8, u8)>, stroke: Option<(f64, (u8, u8, u8, u8))> },
-    Circle { center: (f64, f64), radius: f64, fill: Option<(u8, u8, u8, u8)>, stroke: Option<(f64, (u8, u8, u8, u8))> },
-    Line { start: (f64, f64), end: (f64, f64), width: f64, color: (u8, u8, u8, u8) },
-    Polyline { points: Vec<(f64, f64)>, width: f64, color: (u8, u8, u8, u8) },
-    Path { elements: Vec<(f64, f64)>, fill: Option<(u8, u8, u8, u8)>, stroke: Option<(f64, (u8, u8, u8, u8))> },
-    Text { text: String, position: (f64, f64), font_size: f32, color: (u8, u8, u8, u8) },
-    Image { position: (f64, f64), size: (f64, f64), format: String, data_len: usize },
+    Rect {
+        rect: Rect,
+        fill: Option<(u8, u8, u8, u8)>,
+        stroke: Option<(f64, (u8, u8, u8, u8))>,
+    },
+    Circle {
+        center: (f64, f64),
+        radius: f64,
+        fill: Option<(u8, u8, u8, u8)>,
+        stroke: Option<(f64, (u8, u8, u8, u8))>,
+    },
+    Line {
+        start: (f64, f64),
+        end: (f64, f64),
+        width: f64,
+        color: (u8, u8, u8, u8),
+    },
+    Polyline {
+        points: Vec<(f64, f64)>,
+        width: f64,
+        color: (u8, u8, u8, u8),
+    },
+    Path {
+        elements: Vec<(f64, f64)>,
+        fill: Option<(u8, u8, u8, u8)>,
+        stroke: Option<(f64, (u8, u8, u8, u8))>,
+    },
+    Text {
+        text: String,
+        position: (f64, f64),
+        font_size: f32,
+        color: (u8, u8, u8, u8),
+    },
+    Image {
+        position: (f64, f64),
+        size: (f64, f64),
+        format: String,
+        data_len: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -27,15 +59,24 @@ pub struct DebugPage {
 
 impl DebugPage {
     pub fn texts(&self) -> Vec<&DebugElement> {
-        self.elements.iter().filter(|e| matches!(e, DebugElement::Text { .. })).collect()
+        self.elements
+            .iter()
+            .filter(|e| matches!(e, DebugElement::Text { .. }))
+            .collect()
     }
 
     pub fn lines(&self) -> Vec<&DebugElement> {
-        self.elements.iter().filter(|e| matches!(e, DebugElement::Line { .. })).collect()
+        self.elements
+            .iter()
+            .filter(|e| matches!(e, DebugElement::Line { .. }))
+            .collect()
     }
 
     pub fn rects(&self) -> Vec<&DebugElement> {
-        self.elements.iter().filter(|e| matches!(e, DebugElement::Rect { .. })).collect()
+        self.elements
+            .iter()
+            .filter(|e| matches!(e, DebugElement::Rect { .. }))
+            .collect()
     }
 }
 
@@ -87,7 +128,10 @@ impl DebugRenderer {
 impl PageRenderer for DebugRenderer {
     fn draw_rect(&mut self, rect: Rect, style: &FillStrokeStyle) {
         let fill = style.fill.map(|c| (c.r, c.g, c.b, c.a));
-        let stroke = style.stroke.as_ref().map(|s| (s.width, (s.color.r, s.color.g, s.color.b, s.color.a)));
+        let stroke = style
+            .stroke
+            .as_ref()
+            .map(|s| (s.width, (s.color.r, s.color.g, s.color.b, s.color.a)));
         self.current_page().elements.push(DebugElement::Rect {
             rect: Rect::new(rect.x0, rect.y0, rect.x1, rect.y1),
             fill,
@@ -97,7 +141,10 @@ impl PageRenderer for DebugRenderer {
 
     fn draw_circle(&mut self, center: Point, radius: f64, style: &FillStrokeStyle) {
         let fill = style.fill.map(|c| (c.r, c.g, c.b, c.a));
-        let stroke = style.stroke.as_ref().map(|s| (s.width, (s.color.r, s.color.g, s.color.b, s.color.a)));
+        let stroke = style
+            .stroke
+            .as_ref()
+            .map(|s| (s.width, (s.color.r, s.color.g, s.color.b, s.color.a)));
         self.current_page().elements.push(DebugElement::Circle {
             center: (center.x, center.y),
             radius,
@@ -125,28 +172,47 @@ impl PageRenderer for DebugRenderer {
     }
 
     fn draw_path(&mut self, path: &BezPath, style: &FillStrokeStyle) {
-        let elements: Vec<_> = path.elements().iter().map(|el| match el {
-            vello_cpu::kurbo::PathEl::MoveTo(p) => (p.x, p.y),
-            vello_cpu::kurbo::PathEl::LineTo(p) => (p.x, p.y),
-            vello_cpu::kurbo::PathEl::QuadTo(p1, _) => (p1.x, p1.y),
-            vello_cpu::kurbo::PathEl::CurveTo(p1, _, _) => (p1.x, p1.y),
-            vello_cpu::kurbo::PathEl::ClosePath => (f64::NAN, f64::NAN),
-        }).collect();
+        let elements: Vec<_> = path
+            .elements()
+            .iter()
+            .map(|el| match el {
+                vello_cpu::kurbo::PathEl::MoveTo(p) => (p.x, p.y),
+                vello_cpu::kurbo::PathEl::LineTo(p) => (p.x, p.y),
+                vello_cpu::kurbo::PathEl::QuadTo(p1, _) => (p1.x, p1.y),
+                vello_cpu::kurbo::PathEl::CurveTo(p1, _, _) => (p1.x, p1.y),
+                vello_cpu::kurbo::PathEl::ClosePath => (f64::NAN, f64::NAN),
+            })
+            .collect();
         let fill = style.fill.map(|c| (c.r, c.g, c.b, c.a));
-        let stroke = style.stroke.as_ref().map(|s| (s.width, (s.color.r, s.color.g, s.color.b, s.color.a)));
-        self.current_page().elements.push(DebugElement::Path { elements, fill, stroke });
+        let stroke = style
+            .stroke
+            .as_ref()
+            .map(|s| (s.width, (s.color.r, s.color.g, s.color.b, s.color.a)));
+        self.current_page().elements.push(DebugElement::Path {
+            elements,
+            fill,
+            stroke,
+        });
     }
 
     fn draw_gradient_path(&mut self, path: &BezPath, _: &GradientDef, stroke: Option<&Stroke>) {
-        let elements: Vec<_> = path.elements().iter().map(|el| match el {
-            vello_cpu::kurbo::PathEl::MoveTo(p) => (p.x, p.y),
-            vello_cpu::kurbo::PathEl::LineTo(p) => (p.x, p.y),
-            vello_cpu::kurbo::PathEl::QuadTo(p1, _) => (p1.x, p1.y),
-            vello_cpu::kurbo::PathEl::CurveTo(p1, _, _) => (p1.x, p1.y),
-            vello_cpu::kurbo::PathEl::ClosePath => (f64::NAN, f64::NAN),
-        }).collect();
+        let elements: Vec<_> = path
+            .elements()
+            .iter()
+            .map(|el| match el {
+                vello_cpu::kurbo::PathEl::MoveTo(p) => (p.x, p.y),
+                vello_cpu::kurbo::PathEl::LineTo(p) => (p.x, p.y),
+                vello_cpu::kurbo::PathEl::QuadTo(p1, _) => (p1.x, p1.y),
+                vello_cpu::kurbo::PathEl::CurveTo(p1, _, _) => (p1.x, p1.y),
+                vello_cpu::kurbo::PathEl::ClosePath => (f64::NAN, f64::NAN),
+            })
+            .collect();
         let stroke_data = stroke.map(|s| (s.width, (s.color.r, s.color.g, s.color.b, s.color.a)));
-        self.current_page().elements.push(DebugElement::Path { elements, fill: None, stroke: stroke_data });
+        self.current_page().elements.push(DebugElement::Path {
+            elements,
+            fill: None,
+            stroke: stroke_data,
+        });
     }
 
     fn draw_text_run(&mut self, run: &TextRun, position: Point) {

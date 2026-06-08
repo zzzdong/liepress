@@ -1,16 +1,15 @@
 //! 渲染模块 - 提供多种渲染后端
 
+pub use pdf::{PdfDocumentGenerator, PdfRenderer};
 pub use pixmap::{PixmapDocumentGenerator, PixmapRenderer};
 pub use svg::{SvgDocumentGenerator, SvgRenderer};
-pub use pdf::{PdfDocumentGenerator, PdfRenderer};
 use vello_cpu::kurbo::{BezPath, Point, Rect};
 
 use crate::visual::{FillStrokeStyle, GradientDef, Stroke, StrokeStyle, Transform, VisualElement};
 
+pub mod pdf;
 mod pixmap;
 mod svg;
-pub mod pdf;
-
 
 pub trait PageRenderer {
     /// 绘制矩形
@@ -29,7 +28,12 @@ pub trait PageRenderer {
     fn draw_path(&mut self, path: &BezPath, style: &FillStrokeStyle);
 
     /// 绘制渐变填充路径
-    fn draw_gradient_path(&mut self, path: &BezPath, gradient: &GradientDef, stroke: Option<&Stroke>);
+    fn draw_gradient_path(
+        &mut self,
+        path: &BezPath,
+        gradient: &GradientDef,
+        stroke: Option<&Stroke>,
+    );
 
     /// 绘制文本 Run
     ///
@@ -38,11 +42,7 @@ pub trait PageRenderer {
     /// 参数：
     /// - `run`: 文本 Run，包含 `start`（左上角偏移）和 `glyphs`（相对偏移的坐标）
     /// - `position`: run 在页面上的位置（绝对坐标 = layout.position + run.start）
-    fn draw_text_run(
-        &mut self,
-        run: &crate::text::TextRun,
-        position: Point,
-    );
+    fn draw_text_run(&mut self, run: &crate::text::TextRun, position: Point);
 
     /// 绘制图片
     ///
@@ -51,13 +51,7 @@ pub trait PageRenderer {
     /// - `format`: 图片格式（如 "png", "jpeg"）
     /// - `position`: 图片位置（左上角）
     /// - `size`: 图片显示尺寸（点）
-    fn draw_image(
-        &mut self,
-        data: &[u8],
-        format: &str,
-        position: Point,
-        size: (f64, f64),
-    );
+    fn draw_image(&mut self, data: &[u8], format: &str, position: Point, size: (f64, f64));
 
     /// 开始一个变换组
     fn begin_group(&mut self, transform: Option<&Transform>);
@@ -118,10 +112,18 @@ pub trait PageRenderer {
             VisualElement::Path { path, style } => {
                 self.draw_path(path, style);
             }
-            VisualElement::GradientPath { path, gradient, stroke } => {
+            VisualElement::GradientPath {
+                path,
+                gradient,
+                stroke,
+            } => {
                 self.draw_gradient_path(path, gradient, stroke.as_ref());
             }
-            VisualElement::TextLine { runs, bounds, line_height: _ } => {
+            VisualElement::TextLine {
+                runs,
+                bounds,
+                line_height: _,
+            } => {
                 // bounds.origin 是行的左上角位置
                 let position = bounds.origin();
                 for run in runs {

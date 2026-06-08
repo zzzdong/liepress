@@ -68,7 +68,10 @@ pub struct Stylesheet {
 
 impl Stylesheet {
     pub fn new() -> Self {
-        Self { rules: Vec::new(), at_rules: Vec::new() }
+        Self {
+            rules: Vec::new(),
+            at_rules: Vec::new(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -217,7 +220,9 @@ fn parse_selector(s: &str) -> Option<Selector> {
         return Some(Selector::Class(s[1..].to_string()));
     }
     // 标签选择器，验证是合法标识符
-    if s.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Some(Selector::Tag(s.to_string()));
     }
 
@@ -249,7 +254,9 @@ fn parse_simple_selector(s: &str) -> Option<SimpleSelector> {
         return Some(SimpleSelector::Class(s[1..].to_string()));
     }
 
-    if s.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Some(SimpleSelector::Tag(s.to_string()));
     }
 
@@ -421,20 +428,22 @@ fn match_simple_selector_to_tag(sel: &SimpleSelector, ancestor_tag: &str) -> boo
 pub fn node_tag_name(kind: &super::NodeKind) -> &'static str {
     match kind {
         super::NodeKind::Document { .. } => "body",
-        super::NodeKind::Heading { level, .. } => {
-            match level {
-                1 => "h1",
-                2 => "h2",
-                3 => "h3",
-                4 => "h4",
-                5 => "h5",
-                6 => "h6",
-                _ => "h1",
-            }
-        }
+        super::NodeKind::Heading { level, .. } => match level {
+            1 => "h1",
+            2 => "h2",
+            3 => "h3",
+            4 => "h4",
+            5 => "h5",
+            6 => "h6",
+            _ => "h1",
+        },
         super::NodeKind::Paragraph { .. } => "p",
         super::NodeKind::List { ordered, .. } => {
-            if *ordered { "ol" } else { "ul" }
+            if *ordered {
+                "ol"
+            } else {
+                "ul"
+            }
         }
         super::NodeKind::ListItem { .. } | super::NodeKind::TaskListItem { .. } => "li",
         super::NodeKind::Image { .. } => "img",
@@ -855,9 +864,7 @@ fn apply_page_declaration(config: &mut PageConfig, property: &str, value: &str) 
         }
         "margin" => {
             let parts: Vec<&str> = value.split_whitespace().collect();
-            let vals: Vec<f32> = parts.iter()
-                .filter_map(|s| parse_length(s, 10.5))
-                .collect();
+            let vals: Vec<f32> = parts.iter().filter_map(|s| parse_length(s, 10.5)).collect();
             match vals.len() {
                 1 => {
                     config.margin_top = Some(vals[0]);
@@ -968,7 +975,7 @@ fn apply_page_declaration(config: &mut PageConfig, property: &str, value: &str) 
         "header" => {
             let trimmed = value.trim();
             if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-                config.header = Some(trimmed[1..trimmed.len()-1].to_string());
+                config.header = Some(trimmed[1..trimmed.len() - 1].to_string());
             } else {
                 config.header = Some(trimmed.to_string());
             }
@@ -976,7 +983,7 @@ fn apply_page_declaration(config: &mut PageConfig, property: &str, value: &str) 
         "footer" => {
             let trimmed = value.trim();
             if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-                config.footer = Some(trimmed[1..trimmed.len()-1].to_string());
+                config.footer = Some(trimmed[1..trimmed.len() - 1].to_string());
             } else {
                 config.footer = Some(trimmed.to_string());
             }
@@ -1219,12 +1226,7 @@ mod tests {
         let css = "h1 { font-size: 24pt; }";
         let stylesheet = parse_css(css).unwrap();
         let tag = "h1";
-        let result = match_selector(
-            &stylesheet.rules[0].selectors[0],
-            tag,
-            &[],
-            &[],
-        );
+        let result = match_selector(&stylesheet.rules[0].selectors[0], tag, &[], &[]);
         assert!(result.is_some());
     }
 
@@ -1340,12 +1342,43 @@ mod tests {
     #[test]
     fn test_node_tag_name() {
         use super::super::NodeKind;
-        assert_eq!(node_tag_name(&NodeKind::Paragraph { children: vec![] }), "p");
-        assert_eq!(node_tag_name(&NodeKind::Heading { level: 1, children: vec![] }), "h1");
-        assert_eq!(node_tag_name(&NodeKind::Heading { level: 3, children: vec![] }), "h3");
-        assert_eq!(node_tag_name(&NodeKind::Strong { children: vec![] }), "strong");
-        assert_eq!(node_tag_name(&NodeKind::Image { src: String::new(), alt: String::new(), title: None }), "img");
-        assert_eq!(node_tag_name(&NodeKind::CodeBlock { code: String::new(), lang: None }), "pre");
+        assert_eq!(
+            node_tag_name(&NodeKind::Paragraph { children: vec![] }),
+            "p"
+        );
+        assert_eq!(
+            node_tag_name(&NodeKind::Heading {
+                level: 1,
+                children: vec![]
+            }),
+            "h1"
+        );
+        assert_eq!(
+            node_tag_name(&NodeKind::Heading {
+                level: 3,
+                children: vec![]
+            }),
+            "h3"
+        );
+        assert_eq!(
+            node_tag_name(&NodeKind::Strong { children: vec![] }),
+            "strong"
+        );
+        assert_eq!(
+            node_tag_name(&NodeKind::Image {
+                src: String::new(),
+                alt: String::new(),
+                title: None
+            }),
+            "img"
+        );
+        assert_eq!(
+            node_tag_name(&NodeKind::CodeBlock {
+                code: String::new(),
+                lang: None
+            }),
+            "pre"
+        );
     }
 
     #[test]

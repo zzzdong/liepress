@@ -1,6 +1,6 @@
 //! AST 结构测试
 
-use liepress::ast::{parse_markdown, NodeKind};
+use liepress::ast::{NodeKind, parse_markdown};
 
 #[test]
 fn test_parse_unordered_list() {
@@ -11,7 +11,9 @@ fn test_parse_unordered_list() {
         NodeKind::Document { children } => {
             assert_eq!(children.len(), 1);
             match &children[0].kind {
-                NodeKind::List { ordered, children, .. } => {
+                NodeKind::List {
+                    ordered, children, ..
+                } => {
                     assert!(!ordered);
                     assert_eq!(children.len(), 3);
                 }
@@ -28,14 +30,12 @@ fn test_parse_ordered_list() {
     let node = parse_markdown(md).unwrap();
 
     match &node.kind {
-        NodeKind::Document { children } => {
-            match &children[0].kind {
-                NodeKind::List { ordered, .. } => {
-                    assert!(*ordered);
-                }
-                _ => panic!("Expected ordered List"),
+        NodeKind::Document { children } => match &children[0].kind {
+            NodeKind::List { ordered, .. } => {
+                assert!(*ordered);
             }
-        }
+            _ => panic!("Expected ordered List"),
+        },
         _ => panic!("Expected Document root"),
     }
 }
@@ -48,7 +48,9 @@ fn test_parse_nested_list() {
     match &node.kind {
         NodeKind::Document { children } => {
             match &children[0].kind {
-                NodeKind::List { children: items, .. } => {
+                NodeKind::List {
+                    children: items, ..
+                } => {
                     assert_eq!(items.len(), 2);
                     // First item has nested list
                     match &items[0].kind {
@@ -91,15 +93,13 @@ fn test_parse_codeblock_without_lang() {
     let node = parse_markdown(md).unwrap();
 
     match &node.kind {
-        NodeKind::Document { children } => {
-            match &children[0].kind {
-                NodeKind::CodeBlock { lang, code } => {
-                    assert!(lang.is_none());
-                    assert_eq!(code, "some code");
-                }
-                _ => panic!("Expected CodeBlock"),
+        NodeKind::Document { children } => match &children[0].kind {
+            NodeKind::CodeBlock { lang, code } => {
+                assert!(lang.is_none());
+                assert_eq!(code, "some code");
             }
-        }
+            _ => panic!("Expected CodeBlock"),
+        },
         _ => panic!("Expected Document root"),
     }
 }
@@ -165,19 +165,15 @@ fn test_parse_link() {
     let node = parse_markdown(md).unwrap();
 
     match &node.kind {
-        NodeKind::Document { children } => {
-            match &children[0].kind {
-                NodeKind::Paragraph { children } => {
-                    match &children[0].kind {
-                        NodeKind::Link { url, .. } => {
-                            assert_eq!(url, "https://example.com");
-                        }
-                        _ => panic!("Expected Link"),
-                    }
+        NodeKind::Document { children } => match &children[0].kind {
+            NodeKind::Paragraph { children } => match &children[0].kind {
+                NodeKind::Link { url, .. } => {
+                    assert_eq!(url, "https://example.com");
                 }
-                _ => panic!("Expected Paragraph"),
-            }
-        }
+                _ => panic!("Expected Link"),
+            },
+            _ => panic!("Expected Paragraph"),
+        },
         _ => panic!("Expected Document root"),
     }
 }
@@ -188,20 +184,16 @@ fn test_parse_image() {
     let node = parse_markdown(md).unwrap();
 
     match &node.kind {
-        NodeKind::Document { children } => {
-            match &children[0].kind {
-                NodeKind::Paragraph { children } => {
-                    match &children[0].kind {
-                        NodeKind::Image { src, alt, .. } => {
-                            assert_eq!(src, "image.png");
-                            assert_eq!(alt, "alt text");
-                        }
-                        _ => panic!("Expected Image"),
-                    }
+        NodeKind::Document { children } => match &children[0].kind {
+            NodeKind::Paragraph { children } => match &children[0].kind {
+                NodeKind::Image { src, alt, .. } => {
+                    assert_eq!(src, "image.png");
+                    assert_eq!(alt, "alt text");
                 }
-                _ => panic!("Expected Paragraph"),
-            }
-        }
+                _ => panic!("Expected Image"),
+            },
+            _ => panic!("Expected Paragraph"),
+        },
         _ => panic!("Expected Document root"),
     }
 }
@@ -217,7 +209,11 @@ fn test_parse_unchecked_task_list() {
         NodeKind::Document { children } => {
             assert_eq!(children.len(), 1);
             match &children[0].kind {
-                NodeKind::List { ordered, children: items, .. } => {
+                NodeKind::List {
+                    ordered,
+                    children: items,
+                    ..
+                } => {
                     assert!(!ordered);
                     assert_eq!(items.len(), 2);
 
@@ -251,7 +247,9 @@ fn test_parse_checked_task_list() {
     match &node.kind {
         NodeKind::Document { children } => {
             match &children[0].kind {
-                NodeKind::List { children: items, .. } => {
+                NodeKind::List {
+                    children: items, ..
+                } => {
                     assert_eq!(items.len(), 2);
 
                     // 第一个已勾选（小写 x）
@@ -284,20 +282,26 @@ fn test_parse_mixed_task_list() {
     match &node.kind {
         NodeKind::Document { children } => {
             match &children[0].kind {
-                NodeKind::List { children: items, .. } => {
+                NodeKind::List {
+                    children: items, ..
+                } => {
                     assert_eq!(items.len(), 4);
 
                     // 第 1 项：普通列表项
-                    assert!(matches!(items[0].kind, NodeKind::ListItem { .. }),
-                        "Item 0 should be ListItem");
+                    assert!(
+                        matches!(items[0].kind, NodeKind::ListItem { .. }),
+                        "Item 0 should be ListItem"
+                    );
                     // 第 2 项：已勾选任务
                     match &items[1].kind {
                         NodeKind::TaskListItem { checked, .. } => assert!(*checked),
                         _ => panic!("Item 1 should be TaskListItem"),
                     }
                     // 第 3 项：普通列表项
-                    assert!(matches!(items[2].kind, NodeKind::ListItem { .. }),
-                        "Item 2 should be ListItem");
+                    assert!(
+                        matches!(items[2].kind, NodeKind::ListItem { .. }),
+                        "Item 2 should be ListItem"
+                    );
                     // 第 4 项：未勾选任务
                     match &items[3].kind {
                         NodeKind::TaskListItem { checked, .. } => assert!(!*checked),
@@ -331,7 +335,9 @@ fn test_task_list_with_nested_content() {
     match &node.kind {
         NodeKind::Document { children } => {
             match &children[0].kind {
-                NodeKind::List { children: items, .. } => {
+                NodeKind::List {
+                    children: items, ..
+                } => {
                     assert_eq!(items.len(), 2);
 
                     // 第一个任务项：已勾选，且内容包含 Strong（在 Paragraph 内）
@@ -341,13 +347,21 @@ fn test_task_list_with_nested_content() {
                             assert!(!children.is_empty());
                             // 子节点应为 Paragraph，其中包含 Strong
                             let has_paragraph_with_strong = children.iter().any(|c| {
-                                if let NodeKind::Paragraph { children: para_children } = &c.kind {
-                                    para_children.iter().any(|pc| matches!(pc.kind, NodeKind::Strong { .. }))
+                                if let NodeKind::Paragraph {
+                                    children: para_children,
+                                } = &c.kind
+                                {
+                                    para_children
+                                        .iter()
+                                        .any(|pc| matches!(pc.kind, NodeKind::Strong { .. }))
                                 } else {
                                     false
                                 }
                             });
-                            assert!(has_paragraph_with_strong, "Task item should contain Paragraph > Strong");
+                            assert!(
+                                has_paragraph_with_strong,
+                                "Task item should contain Paragraph > Strong"
+                            );
                         }
                         _ => panic!("Expected TaskListItem"),
                     }
@@ -357,13 +371,21 @@ fn test_task_list_with_nested_content() {
                         NodeKind::TaskListItem { checked, children } => {
                             assert!(!*checked);
                             let has_paragraph_with_em = children.iter().any(|c| {
-                                if let NodeKind::Paragraph { children: para_children } = &c.kind {
-                                    para_children.iter().any(|pc| matches!(pc.kind, NodeKind::Emphasis { .. }))
+                                if let NodeKind::Paragraph {
+                                    children: para_children,
+                                } = &c.kind
+                                {
+                                    para_children
+                                        .iter()
+                                        .any(|pc| matches!(pc.kind, NodeKind::Emphasis { .. }))
                                 } else {
                                     false
                                 }
                             });
-                            assert!(has_paragraph_with_em, "Task item should contain Paragraph > Emphasis");
+                            assert!(
+                                has_paragraph_with_em,
+                                "Task item should contain Paragraph > Emphasis"
+                            );
                         }
                         _ => panic!("Expected TaskListItem"),
                     }
