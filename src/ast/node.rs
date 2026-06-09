@@ -447,7 +447,13 @@ fn build_node(
         mdast::Node::Html(html) => match classify_html(&html.value) {
             HtmlClassification::SelfClosing(info) => match info.tag.as_str() {
                 "br" => Node::new(NodeKind::ThematicBreak, Style::default(), false),
-                _ => Node::new(NodeKind::Text { text: String::new() }, Style::default(), false),
+                _ => Node::new(
+                    NodeKind::Text {
+                        text: String::new(),
+                    },
+                    Style::default(),
+                    false,
+                ),
             },
             HtmlClassification::Container(info, inner_content) => {
                 // 完整容器：<tag>内容</tag>，内部内容重新解析为 markdown
@@ -470,10 +476,20 @@ fn build_node(
                 };
 
                 match info.tag.as_str() {
-                    "center" => {
-                        Node::new(NodeKind::Center { children: inner_children }, style, true)
-                    }
-                    _ => Node::new(NodeKind::Text { text: String::new() }, Style::default(), false),
+                    "center" => Node::new(
+                        NodeKind::Center {
+                            children: inner_children,
+                        },
+                        style,
+                        true,
+                    ),
+                    _ => Node::new(
+                        NodeKind::Text {
+                            text: String::new(),
+                        },
+                        Style::default(),
+                        false,
+                    ),
                 }
             }
             HtmlClassification::OpenTag(info) => {
@@ -487,12 +503,22 @@ fn build_node(
                 match info.tag.as_str() {
                     "center" => Node::new(NodeKind::Center { children: vec![] }, style, true),
                     "span" => Node::new(NodeKind::Span { children: vec![] }, style, true),
-                    _ => Node::new(NodeKind::Text { text: String::new() }, Style::default(), false),
+                    _ => Node::new(
+                        NodeKind::Text {
+                            text: String::new(),
+                        },
+                        Style::default(),
+                        false,
+                    ),
                 }
             }
-            HtmlClassification::CloseTag(_) | HtmlClassification::Text => {
-                Node::new(NodeKind::Text { text: String::new() }, Style::default(), false)
-            }
+            HtmlClassification::CloseTag(_) | HtmlClassification::Text => Node::new(
+                NodeKind::Text {
+                    text: String::new(),
+                },
+                Style::default(),
+                false,
+            ),
         },
 
         // MDAST 中的其他节点类型暂不处理
@@ -593,8 +619,10 @@ fn classify_html(html: &str) -> HtmlClassification {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use html5ever::tokenizer::{BufferQueue, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer};
     use html5ever::tendril::StrTendril;
+    use html5ever::tokenizer::{
+        BufferQueue, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
+    };
 
     let html = html.trim();
 
@@ -646,10 +674,10 @@ fn classify_html(html: &str) -> HtmlClassification {
     let sink = ClassifySink {
         tokens: tokens_rc.clone(),
     };
-    let mut tokenizer = Tokenizer::new(sink, Default::default());
+    let tokenizer = Tokenizer::new(sink, Default::default());
     let mut input = BufferQueue::default();
     input.push_back(StrTendril::from(html));
-    let _ = tokenizer.feed(&mut input);
+    let _ = tokenizer.feed(&input);
     tokenizer.end();
 
     let tokens = tokens_rc.take(); // Vec<SimpleToken>
@@ -746,9 +774,9 @@ pub(crate) fn parse_html_tag(html: &str) -> Option<TagInfo> {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use html5ever::tokenizer::{BufferQueue, Tag, Token, TokenSink, TokenSinkResult, Tokenizer};
-    use html5ever::tokenizer::TagKind;
     use html5ever::tendril::StrTendril;
+    use html5ever::tokenizer::TagKind;
+    use html5ever::tokenizer::{BufferQueue, Tag, Token, TokenSink, TokenSinkResult, Tokenizer};
 
     let html = html.trim();
 
@@ -765,8 +793,8 @@ pub(crate) fn parse_html_tag(html: &str) -> Option<TagInfo> {
         type Handle = ();
 
         fn process_token(&self, token: Token, _line_number: u64) -> TokenSinkResult<()> {
-            match token {
-                Token::TagToken(tag) => match tag.kind {
+            if let Token::TagToken(tag) = token {
+                match tag.kind {
                     TagKind::StartTag => {
                         let info = tag_to_info(tag);
                         *self.result.borrow_mut() = Some(info);
@@ -781,8 +809,7 @@ pub(crate) fn parse_html_tag(html: &str) -> Option<TagInfo> {
                             is_self_closing: false,
                         });
                     }
-                },
-                _ => {}
+                }
             }
             TokenSinkResult::Continue
         }
@@ -828,11 +855,11 @@ pub(crate) fn parse_html_tag(html: &str) -> Option<TagInfo> {
     let sink = HtmlTagSink {
         result: result.clone(),
     };
-    let mut tokenizer = Tokenizer::new(sink, Default::default());
+    let tokenizer = Tokenizer::new(sink, Default::default());
 
     let mut input = BufferQueue::default();
     input.push_back(StrTendril::from(html));
-    let _ = tokenizer.feed(&mut input);
+    let _ = tokenizer.feed(&input);
     tokenizer.end();
 
     let borrowed = result.borrow();
