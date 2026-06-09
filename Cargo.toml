@@ -17,6 +17,7 @@ path = "src/bin/liepress.rs"
 [dependencies]
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
+html5ever = "0.39.0"
 image = { version = "0.25" }
 kamadak-exif = "0.6"
 krilla = "0.8.0"

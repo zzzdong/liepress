@@ -552,6 +552,13 @@ impl DocumentGenerator {
         let available_width = self.page_context.settings.content_width() - indent;
         let margin_bottom = style.margin_bottom_pt;
 
+        let align = match style.text_align {
+            crate::ast::TextAlign::Left => TextAlign::Left,
+            crate::ast::TextAlign::Center => TextAlign::Center,
+            crate::ast::TextAlign::Right => TextAlign::Right,
+            crate::ast::TextAlign::Justify => TextAlign::Left,
+        };
+
         FONT_CONTEXT.with(|font_cx| {
             LAYOUT_CONTEXT.with(|layout_cx| {
                 let mut fcx = font_cx.borrow_mut();
@@ -560,7 +567,7 @@ impl DocumentGenerator {
                 let layout = layout_text_with_contexts(
                     &combined,
                     Some(available_width as f64),
-                    TextAlign::Left,
+                    align,
                     &mut fcx,
                     &mut lcx,
                 );

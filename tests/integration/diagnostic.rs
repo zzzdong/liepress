@@ -164,3 +164,30 @@ fn test_image_example_diagnostic() {
     output_dir_markdown_to_svg(md, &output_dir, "image_example");
     output_dir_markdown_to_pdf(md, &output_dir, "image_example");
 }
+
+#[test]
+fn test_center_tag_diagnostic() {
+    let output_dir = diag_output_dir("center_tag_diag");
+
+    // 测试块级 center 标签（正确格式）
+    let md_block = r#"<center>
+
+# LiePress
+
+</center>
+
+# 安装
+test"#;
+
+    output_dir_markdown_to_svg(md_block, &output_dir, "center_tag_block");
+    output_dir_markdown_to_pdf(md_block, &output_dir, "center_tag_block");
+
+    // 测试行内 center 标签（无效格式，应被忽略）
+    let md_inline = r#"<center>#LiePress</center>
+
+# 安装
+test"#;
+
+    output_dir_markdown_to_svg(md_inline, &output_dir, "center_tag_inline");
+    output_dir_markdown_to_pdf(md_inline, &output_dir, "center_tag_inline");
+}
