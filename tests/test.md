@@ -1,7 +1,3 @@
----
-title: liepress — Markdown to PDF/SVG/PNG Converter
----
-
 # liepress
 
 **liepress** 是一个基于 Rust 的 Markdown 文档转换工具，支持 CSS 样式定制，输出 PDF、SVG、PNG 格式。
@@ -159,6 +155,63 @@ converter.convert("doc.md", "output.pdf")
 
 ---
 
+# 1. 架构概述
+
+> 本章介绍 liepress 的核心架构设计。
+
+## 1.1 三阶段渲染管线
+
+liepress 采用 **三阶段架构**，将文档处理分为独立的步骤：
+
+| 阶段 | 输入 | 输出 | 职责 |
+|:----|:----|:----|:-----|
+| 解析 | Markdown + CSS | MDAST | 将 Markdown 解析为语法树 |
+| 布局 | MDAST + Style | 布局文档 | 计算每个元素的位置和尺寸 |
+| 渲染 | 布局文档 | PDF/SVG/PNG | 将布局结果绘制为最终输出 |
+
+### 1.1.1 关键设计决策
+
+```rust
+// liepress 核心类型示意
+pub enum OutputFormat {
+    Pdf,
+    Svg,
+    Png,
+}
+
+pub struct ConvertOptions {
+    pub page_width: f32,
+    pub page_height: f32,
+    pub font_family: String,
+    pub custom_css: Option<String>,
+    // ...
+}
+```
+
+#### 1.1.1.1 设计权衡
+
+> **要点总结**：
+>
+> - 选择 Rust 语言以获得 **高性能** 和 **内存安全**
+> - CSS 样式系统支持 **选择器权重计算** 和 **样式层叠**
+> - 三种输出后端共享同一布局引擎
+> - ~~Word 输出~~ 暂无计划
+
+---
+
+## 输出示例
+
+以下是由 liepress 生成的 SVG 输出结构示意：
+
+```svg
+<svg width="595" height="842" xmlns="http://www.w3.org/2000/svg">
+  <text x="50" y="80" font-size="24" font-weight="bold">Hello</text>
+  <text x="50" y="120" font-size="10.5">This is liepress.</text>
+</svg>
+```
+
+---
+
 ## center 居中容器
 
 <center>
@@ -202,58 +255,13 @@ converter.convert("doc.md", "output.pdf")
 
 ## 混合排版示例
 
-# 1. 架构概述
+这是 **加粗**、*斜体*、`代码`、<span style="color: red;">红色文字</span> 和 [链接](https://example.com) 混合在一起的段落。
 
-> 本章介绍 liepress 的核心架构设计。
+> 引用块中混合 **格式化文本**、<span style="color: blue;">蓝色 span</span> 和 `行内代码`。
 
-## 1.1 三阶段渲染管线
-
-liepress 采用 **三阶段架构**，将文档处理分为独立的步骤：
-
-| 阶段 | 输入 | 输出 | 职责 |
-|:----|:----|:----|:-----|
-| 解析 | Markdown + CSS | MDAST | 将 Markdown 解析为语法树 |
-| 布局 | MDAST + Style | 布局文档 | 计算每个元素的位置和尺寸 |
-| 渲染 | 布局文档 | PDF/SVG/PNG | 将布局结果绘制为最终输出 |
-
-### 1.1.1 关键设计决策
-
-```rust
-// liepress 核心类型示意
-pub enum OutputFormat {
-    Pdf,
-    Svg,
-    Png,
-}
-
-pub struct ConvertOptions {
-    pub page_width: f32,
-    pub page_height: f32,
-    pub font_family: String,
-    pub custom_css: Option<String>,
-    // ...
-}
-```
-
-> **要点总结**：
->
-> - 选择 Rust 语言以获得 **高性能** 和 **内存安全**
-> - CSS 样式系统支持 **选择器权重计算** 和 **样式层叠**
-> - 三种输出后端共享同一布局引擎
-> - ~~Word 输出~~ 暂无计划
-
----
-
-## 输出示例
-
-以下是由 liepress 生成的 SVG 输出结构示意：
-
-```svg
-<svg width="595" height="842" xmlns="http://www.w3.org/2000/svg">
-  <text x="50" y="80" font-size="24" font-weight="bold">Hello</text>
-  <text x="50" y="120" font-size="10.5">This is liepress.</text>
-</svg>
-```
+- **粗体列表项** 包含 <span style="background: #eee;">高亮 span</span>
+- *斜体列表项* 包含 ~~删除线文本~~
+- 普通列表项包含 `行内代码`
 
 ---
 

@@ -205,6 +205,7 @@ impl Default for ConvertOptions {
 
 fn render_pdf(document: &Document) -> crate::error::Result<Vec<u8>> {
     let mut pdf_gen = PdfDocumentGenerator::new("output".to_string());
+    pdf_gen.set_outline(&document.outline);
     for page in &document.pages {
         pdf_gen.render_page(page)?;
     }

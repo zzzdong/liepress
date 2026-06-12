@@ -4,11 +4,13 @@
 //! 负责分页、文本排版、图片处理等。
 
 pub mod constants;
+pub mod context;
 mod table;
 pub mod text;
 pub mod types;
 
 pub use constants::*;
+pub use context::*;
 pub use types::*;
 
 use crate::ast::{self, Node, NodeKind, Style};
@@ -26,6 +28,7 @@ use image::ImageDecoder;
 pub struct DocumentGenerator {
     pub page_context: PageContext,
     pub base_dir: Option<PathBuf>,
+    pub layout_ctx: LayoutContext,
 }
 
 impl Default for DocumentGenerator {
@@ -43,6 +46,7 @@ impl DocumentGenerator {
         Self {
             page_context: PageContext::new(settings),
             base_dir: None,
+            layout_ctx: LayoutContext::new(),
         }
     }
 
@@ -52,9 +56,13 @@ impl DocumentGenerator {
     }
 
     pub fn finish(self) -> Document {
+        // 提取大纲
+        let outline = self.layout_ctx.outline().to_vec();
+        std::fs::write("debug_outline.txt", format!("{:?}", outline)).ok();
         let settings = self.page_context.settings.clone();
         let has_header_footer = settings.header.is_some() || settings.footer.is_some();
         let mut document = self.page_context.finish();
+        document.outline = outline;
         if has_header_footer {
             inject_header_footer_into_document(&mut document, &settings);
         }
@@ -67,7 +75,7 @@ impl DocumentGenerator {
         let style = &node.style;
         match &node.kind {
             NodeKind::Paragraph { children } => {
-                self.layout_paragraph_with_indent(children, style, 0.0);
+                self.layout_paragraph(children, style);
             }
             NodeKind::Heading { level, children } => {
                 self.layout_heading(*level, children, style);
@@ -99,27 +107,48 @@ impl DocumentGenerator {
             }
             NodeKind::Span { children } => {
                 // Span 作为顶级块级子节点时，作为段落处理
-                self.layout_paragraph_with_indent(children, style, 0.0);
+                self.layout_paragraph(children, style);
             }
             _ => {}
         }
+    }
+
+    // ─── 缩进上下文辅助方法 ────────────────────────────────
+
+    /// 在指定缩进上下文中执行操作，执行完毕后恢复之前的缩进。
+    fn with_indent<R>(&mut self, indent: f32, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.layout_ctx.current_indent;
+        self.layout_ctx.current_indent = indent;
+        let result = f(self);
+        self.layout_ctx.current_indent = prev;
+        result
+    }
+
+    /// 在当前缩进基础上增加偏移量，执行操作后恢复。
+    fn with_additional_indent<R>(&mut self, additional: f32, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.layout_ctx.current_indent;
+        self.layout_ctx.current_indent += additional;
+        let result = f(self);
+        self.layout_ctx.current_indent = prev;
+        result
     }
 
     // ─── 通用文本行放置 ─────────────────────────────────────
 
     /// 放置文本行到页面上，处理自动分页。
     ///
+    /// 水平偏移量从 `layout_ctx.current_indent` 获取。
+    ///
     /// # 参数
-    /// - `x_offset`: 水平偏移量
     /// - `margin_bottom`: 底部边距
     /// - `splittable`: 是否允许跨页分割（段落可分割，标题不可）
     fn place_text_lines(
         &mut self,
         lines: Vec<crate::text::TextLine>,
-        x_offset: f32,
         margin_bottom: f32,
         splittable: bool,
     ) {
+        let x_offset = self.layout_ctx.current_indent;
         let settings = self.page_context.settings.clone();
         let content_height = settings.content_height();
         let content_x = settings.content_x();
@@ -164,12 +193,18 @@ impl DocumentGenerator {
 
     // ─── 标题布局 ─────────────────────────────────────────────
 
-    fn layout_heading(&mut self, _level: u8, children: &[Node], style: &Style) {
+    fn layout_heading(&mut self, level: u8, children: &[Node], style: &Style) {
+        let margin_top = style.margin_top_pt;
         let margin_bottom = style.margin_bottom_pt;
         let segments = collect_inline_segments(children);
         if segments.is_empty() {
             return;
         }
+
+        let total_text: String = segments.iter().map(|(t, _)| t.as_str()).collect();
+
+        // 先消耗 margin_top
+        self.page_context.consume_height(margin_top);
 
         let align = match style.text_align {
             crate::ast::TextAlign::Left => TextAlign::Left,
@@ -178,11 +213,15 @@ impl DocumentGenerator {
             crate::ast::TextAlign::Justify => TextAlign::Left,
         };
 
-        let total_text: String = segments.iter().map(|(t, _)| t.as_str()).collect();
         let combined: Vec<(&str, &TextStyle)> =
             segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
         let available_width = self.page_context.settings.content_width();
 
+        let content_x = self.page_context.settings.content_x();
+        let content_y = self.page_context.settings.content_y();
+        let x_position = content_x + self.layout_ctx.current_indent;
+
+        // 先做文本布局，获取标题高度，然后决定是否分页
         FONT_CONTEXT.with(|font_cx| {
             LAYOUT_CONTEXT.with(|layout_cx| {
                 let mut fcx = font_cx.borrow_mut();
@@ -210,13 +249,25 @@ impl DocumentGenerator {
                     );
                 }
 
+                // 页面破裂检查 — 在记录大纲位置之前
                 if total_height > self.page_context.remaining_height()
                     && !self.page_context.is_empty()
                 {
                     self.page_context.start_new_page();
                 }
 
-                self.place_text_lines(lines, 0.0, margin_bottom, false);
+                // 现在记录大纲位置（当前页和 current_y 已经正确）
+                let page_number = self.page_context.current_page.index + 1;
+                let y_position = content_y + self.page_context.current_y;
+                self.layout_ctx.record_heading(
+                    level,
+                    total_text.clone(),
+                    page_number,
+                    x_position,
+                    y_position,
+                );
+
+                self.place_text_lines(lines, margin_bottom, false);
             })
         })
     }
@@ -533,7 +584,7 @@ impl DocumentGenerator {
 
     // ─── 段落布局 ─────────────────────────────────────────────
 
-    fn layout_paragraph_with_indent(&mut self, children: &[Node], style: &Style, indent: f32) {
+    fn layout_paragraph(&mut self, children: &[Node], style: &Style) {
         // 先处理非文本子节点（如图片）
         for child in children {
             if let NodeKind::Image { src, alt, title: _ } = &child.kind {
@@ -549,6 +600,7 @@ impl DocumentGenerator {
         let total_text: String = segments.iter().map(|(t, _)| t.as_str()).collect();
         let combined: Vec<(&str, &TextStyle)> =
             segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
+        let indent = self.layout_ctx.current_indent;
         let available_width = self.page_context.settings.content_width() - indent;
         let margin_bottom = style.margin_bottom_pt;
 
@@ -574,7 +626,7 @@ impl DocumentGenerator {
 
                 let mut lines = layout.lines;
                 annotate_runs_with_urls(&mut lines, &total_text, &segments);
-                self.place_text_lines(lines, indent, margin_bottom, true);
+                self.place_text_lines(lines, margin_bottom, true);
             })
         })
     }
@@ -582,10 +634,12 @@ impl DocumentGenerator {
     // ─── 列表布局 ─────────────────────────────────────────────
 
     fn layout_list(&mut self, children: &[Node], ordered: bool, start: u32, style: &Style) {
-        let indent = style
+        let list_indent = style
             .list_indent_pt
             .unwrap_or_else(|| ast::calculate_list_indent(style.font_size_pt));
-        self.layout_list_with_indent(children, ordered, start, indent, style);
+        self.with_additional_indent(list_indent, |s| {
+            s.layout_list_with_indent(children, ordered, start, style);
+        });
     }
 
     fn layout_list_with_indent(
@@ -593,19 +647,18 @@ impl DocumentGenerator {
         children: &[Node],
         ordered: bool,
         start: u32,
-        indent: f32,
         style: &Style,
     ) {
+        const MARKER_GAP: f32 = 6.0; // 标记与内容之间的固定间距
+
         // 计算标记区域宽度
         let marker_area = if ordered {
-            // 有序列表：根据最大编号宽度计算
             self.calculate_ordered_marker_width(children, start)
         } else {
-            // 无序列表：固定宽度
             10.0
         };
-        let marker_gap = 6.0; // 标记与内容之间的固定间距
-        let content_indent = indent + marker_area + marker_gap; // 内容实际缩进
+        let marker_base = self.layout_ctx.current_indent; // 标记基准位置
+        let content_indent = marker_base + marker_area + MARKER_GAP; // 内容实际缩进
 
         for (index, item) in children.iter().enumerate() {
             let (item_children, is_task, checked) = match &item.kind {
@@ -631,26 +684,18 @@ impl DocumentGenerator {
                 "•".to_string()
             };
 
-            // 布局列表项内容，同时处理标记
-            let mut is_first = true;
-            for grandchild in item_children {
-                if is_first {
-                    // 第一个子节点：放置标记和内容的第一行
-                    self.layout_list_item_first_child(
-                        grandchild,
-                        content_indent,
-                        &marker,
-                        indent,
-                        marker_area,
-                        ordered,
-                        start,
-                        style,
-                    );
-                    is_first = false;
-                } else {
-                    self.layout_node_with_indent(grandchild, content_indent, ordered, start, style);
+            // 在内容缩进上下文中布局列表项
+            self.with_indent(content_indent, |s| {
+                let mut is_first = true;
+                for grandchild in item_children {
+                    if is_first {
+                        s.layout_list_item_first_child(grandchild, &marker);
+                        is_first = false;
+                    } else {
+                        s.layout_node_with_indent(grandchild, style);
+                    }
                 }
-            }
+            });
         }
     }
 
@@ -674,18 +719,10 @@ impl DocumentGenerator {
         (width + 4.0).max(12.0).min(30.0) // 最小12pt，最大30pt
     }
 
-    fn layout_list_item_first_child(
-        &mut self,
-        node: &Node,
-        content_indent: f32,
-        marker: &str,
-        marker_x: f32,
-        marker_area: f32,
-        ordered: bool,
-        start: u32,
-        style: &Style,
-    ) {
+    fn layout_list_item_first_child(&mut self, node: &Node, marker: &str) {
         use crate::text::{TextAlign, create_text_layout, layout_text_with_contexts};
+
+        const MARKER_GAP: f32 = 6.0;
 
         let content_x = self.page_context.settings.content_x();
         let content_y = self.page_context.settings.content_y();
@@ -698,6 +735,10 @@ impl DocumentGenerator {
         let marker_advance = marker_line
             .and_then(|line| line.runs.first().map(|r| r.advance))
             .unwrap_or(0.0);
+
+        // 标记位置 = 内容缩进 - 间距 - 标记宽度（右对齐）
+        let content_indent = self.layout_ctx.current_indent;
+        let marker_left_base = content_x + content_indent - MARKER_GAP - marker_advance;
 
         match &node.kind {
             NodeKind::Paragraph { children } => {
@@ -713,12 +754,10 @@ impl DocumentGenerator {
                     // 没有文本内容，只放置标记
                     if let Some(m_line) = marker_line {
                         let line_y = content_y + self.page_context.current_y;
-                        let marker_left = content_x + marker_x + marker_area - marker_advance;
-
                         let bounds = vello_cpu::kurbo::Rect::new(
-                            marker_left as f64,
+                            marker_left_base as f64,
                             line_y as f64,
-                            (marker_left + marker_advance) as f64,
+                            (marker_left_base + marker_advance) as f64,
                             (line_y + m_line.line_height) as f64,
                         );
 
@@ -755,10 +794,21 @@ impl DocumentGenerator {
                         let mut lines = layout.lines;
                         annotate_runs_with_urls(&mut lines, &total_text, &segments);
 
+                        // 检查第一行是否有足够空间，不够则分页
+                        if let Some(first_line) = lines.first() {
+                            let first_height = first_line
+                                .line_height
+                                .max(marker_line.as_ref().map(|m| m.line_height).unwrap_or(0.0));
+                            if first_height > self.page_context.remaining_height()
+                                && !self.page_context.is_empty()
+                            {
+                                self.page_context.start_new_page();
+                            }
+                        }
+
                         // 放置标记和内容的第一行
                         if let (Some(m_line), Some(first_line)) = (marker_line, lines.first()) {
                             let line_y = content_y + self.page_context.current_y;
-                            let marker_left = content_x + marker_x + marker_area - marker_advance;
 
                             // 计算标记和内容第一行的基线偏移，使两者基线对齐
                             let marker_baseline =
@@ -770,9 +820,9 @@ impl DocumentGenerator {
                             // 放置标记（垂直偏移使基线对齐）
                             let marker_y = line_y + baseline_offset;
                             let marker_bounds = vello_cpu::kurbo::Rect::new(
-                                marker_left as f64,
+                                marker_left_base as f64,
                                 marker_y as f64,
-                                (marker_left + marker_advance) as f64,
+                                (marker_left_base + marker_advance) as f64,
                                 (marker_y + m_line.line_height) as f64,
                             );
 
@@ -855,12 +905,10 @@ impl DocumentGenerator {
                 // 非段落节点：先放置标记，再布局节点
                 if let Some(m_line) = marker_line {
                     let line_y = content_y + self.page_context.current_y;
-                    let marker_left = content_x + marker_x + marker_area - marker_advance;
-
                     let bounds = vello_cpu::kurbo::Rect::new(
-                        marker_left as f64,
+                        marker_left_base as f64,
                         line_y as f64,
-                        (marker_left + marker_advance) as f64,
+                        (marker_left_base + marker_advance) as f64,
                         (line_y + m_line.line_height) as f64,
                     );
 
@@ -871,35 +919,30 @@ impl DocumentGenerator {
                             line_height: m_line.line_height,
                         });
                 }
-                self.layout_node_with_indent(node, content_indent, ordered, start, style);
+                self.layout_node_with_indent(node, &ast::Style::default());
             }
         }
     }
 
-    fn layout_node_with_indent(
-        &mut self,
-        node: &Node,
-        indent: f32,
-        _ordered: bool,
-        _start: u32,
-        style: &Style,
-    ) {
+    fn layout_node_with_indent(&mut self, node: &Node, style: &Style) {
         match &node.kind {
             NodeKind::Paragraph { children } => {
-                self.layout_paragraph_with_indent(children, &node.style, indent);
+                self.layout_paragraph(children, &node.style);
             }
             NodeKind::List {
                 ordered: child_ordered,
                 children,
                 start: child_start,
             } => {
-                self.layout_list_with_indent(
-                    children,
-                    *child_ordered,
-                    child_start.unwrap_or(1),
-                    indent + ast::calculate_list_indent(style.font_size_pt),
-                    style,
-                );
+                let list_indent = ast::calculate_list_indent(style.font_size_pt);
+                self.with_additional_indent(list_indent, |s| {
+                    s.layout_list_with_indent(
+                        children,
+                        *child_ordered,
+                        child_start.unwrap_or(1),
+                        style,
+                    );
+                });
             }
             _ => {
                 self.layout_node(node);
@@ -909,7 +952,7 @@ impl DocumentGenerator {
 
     // ─── 引用块布局 ─────────────────────────────────────────────
 
-    fn layout_blockquote(&mut self, children: &[Node], style: &Style) {
+    fn layout_blockquote(&mut self, children: &[Node], _style: &Style) {
         let content_x = self.page_context.settings.content_x();
         let content_y = self.page_context.settings.content_y();
         let estimated_height = estimate_children_height(children) + 16.0;
@@ -937,29 +980,14 @@ impl DocumentGenerator {
 
         self.page_context.consume_height(8.0);
 
-        for child in children {
-            self.layout_blockquote_child(child, style);
-        }
+        // 引用块内容缩进 24pt
+        self.with_indent(24.0, |s| {
+            for child in children {
+                s.layout_node(child);
+            }
+        });
 
         self.page_context.consume_height(8.0);
-    }
-
-    fn layout_blockquote_child(&mut self, node: &Node, style: &Style) {
-        match &node.kind {
-            NodeKind::Paragraph { children } => {
-                self.layout_paragraph_with_indent(children, &node.style, 24.0);
-            }
-            NodeKind::List {
-                ordered,
-                children,
-                start,
-            } => {
-                self.layout_list_with_indent(children, *ordered, start.unwrap_or(1), 24.0, style);
-            }
-            _ => {
-                self.layout_node(node);
-            }
-        }
     }
 
     // ─── 容器布局 (div / center) ─────────────────────────────

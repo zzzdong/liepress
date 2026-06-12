@@ -230,12 +230,11 @@ struct GlyphRaw {
 /// runs[].glyphs[].x/y = glyph 坐标 - 行原点，即相对行左上角的偏移
 fn extract_lines_from_parley(
     layout: &parley::Layout<Color>,
-    _full_text: &str,
+    full_text: &str,
     decoration_map: &[(std::ops::Range<usize>, TextDecoration)],
 ) -> Vec<TextLine> {
     let mut lines = Vec::new();
     let mut row_top_rel = 0.0_f32;
-    let mut full_text_pos = 0_usize;
 
     for line in layout.lines() {
         let metrics = line.metrics();
@@ -314,11 +313,20 @@ fn extract_lines_from_parley(
 
         for (start_idx, end_idx) in run_glyph_ranges.iter() {
             let run_idx = glyph_data[*start_idx].1;
-            let (color, font_data, font_size, _run, first_glyph_x) = &run_infos[run_idx];
+            let (color, font_data, font_size, run, first_glyph_x) = &run_infos[run_idx];
 
-            let glyph_count = end_idx - start_idx;
-            let text_range = full_text_pos..full_text_pos + glyph_count;
-            full_text_pos = text_range.end;
+            // 从 parley run 获取文本范围
+            let run_text_range = run.text_range();
+            let text_start = run_text_range.start;
+            let text_end = run_text_range.end;
+            let text_range = text_start..text_end;
+
+            // 提取该 run 的文本内容
+            let run_text = if text_end <= full_text.len() {
+                full_text[text_start..text_end].to_string()
+            } else {
+                String::new()
+            };
 
             let relative_glyphs: Vec<Glyph> = glyph_data[*start_idx..*end_idx]
                 .iter()
@@ -334,7 +342,7 @@ fn extract_lines_from_parley(
             let baseline_x = *first_glyph_x - min_x;
 
             runs.push(TextRun {
-                text: String::new(),
+                text: run_text,
                 text_range: text_range.clone(),
                 font_data: font_data.clone(),
                 font_size: *font_size,

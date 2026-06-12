@@ -6,11 +6,13 @@ use krilla::action::{Action, LinkAction};
 use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::color::Color as KrillaColor;
 use krilla::color::rgb::Color as RgbColor;
+use krilla::destination::XyzDestination;
 use krilla::document::Document;
 use krilla::geom::{
     PathBuilder, Point as KrillaPoint, Rect as KrillaRect, Size, Transform as KrillaTransform,
 };
 use krilla::num::NormalizedF32;
+use krilla::outline::{Outline, OutlineNode};
 use krilla::page::PageSettings;
 use krilla::paint::{
     Fill, FillRule, LineCap, LineJoin, LinearGradient, Paint, SpreadMethod, Stop,
@@ -22,6 +24,7 @@ use vello_cpu::kurbo::{BezPath, PathEl, Point, Rect, Shape};
 
 use crate::error::Result;
 use crate::generator::Page;
+use crate::generator::context::OutlineEntry;
 use crate::render::PageRenderer;
 use crate::visual::{Color, FillStrokeStyle, GradientDef, Stroke, StrokeStyle, Transform};
 
@@ -46,6 +49,8 @@ impl FontCacheKey {
 pub struct PdfDocumentGenerator {
     name: String,
     document: Document,
+    outline: Vec<OutlineEntry>,
+    page_height: f32,
 }
 
 impl PdfDocumentGenerator {
@@ -53,10 +58,19 @@ impl PdfDocumentGenerator {
         Self {
             name,
             document: Document::new(),
+            outline: Vec::new(),
+            page_height: 0.0,
         }
     }
 
+    pub fn set_outline(&mut self, outline: &[OutlineEntry]) {
+        self.outline = outline.to_vec();
+    }
+
     pub fn render_page(&mut self, page: &Page) -> Result<()> {
+        if self.page_height == 0.0 {
+            self.page_height = page.height;
+        }
         let size = Size::from_wh(page.width, page.height)
             .ok_or_else(|| crate::error::Error::VisualElementError("invalid page size".into()))?;
         let mut krilla_page = self.document.start_page_with(PageSettings::new(size));
@@ -102,11 +116,45 @@ impl PdfDocumentGenerator {
         Ok(())
     }
 
-    pub fn finalize(self) -> Result<Vec<u8>> {
+    pub fn finalize(mut self) -> Result<Vec<u8>> {
+        if !self.outline.is_empty() {
+            let outline = build_krilla_outline(&self.outline);
+            self.document.set_outline(outline);
+        }
         self.document
             .finish()
             .map_err(|e| crate::error::Error::VisualElementError(format!("{:?}", e)))
     }
+}
+
+/// 将树形结构的 OutlineEntry 列表构建为 krilla 的层级 Outline。
+///
+/// entries 是根级别的条目列表，每个条目可能含有 children（子标题）。
+/// XyzDestination 内部会自动将坐标从"顶部原点"转换为 PDF 的"底部原点"，所以
+/// 直接传入 y_position（从页面顶部算起）即可。
+fn build_krilla_outline(entries: &[OutlineEntry]) -> Outline {
+    let mut outline = Outline::new();
+    for entry in entries {
+        let node = entry_to_outline_node(entry);
+        outline.push_child(node);
+    }
+    outline
+}
+
+/// 递归地将一个 OutlineEntry 及其子节点转换为 krilla OutlineNode
+fn entry_to_outline_node(entry: &OutlineEntry) -> OutlineNode {
+    let dest = XyzDestination::new(
+        entry.page_number - 1,
+        KrillaPoint::from_xy(entry.x_position, entry.y_position),
+    );
+    let mut node = OutlineNode::new(entry.title.clone(), dest);
+
+    for child in &entry.children {
+        let child_node = entry_to_outline_node(child);
+        node.push_child(child_node);
+    }
+
+    node
 }
 
 pub struct PdfRenderer<'a, 's> {

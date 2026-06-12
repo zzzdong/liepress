@@ -55,6 +55,8 @@ pub fn annotate_runs_with_urls(
     _total_text: &str,
     segments: &[(String, TextStyle)],
 ) {
+    // 现在 run.text 已经在 extract_lines_from_parley 中正确设置
+    // 这个函数只负责添加 URL 和 decoration
     let mut seg_idx = 0;
     let mut seg_char_consumed = 0_usize;
     let seg_char_counts: Vec<usize> = segments.iter().map(|(s, _)| s.chars().count()).collect();
@@ -67,24 +69,11 @@ pub fn annotate_runs_with_urls(
             }
 
             if seg_idx < segments.len() {
-                let (seg_text, seg_style) = &segments[seg_idx];
-                let glyph_count = run.text_range.len();
-
-                let mut run_text = String::with_capacity(glyph_count);
-                let mut chars_taken = 0_usize;
-                for (ci, ch) in seg_text.chars().enumerate() {
-                    if ci < seg_char_consumed {
-                        continue;
-                    }
-                    if chars_taken >= glyph_count {
-                        break;
-                    }
-                    run_text.push(ch);
-                    chars_taken += 1;
-                }
-                run.text = run_text;
+                let (_seg_text, seg_style) = &segments[seg_idx];
+                // 只添加 URL 和 decoration，不覆盖文本
                 run.url = seg_style.url.clone();
-                seg_char_consumed += chars_taken;
+                run.decoration = seg_style.decoration;
+                seg_char_consumed += run.text.chars().count();
             }
         }
     }
@@ -94,7 +83,22 @@ pub fn annotate_runs_with_urls(
 pub fn estimate_children_height(children: &[Node]) -> f32 {
     let mut height = 0.0;
     for child in children {
-        height += child.style.line_height_pt;
+        match &child.kind {
+            NodeKind::List {
+                children: items, ..
+            } => {
+                // 列表：每个列表项一行高度 + 列表本身行高作为间距
+                let item_count = items.len();
+                height += item_count as f32 * child.style.line_height_pt;
+            }
+            NodeKind::Blockquote { children: inner } => {
+                // 引用块：递归估算内容高度（padding 由调用方负责）
+                height += estimate_children_height(inner);
+            }
+            _ => {
+                height += child.style.line_height_pt;
+            }
+        }
     }
     height
 }

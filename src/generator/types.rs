@@ -7,6 +7,7 @@ use crate::generator::constants::{
     PAGE_HEIGHT_PT, PAGE_MARGIN_BOTTOM_PT, PAGE_MARGIN_LEFT_PT, PAGE_MARGIN_RIGHT_PT,
     PAGE_MARGIN_TOP_PT, PAGE_WIDTH_PT,
 };
+use crate::generator::context::OutlineEntry;
 use crate::visual::VisualElement;
 
 /// 页面设置 - 可配置的页面尺寸和边距
@@ -109,12 +110,14 @@ impl From<PageConfig> for PageSettings {
     }
 }
 
-/// 文档结构 - 包含页面列表
+/// 文档结构 - 包含页面列表和大纲
 #[derive(Debug, Clone)]
 pub struct Document {
     pub pages: Vec<Page>,
     pub page_width: f32,
     pub page_height: f32,
+    /// 文档大纲（标题层级结构）
+    pub outline: Vec<OutlineEntry>,
 }
 
 /// 页面结构 - 包含视觉元素列表
@@ -205,6 +208,7 @@ impl PageContext {
             pages: self.pages,
             page_width,
             page_height,
+            outline: Vec::new(),
         }
     }
 }
