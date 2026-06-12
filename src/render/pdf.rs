@@ -1,4 +1,4 @@
-//! PDF 渲染器 - 使用 krilla 0.7.0
+//! PDF 渲染器 - 使用 krilla
 
 use std::collections::HashMap;
 
@@ -47,83 +47,80 @@ impl FontCacheKey {
 }
 
 pub struct PdfDocumentGenerator {
-    name: String,
-    document: Document,
+    pages: Vec<Page>,
     outline: Vec<OutlineEntry>,
-    page_height: f32,
 }
 
 impl PdfDocumentGenerator {
-    pub fn new(name: String) -> Self {
+    /// 从应用层的 Document 构造 PDF 生成器，不执行实际渲染。
+    pub fn new(doc: &crate::generator::types::Document) -> Self {
         Self {
-            name,
-            document: Document::new(),
-            outline: Vec::new(),
-            page_height: 0.0,
+            pages: doc.pages.clone(),
+            outline: doc.outline.clone(),
         }
     }
 
-    pub fn set_outline(&mut self, outline: &[OutlineEntry]) {
-        self.outline = outline.to_vec();
-    }
+    /// 生成 PDF 字节数据。
+    ///
+    /// 内部创建 krilla Document，渲染所有页面、添加超链接、设置大纲（书签）。
+    pub fn generate(&self) -> Result<Vec<u8>> {
+        let mut krilla_doc = Document::new();
+        for page in &self.pages {
+            let size = Size::from_wh(page.width, page.height).ok_or_else(|| {
+                crate::error::Error::VisualElementError("invalid page size".into())
+            })?;
+            let mut krilla_page = krilla_doc.start_page_with(PageSettings::new(size));
+            let mut surface = krilla_page.surface();
 
-    pub fn render_page(&mut self, page: &Page) -> Result<()> {
-        if self.page_height == 0.0 {
-            self.page_height = page.height;
-        }
-        let size = Size::from_wh(page.width, page.height)
-            .ok_or_else(|| crate::error::Error::VisualElementError("invalid page size".into()))?;
-        let mut krilla_page = self.document.start_page_with(PageSettings::new(size));
-        let mut surface = krilla_page.surface();
+            // 绘制白色背景
+            Self::draw_white_background(&mut surface, page.width, page.height);
 
-        // 先绘制白色背景
-        {
-            let mut pb = PathBuilder::new();
-            pb.move_to(0.0, 0.0);
-            pb.line_to(page.width, 0.0);
-            pb.line_to(page.width, page.height);
-            pb.line_to(0.0, page.height);
-            pb.close();
-            if let Some(path) = pb.finish() {
-                let fill = Fill {
-                    paint: Paint::from(RgbColor::new(255, 255, 255)),
-                    opacity: NormalizedF32::ONE,
-                    rule: FillRule::NonZero,
-                };
-                surface.set_fill(Some(fill));
-                surface.draw_path(&path);
+            let links = {
+                let mut renderer = PdfRenderer::new(&mut surface);
+                renderer.render_elements(&page.elements);
+                renderer.take_links()
+            };
+
+            surface.finish();
+
+            // 添加超链接注释
+            for (x, y, w, h, url) in links {
+                if let Some(rect) = KrillaRect::from_xywh(x, y, w, h) {
+                    let action = Action::from(LinkAction::new(url.clone()));
+                    let link_annotation = LinkAnnotation::new(rect, Target::Action(action));
+                    krilla_page.add_annotation(Annotation::new_link(link_annotation, None));
+                }
             }
+
+            krilla_page.finish();
         }
 
-        let links = {
-            let mut renderer = PdfRenderer::new(&mut surface, page.height);
-            renderer.render_elements(&page.elements);
-            renderer.take_links()
-        };
-
-        surface.finish();
-
-        // 添加超链接注释
-        for (x, y, w, h, url) in links {
-            if let Some(rect) = KrillaRect::from_xywh(x, y, w, h) {
-                let action = Action::from(LinkAction::new(url.clone()));
-                let link_annotation = LinkAnnotation::new(rect, Target::Action(action));
-                krilla_page.add_annotation(Annotation::new_link(link_annotation, None));
-            }
-        }
-
-        krilla_page.finish();
-        Ok(())
-    }
-
-    pub fn finalize(mut self) -> Result<Vec<u8>> {
         if !self.outline.is_empty() {
             let outline = build_krilla_outline(&self.outline);
-            self.document.set_outline(outline);
+            krilla_doc.set_outline(outline);
         }
-        self.document
+
+        krilla_doc
             .finish()
             .map_err(|e| crate::error::Error::VisualElementError(format!("{:?}", e)))
+    }
+
+    fn draw_white_background(surface: &mut Surface, width: f32, height: f32) {
+        let mut pb = PathBuilder::new();
+        pb.move_to(0.0, 0.0);
+        pb.line_to(width, 0.0);
+        pb.line_to(width, height);
+        pb.line_to(0.0, height);
+        pb.close();
+        if let Some(path) = pb.finish() {
+            let fill = Fill {
+                paint: Paint::from(RgbColor::new(255, 255, 255)),
+                opacity: NormalizedF32::ONE,
+                rule: FillRule::NonZero,
+            };
+            surface.set_fill(Some(fill));
+            surface.draw_path(&path);
+        }
     }
 }
 
@@ -159,17 +156,15 @@ fn entry_to_outline_node(entry: &OutlineEntry) -> OutlineNode {
 
 pub struct PdfRenderer<'a, 's> {
     surface: &'s mut Surface<'a>,
-    page_height: f32,
     font_cache: HashMap<FontCacheKey, Font>,
     push_count: usize,
     links: Vec<(f32, f32, f32, f32, String)>,
 }
 
 impl<'a, 's> PdfRenderer<'a, 's> {
-    fn new(surface: &'s mut Surface<'a>, page_height: f32) -> Self {
+    fn new(surface: &'s mut Surface<'a>) -> Self {
         Self {
             surface,
-            page_height,
             font_cache: HashMap::new(),
             push_count: 0,
             links: Vec::new(),
