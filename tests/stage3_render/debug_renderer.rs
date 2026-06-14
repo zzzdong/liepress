@@ -1,4 +1,5 @@
 //! Debug 渲染器 - 用于测试验证
+#![allow(dead_code)]
 
 use liepress::PageRenderer;
 use liepress::text::TextRun;
@@ -127,6 +128,25 @@ impl DebugRenderer {
 
 impl PageRenderer for DebugRenderer {
     fn draw_rect(&mut self, rect: Rect, style: &FillStrokeStyle) {
+        let fill = style.fill.map(|c| (c.r, c.g, c.b, c.a));
+        let stroke = style
+            .stroke
+            .as_ref()
+            .map(|s| (s.width, (s.color.r, s.color.g, s.color.b, s.color.a)));
+        self.current_page().elements.push(DebugElement::Rect {
+            rect: Rect::new(rect.x0, rect.y0, rect.x1, rect.y1),
+            fill,
+            stroke,
+        });
+    }
+
+    fn draw_rounded_rect(
+        &mut self,
+        rect: Rect,
+        _radii: (f64, f64, f64, f64),
+        style: &FillStrokeStyle,
+    ) {
+        // 简化为普通矩形记录
         let fill = style.fill.map(|c| (c.r, c.g, c.b, c.a));
         let stroke = style
             .stroke

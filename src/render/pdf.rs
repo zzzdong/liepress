@@ -275,6 +275,86 @@ impl PageRenderer for PdfRenderer<'_, '_> {
         }
     }
 
+    fn draw_rounded_rect(
+        &mut self,
+        rect: Rect,
+        radii: (f64, f64, f64, f64),
+        style: &FillStrokeStyle,
+    ) {
+        let (tl, tr, br, bl) = radii;
+        let x0 = rect.x0 as f32;
+        let y0 = rect.y0 as f32;
+        let x1 = rect.x1 as f32;
+        let y1 = rect.y1 as f32;
+        let k = 0.552_284_8;
+
+        let mut pb = PathBuilder::new();
+        // 从左上角开始（圆弧之后）
+        pb.move_to(x0 + tl as f32, y0);
+        // 上边 → 右上角
+        pb.line_to(x1 - tr as f32, y0);
+        if tr > 0.0 {
+            let r = tr as f32;
+            let kr = r * k;
+            pb.cubic_to(
+                x1 - tr as f32 + kr,
+                y0,
+                x1,
+                y0 + tr as f32 - kr,
+                x1,
+                y0 + tr as f32,
+            );
+        }
+        // 右边 → 右下角
+        pb.line_to(x1, y1 - br as f32);
+        if br > 0.0 {
+            let r = br as f32;
+            let kr = r * k;
+            pb.cubic_to(
+                x1,
+                y1 - br as f32 + kr,
+                x1 - br as f32 + kr,
+                y1,
+                x1 - br as f32,
+                y1,
+            );
+        }
+        // 下边 → 左下角
+        pb.line_to(x0 + bl as f32, y1);
+        if bl > 0.0 {
+            let r = bl as f32;
+            let kr = r * k;
+            pb.cubic_to(
+                x0 + bl as f32 - kr,
+                y1,
+                x0,
+                y1 - bl as f32 + kr,
+                x0,
+                y1 - bl as f32,
+            );
+        }
+        // 左边 → 左上角
+        pb.line_to(x0, y0 + tl as f32);
+        if tl > 0.0 {
+            let r = tl as f32;
+            let kr = r * k;
+            pb.cubic_to(
+                x0,
+                y0 + tl as f32 - kr,
+                x0 + tl as f32 - kr,
+                y0,
+                x0 + tl as f32,
+                y0,
+            );
+        }
+        pb.close();
+
+        if let Some(path) = pb.finish() {
+            self.apply_fill_stroke(style);
+            self.surface.draw_path(&path);
+        }
+    }
+
     fn draw_circle(&mut self, center: Point, radius: f64, style: &FillStrokeStyle) {
         let k = 0.552_284_8;
         let r = radius as f32;

@@ -14,6 +14,12 @@ mod svg;
 pub trait PageRenderer {
     /// 绘制矩形
     fn draw_rect(&mut self, rect: Rect, style: &FillStrokeStyle);
+    fn draw_rounded_rect(
+        &mut self,
+        rect: Rect,
+        radii: (f64, f64, f64, f64),
+        style: &FillStrokeStyle,
+    );
 
     /// 绘制圆形
     fn draw_circle(&mut self, center: Point, radius: f64, style: &FillStrokeStyle);
@@ -95,6 +101,9 @@ pub trait PageRenderer {
         match element {
             VisualElement::Rect { rect, style } => {
                 self.draw_rect(*rect, style);
+            }
+            VisualElement::RoundedRect { rect, radii, style } => {
+                self.draw_rounded_rect(*rect, *radii, style);
             }
             VisualElement::Circle {
                 center,

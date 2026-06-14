@@ -18,10 +18,11 @@ path = "src/bin/liepress.rs"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 html5ever = "0.39.0"
+pulldown-cmark = "0.13.4"
+lightningcss = "1.0.0-alpha.71"
 image = { version = "0.25" }
 kamadak-exif = "0.6"
-krilla = "0.8.0"
-markdown = "1.0.0"
+krilla = "0.8"
 parley = "0.10.0"
 thiserror = "2.0"
 vello_cpu = "0.0.9"

@@ -1,0 +1,151 @@
+/* liepress 内置默认样式表 */
+
+body {
+    font-family: serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    color: #000;
+    margin: 0;
+    text-align: left;
+}
+
+/* 标题 (h1-h6) */
+h1 { font-size: 24pt; line-height: 1.2; font-weight: bold; margin-bottom: 12pt; }
+h2 { font-size: 18pt; line-height: 1.2; font-weight: bold; margin-bottom: 10pt; }
+h3 { font-size: 14pt; line-height: 1.2; font-weight: bold; margin-bottom: 8pt; }
+h4 { font-size: 12pt; line-height: 1.2; font-weight: bold; margin-bottom: 6pt; }
+h5 { font-size: 11pt; line-height: 1.2; font-weight: bold; margin-bottom: 6pt; }
+h6 { font-size: 10.5pt; line-height: 1.2; font-weight: bold; margin-bottom: 6pt; }
+
+/* 段落 */
+p {
+    margin-top: 0;
+    margin-bottom: 12pt;
+}
+
+/* 代码块 */
+pre {
+    font-family: monospace;
+    font-size: 9pt;
+    line-height: 1.5;
+    color: #333;
+    margin-top: 0;
+    margin-bottom: 12pt;
+    display: block;
+    white-space: pre;
+}
+
+/* 行内代码 */
+code {
+    font-family: monospace;
+    font-size: 10.5pt;
+    color: #333;
+    display: inline;
+}
+
+/* 图片 */
+img {
+    display: block;
+    object-fit: contain;
+    margin-top: 0;
+    margin-bottom: 12pt;
+}
+
+/* 列表容器 */
+ul, ol {
+    margin-top: 0;
+    margin-bottom: 12pt;
+    display: block;
+    list-indent: 2em;
+}
+ul {
+    list-style-type: disc;
+}
+ol {
+    list-style-type: decimal;
+}
+
+/* 列表项 */
+li {
+    display: block;
+    margin-top: 0;
+    margin-bottom: 4pt;
+}
+
+/* 引用块 */
+blockquote {
+    margin-top: 12pt;
+    margin-bottom: 12pt;
+    display: block;
+}
+
+/* 分隔线 */
+hr {
+    margin-top: 18pt;
+    margin-bottom: 18pt;
+    display: block;
+}
+
+/* 通用容器 (div, section, article) */
+div {
+    display: block;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* 居中容器 (center) */
+center {
+    display: block;
+    text-align: center;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* 行内容器 (span) */
+span {
+    display: inline;
+}
+
+/* 表格 */
+table {
+    display: block;
+    margin-top: 12pt;
+    margin-bottom: 12pt;
+    border-collapse: collapse;
+    table-header-background: #e8e8e8;
+    table-alt-row-background: #f8f8f8;
+    table-border-color: #b4b4b4;
+    table-border-width: 0.5pt;
+    table-cell-padding-horizontal: 4pt;
+    table-cell-padding-vertical: 2pt;
+}
+
+/* 加粗 */
+strong {
+    font-weight: bold;
+    display: inline;
+}
+
+/* 斜体 */
+em {
+    font-style: italic;
+    display: inline;
+}
+
+/* 链接 */
+a {
+    color: #00f;
+    font-style: italic;
+    display: inline;
+}
+
+/* 删除线 */
+del {
+    display: inline;
+    text-decoration: line-through;
+}
+
+/* 普通文本 */
+span {
+    display: inline;
+}

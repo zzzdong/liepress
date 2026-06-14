@@ -2,13 +2,15 @@
 
 use crate::common::samples;
 use crate::common::{save_test_output, test_output_dir};
+use liepress::ConvertOptions;
 use liepress::markdown_to_png;
 
 #[test]
 fn test_png_generation_basic() {
     let output_dir = test_output_dir("png_basic");
 
-    let pngs = markdown_to_png(samples::BASIC).expect("PNG generation should succeed");
+    let pngs = markdown_to_png(samples::BASIC, &ConvertOptions::default())
+        .expect("PNG generation should succeed");
 
     // Should have at least one page
     assert!(!pngs.is_empty(), "Should have at least one PNG page");
@@ -34,7 +36,8 @@ fn test_png_generation_basic() {
 fn test_png_with_various_elements() {
     let output_dir = test_output_dir("png_various");
 
-    let pngs = markdown_to_png(samples::FULL_FEATURED).expect("PNG generation should succeed");
+    let pngs = markdown_to_png(samples::FULL_FEATURED, &ConvertOptions::default())
+        .expect("PNG generation should succeed");
 
     for (i, png_data) in pngs.iter().enumerate() {
         assert_eq!(

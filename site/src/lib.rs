@@ -1,4 +1,4 @@
-use liepress::markdown_to_pdf_with_options;
+use liepress::markdown_to_pdf;
 use liepress::{ConvertOptions, text};
 use wasm_bindgen::prelude::*;
 
@@ -27,8 +27,7 @@ fn into_options(font_family: &str, css: &str) -> ConvertOptions {
 #[wasm_bindgen]
 pub fn markdown_to_pdf_base64(md: &str, font_family: &str, css: &str) -> Result<String, JsValue> {
     let opts = into_options(font_family, css);
-    let bytes =
-        markdown_to_pdf_with_options(md, &opts).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let bytes = markdown_to_pdf(md, &opts).map_err(|e| JsValue::from_str(&e.to_string()))?;
     Ok(base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
         &bytes,

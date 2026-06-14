@@ -2,13 +2,15 @@
 
 use crate::common::samples;
 use crate::common::{save_test_output, test_output_dir};
+use liepress::ConvertOptions;
 use liepress::markdown_to_svg;
 
 #[test]
 fn test_svg_generation_basic() {
     let output_dir = test_output_dir("svg_basic");
 
-    let svgs = markdown_to_svg(samples::BASIC).expect("SVG generation should succeed");
+    let svgs = markdown_to_svg(samples::BASIC, &ConvertOptions::default())
+        .expect("SVG generation should succeed");
 
     // Should have at least one page
     assert!(!svgs.is_empty(), "Should have at least one SVG page");
@@ -34,7 +36,8 @@ fn test_svg_generation_basic() {
 fn test_svg_with_various_elements() {
     let output_dir = test_output_dir("svg_various");
 
-    let svgs = markdown_to_svg(samples::FULL_FEATURED).expect("SVG generation should succeed");
+    let svgs = markdown_to_svg(samples::FULL_FEATURED, &ConvertOptions::default())
+        .expect("SVG generation should succeed");
 
     for (i, svg_data) in svgs.iter().enumerate() {
         assert!(svg_data.contains("<svg"), "Page {} should contain SVG", i);
@@ -56,7 +59,8 @@ fn test_svg_multipage() {
     }
 
     let output_dir = test_output_dir("svg_multipage");
-    let svgs = markdown_to_svg(&md).expect("SVG generation should succeed");
+    let svgs =
+        markdown_to_svg(&md, &ConvertOptions::default()).expect("SVG generation should succeed");
 
     // Should have multiple pages
     assert!(

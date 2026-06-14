@@ -178,6 +178,7 @@ impl PixmapRenderer {
             align: style.align,
             url: style.url.clone(),
             decoration: style.decoration,
+            baseline_shift: 0.0,
         };
 
         // 缩放最大宽度
@@ -207,6 +208,39 @@ impl PageRenderer for PixmapRenderer {
             self.ctx.set_paint(color);
             self.set_stroke_style(stroke);
             self.ctx.stroke_rect(&scaled_rect);
+        }
+    }
+
+    fn draw_rounded_rect(
+        &mut self,
+        rect: Rect,
+        radii: (f64, f64, f64, f64),
+        style: &FillStrokeStyle,
+    ) {
+        let scaled_rect = self.scale_rect(&rect);
+        let s = self.scale as f64;
+        let (tl, tr, br, bl) = radii;
+        let r = tl * s; // 使用统一圆角半径
+        let rounded = vello_cpu::kurbo::RoundedRect::new(
+            scaled_rect.x0,
+            scaled_rect.y0,
+            scaled_rect.x1,
+            scaled_rect.y1,
+            vello_cpu::kurbo::RoundedRectRadii::new(r, tr * s, br * s, bl * s),
+        );
+        let path = rounded.to_path(0.1);
+
+        if let Some(fill) = &style.fill {
+            let color = Self::color_to_vello(fill);
+            self.ctx.set_paint(color);
+            self.ctx.fill_path(&path);
+        }
+
+        if let Some(stroke) = &style.stroke {
+            let color = Self::color_to_vello(&stroke.color);
+            self.ctx.set_paint(color);
+            self.set_stroke_style(stroke);
+            self.ctx.stroke_path(&path);
         }
     }
 

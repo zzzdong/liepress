@@ -73,6 +73,8 @@ pub struct TextRun {
     pub url: Option<String>,
     /// 文本修饰（none / underline / line-through）
     pub decoration: TextDecoration,
+    /// 基线偏移（pt，使上下标相对行内位置上下移动）
+    pub baseline_shift: f32,
 }
 
 /// 文本行 - 包含一行中的所有 Run
@@ -148,6 +150,8 @@ pub struct TextStyle {
     pub url: Option<String>,
     /// 文本修饰（none / underline / line-through）
     pub decoration: TextDecoration,
+    /// 基线偏移（pt，正数=上移用于上标，负数=下移用于下标）
+    pub baseline_shift: f32,
 }
 
 impl Default for TextStyle {
@@ -161,6 +165,7 @@ impl Default for TextStyle {
             align: TextAlign::Left,
             url: None,
             decoration: TextDecoration::None,
+            baseline_shift: 0.0,
         }
     }
 }
@@ -232,6 +237,7 @@ fn extract_lines_from_parley(
     layout: &parley::Layout<Color>,
     full_text: &str,
     decoration_map: &[(std::ops::Range<usize>, TextDecoration)],
+    baseline_shift_map: &[(std::ops::Range<usize>, f32)],
 ) -> Vec<TextLine> {
     let mut lines = Vec::new();
     let mut row_top_rel = 0.0_f32;
@@ -338,8 +344,24 @@ fn extract_lines_from_parley(
                 })
                 .collect();
 
-            let advance = relative_glyphs.iter().map(|g| g.advance).sum();
             let baseline_x = *first_glyph_x - min_x;
+
+            // 查找该 run 的基线偏移
+            let shift = lookup_baseline_shift(text_range.start, baseline_shift_map);
+            let adjusted_baseline_y = baseline_y - shift;
+
+            // 调整 glyph y 坐标：需同时考虑 baseline_y 的变化
+            let adjusted_glyphs: Vec<Glyph> = relative_glyphs
+                .iter()
+                .map(|g| Glyph {
+                    id: g.id,
+                    x: g.x,
+                    y: g.y + shift, // 上标：shift>0 → y 值增大 → 视觉上移（parley y 轴向下为正）
+                    advance: g.advance,
+                })
+                .collect();
+
+            let advance = adjusted_glyphs.iter().map(|g| g.advance).sum();
 
             runs.push(TextRun {
                 text: run_text,
@@ -348,12 +370,13 @@ fn extract_lines_from_parley(
                 font_size: *font_size,
                 color: *color,
                 advance,
-                glyphs: relative_glyphs,
+                glyphs: adjusted_glyphs,
                 is_rtl: false,
                 baseline_x,
-                baseline_y,
+                baseline_y: adjusted_baseline_y,
                 url: None,
                 decoration: lookup_decoration(text_range.start, decoration_map),
+                baseline_shift: shift,
             });
         }
 
@@ -387,6 +410,16 @@ fn lookup_decoration(
         }
     }
     TextDecoration::None
+}
+
+/// 查找 byte position 对应的基线偏移
+fn lookup_baseline_shift(pos: usize, map: &[(std::ops::Range<usize>, f32)]) -> f32 {
+    for (range, shift) in map {
+        if range.contains(&pos) {
+            return *shift;
+        }
+    }
+    0.0
 }
 
 // ─── 公开布局函数 ────────────────────────────────────────
@@ -432,7 +465,12 @@ pub fn create_text_layout_with_contexts(
     let width = layout.width() as f64;
     let height = layout.height() as f64;
     let decoration_map = [(0..text.len(), style.decoration)];
-    let lines = extract_lines_from_parley(&layout, text, &decoration_map);
+    let baseline_shift_map = if style.baseline_shift != 0.0 {
+        vec![(0..text.len(), style.baseline_shift)]
+    } else {
+        vec![]
+    };
+    let lines = extract_lines_from_parley(&layout, text, &decoration_map, &baseline_shift_map);
 
     TextLayout {
         lines,
@@ -527,13 +565,17 @@ pub fn layout_text_with_contexts(
     let width = layout.width() as f64;
     let height = layout.height() as f64;
 
-    // 构建 decoration map
+    // 构建 decoration map 和 baseline_shift map
     let mut decoration_map: Vec<(std::ops::Range<usize>, TextDecoration)> = Vec::new();
+    let mut baseline_shift_map: Vec<(std::ops::Range<usize>, f32)> = Vec::new();
     for (i, (_, style)) in texts.iter().enumerate() {
         let (start, end) = ranges[i];
         decoration_map.push((start..end, style.decoration));
+        if style.baseline_shift != 0.0 {
+            baseline_shift_map.push((start..end, style.baseline_shift));
+        }
     }
-    let lines = extract_lines_from_parley(&layout, &combined, &decoration_map);
+    let lines = extract_lines_from_parley(&layout, &combined, &decoration_map, &baseline_shift_map);
 
     TextLayout {
         lines,

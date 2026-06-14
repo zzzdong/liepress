@@ -155,6 +155,40 @@ impl PageRenderer for SvgRenderer {
         self.svg_content.push_str(&format!("<rect {} />\n", attrs));
     }
 
+    fn draw_rounded_rect(
+        &mut self,
+        rect: Rect,
+        radii: (f64, f64, f64, f64),
+        style: &FillStrokeStyle,
+    ) {
+        let (tl, _tr, _br, _bl) = radii;
+        let mut attrs = format!(
+            r#"x="{}" y="{}" width="{}" height="{}" rx="{}" ry="{}""#,
+            rect.x0,
+            rect.y0,
+            rect.width(),
+            rect.height(),
+            tl, // SVG 只支持统一圆角，取左上角值
+            tl
+        );
+
+        if let Some(fill) = &style.fill {
+            attrs.push_str(&format!(r#" fill="{}""#, Self::color_to_css(fill)));
+        } else {
+            attrs.push_str(r#" fill="none""#);
+        }
+
+        if let Some(stroke) = &style.stroke {
+            attrs.push_str(&format!(
+                r#" stroke="{}" stroke-width="{}""#,
+                Self::color_to_css(&stroke.color),
+                stroke.width
+            ));
+        }
+
+        self.svg_content.push_str(&format!("<rect {} />\n", attrs));
+    }
+
     fn draw_circle(&mut self, center: Point, radius: f64, style: &FillStrokeStyle) {
         let mut attrs = format!(r#"cx="{}" cy="{}" r="{}""#, center.x, center.y, radius);
 

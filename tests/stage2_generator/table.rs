@@ -5,7 +5,7 @@
 
 use crate::common::samples;
 use liepress::generator::markdown_to_document;
-use liepress::generator::{Document, Page, constants::*};
+use liepress::generator::{Page, constants::*};
 use liepress::visual::VisualElement;
 
 // ─── 辅助函数 ───

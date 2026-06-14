@@ -458,8 +458,12 @@ pub fn node_tag_name(kind: &super::NodeKind) -> &'static str {
         super::NodeKind::InlineCode { .. } => "code",
         super::NodeKind::Link { .. } => "a",
         super::NodeKind::Delete { .. } => "del",
+        super::NodeKind::Subscript { .. } => "sub",
+        super::NodeKind::Superscript { .. } => "sup",
         super::NodeKind::Span { .. } => "span",
         super::NodeKind::Center { .. } => "center",
+        super::NodeKind::Container { .. } => "div",
+        super::NodeKind::LineBreak => "br",
     }
 }
 
@@ -499,14 +503,26 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str) {
         "text-align" => {
             style.text_align = parse_text_align(value);
         }
+        "white-space" => {
+            style.white_space = parse_white_space(value);
+        }
+        "list-style-type" => {
+            style.list_style_type = parse_list_style_type(value);
+        }
+        "text-indent" => {
+            // 解析为 pt 再转回 em，以支持所有单位
+            if let Some(v) = parse_length(value, style.font_size_pt) {
+                style.text_indent_em = v / style.font_size_pt;
+            }
+        }
         "margin-top" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
-                style.margin_top_pt = v;
+                style.margin.top = v;
             }
         }
         "margin-bottom" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
-                style.margin_bottom_pt = v;
+                style.margin.bottom = v;
             }
         }
         "display" => {
@@ -537,32 +553,32 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str) {
         }
         "padding-top" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
-                style.padding_top_pt = v;
+                style.padding.top = v;
             }
         }
         "padding-bottom" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
-                style.padding_bottom_pt = v;
+                style.padding.bottom = v;
             }
         }
         "margin-left" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
-                style.margin_left_pt = v;
+                style.margin.left = v;
             }
         }
         "margin-right" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
-                style.margin_right_pt = v;
+                style.margin.right = v;
             }
         }
         "padding-left" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
-                style.padding_left_pt = v;
+                style.padding.left = v;
             }
         }
         "padding-right" => {
             if let Some(v) = parse_length(value, style.font_size_pt) {
-                style.padding_right_pt = v;
+                style.padding.right = v;
             }
         }
         "height" => {
@@ -621,6 +637,81 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str) {
                 style.text_decoration = crate::ast::TextDecoration::Underline;
             } else if v == "none" {
                 style.text_decoration = crate::ast::TextDecoration::None;
+            }
+        }
+        "border" | "border-width" => {
+            if let Some(v) = parse_length(value, style.font_size_pt) {
+                let bs = crate::ast::style::BorderSide::new(
+                    v,
+                    crate::ast::style::BorderStyle::Solid,
+                    crate::visual::Color::new(0, 0, 0),
+                );
+                style.border.top = bs;
+                style.border.right = bs;
+                style.border.bottom = bs;
+                style.border.left = bs;
+            }
+        }
+        "border-top" | "border-top-width" => {
+            if let Some(v) = parse_length(value, style.font_size_pt) {
+                style.border.top = crate::ast::style::BorderSide::new(
+                    v,
+                    crate::ast::style::BorderStyle::Solid,
+                    crate::visual::Color::new(0, 0, 0),
+                );
+            }
+        }
+        "border-bottom" | "border-bottom-width" => {
+            if let Some(v) = parse_length(value, style.font_size_pt) {
+                style.border.bottom = crate::ast::style::BorderSide::new(
+                    v,
+                    crate::ast::style::BorderStyle::Solid,
+                    crate::visual::Color::new(0, 0, 0),
+                );
+            }
+        }
+        "border-left" | "border-left-width" => {
+            if let Some(v) = parse_length(value, style.font_size_pt) {
+                style.border.left = crate::ast::style::BorderSide::new(
+                    v,
+                    crate::ast::style::BorderStyle::Solid,
+                    crate::visual::Color::new(0, 0, 0),
+                );
+            }
+        }
+        "border-right" | "border-right-width" => {
+            if let Some(v) = parse_length(value, style.font_size_pt) {
+                style.border.right = crate::ast::style::BorderSide::new(
+                    v,
+                    crate::ast::style::BorderStyle::Solid,
+                    crate::visual::Color::new(0, 0, 0),
+                );
+            }
+        }
+        "border-color" => {
+            if let Some(c) = parse_color(value) {
+                style.border.top.color = c;
+                style.border.right.color = c;
+                style.border.bottom.color = c;
+                style.border.left.color = c;
+            }
+        }
+        "border-style" => {
+            let v = value.trim().to_lowercase();
+            let bs = match v.as_str() {
+                "solid" => crate::ast::style::BorderStyle::Solid,
+                "dashed" => crate::ast::style::BorderStyle::Dashed,
+                "dotted" => crate::ast::style::BorderStyle::Dotted,
+                _ => crate::ast::style::BorderStyle::None,
+            };
+            style.border.top.style = bs;
+            style.border.right.style = bs;
+            style.border.bottom.style = bs;
+            style.border.left.style = bs;
+        }
+        "border-radius" => {
+            if let Some(v) = parse_length(value, style.font_size_pt) {
+                style.border.radius = v;
             }
         }
         _ => {
@@ -824,6 +915,32 @@ fn parse_page_break(value: &str) -> PageBreak {
         "left" => PageBreak::Left,
         "right" => PageBreak::Right,
         _ => PageBreak::Auto,
+    }
+}
+
+/// 解析 white-space 属性
+fn parse_white_space(value: &str) -> WhiteSpace {
+    match value.trim() {
+        "pre" => WhiteSpace::Pre,
+        "nowrap" => WhiteSpace::NoWrap,
+        _ => WhiteSpace::Normal,
+    }
+}
+
+/// 解析 list-style-type 属性
+fn parse_list_style_type(value: &str) -> ListStyleType {
+    match value.trim() {
+        "disc" => ListStyleType::Disc,
+        "circle" => ListStyleType::Circle,
+        "square" => ListStyleType::Square,
+        "decimal" => ListStyleType::Decimal,
+        "decimal-leading-zero" => ListStyleType::DecimalLeadingZero,
+        "lower-roman" => ListStyleType::LowerRoman,
+        "upper-roman" => ListStyleType::UpperRoman,
+        "lower-alpha" => ListStyleType::LowerAlpha,
+        "upper-alpha" => ListStyleType::UpperAlpha,
+        "none" => ListStyleType::None,
+        _ => ListStyleType::Disc,
     }
 }
 

@@ -1,7 +1,7 @@
 //! 样式系统模块
 //!
 //! 三层 AST 架构的 Layer 2：Styled AST
-//! - MDAST (Layer 1) → Node (Layer 2) → Layout AST (Layer 3)
+//! - HTML (Layer 1) → Node (Layer 2) → Layout AST (Layer 3)
 //! - 每个 Node 附带 Style，布局引擎不再关心样式来源
 //!
 //! # 样式系统
@@ -21,8 +21,6 @@ pub use css::*;
 pub use node::*;
 pub use presets::*;
 pub use style::*;
-
-use markdown::mdast;
 
 /// 使用内置默认样式解析 Markdown
 ///
@@ -70,31 +68,29 @@ pub fn parse_markdown_with_css(
     markdown: &str,
     user_css: &str,
 ) -> Result<(Node, PageConfig), String> {
-    let mdast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
-        mdast::Node::Root(mdast::Root {
-            children: vec![],
-            position: None,
-        })
-    });
+    // Step 1: Markdown → HTML
+    let html = crate::html::md_converter::markdown_to_html(markdown);
 
-    // 从 MDAST 中提取 <style> 标签内的 CSS
-    let style_css = extract_style_css(&mdast);
+    // Step 2: HTML → HtmlDocument（含 <style> 标签 CSS 提取）
+    let doc = crate::html::parser::parse_html(&html);
 
-    // 合并用户 CSS 和内联 CSS（内联 CSS 在后，优先级更高）
+    // Step 3: 合并 CSS（内置 + 用户 + 内联 <style>）
+    let inline_css = doc.style_sheets.join("\n");
     let combined_css = if user_css.is_empty() {
-        style_css
-    } else if style_css.is_empty() {
+        inline_css
+    } else if inline_css.is_empty() {
         user_css.to_string()
     } else {
-        format!("{}\n{}", user_css, style_css)
+        format!("{}\n{}", user_css, inline_css)
     };
 
-    // 非严格模式：CSS 解析错误被静默忽略
+    // Step 4: 构建样式解析器（非严格模式）
     let resolver = StyleResolver::new(DEFAULT_CSS)?
         .with_strict_mode(false)
         .with_user_css(&combined_css)?;
 
-    let node = node::build_ast(&mdast, &resolver);
+    // Step 5: 从 HtmlDocument 构建 Node AST
+    let node = node::build_from_html(&doc, &resolver);
     let page_config = resolver.page_config().clone();
     Ok((node, page_config))
 }
@@ -123,31 +119,29 @@ pub fn parse_markdown_with_css_strict(
     markdown: &str,
     user_css: &str,
 ) -> Result<(Node, PageConfig), String> {
-    let mdast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
-        mdast::Node::Root(mdast::Root {
-            children: vec![],
-            position: None,
-        })
-    });
+    // Step 1: Markdown → HTML
+    let html = crate::html::md_converter::markdown_to_html(markdown);
 
-    // 从 MDAST 中提取 <style> 标签内的 CSS
-    let style_css = extract_style_css(&mdast);
+    // Step 2: HTML → HtmlDocument（含 <style> 标签 CSS 提取）
+    let doc = crate::html::parser::parse_html(&html);
 
-    // 合并用户 CSS 和内联 CSS（内联 CSS 在后，优先级更高）
+    // Step 3: 合并 CSS（内置 + 用户 + 内联 <style>）
+    let inline_css = doc.style_sheets.join("\n");
     let combined_css = if user_css.is_empty() {
-        style_css
-    } else if style_css.is_empty() {
+        inline_css
+    } else if inline_css.is_empty() {
         user_css.to_string()
     } else {
-        format!("{}\n{}", user_css, style_css)
+        format!("{}\n{}", user_css, inline_css)
     };
 
-    // 严格模式：CSS 解析错误会传播
+    // Step 4: 构建样式解析器（严格模式）
     let resolver = StyleResolver::new(DEFAULT_CSS)?
         .with_strict_mode(true)
         .with_user_css(&combined_css)?;
 
-    let node = node::build_ast(&mdast, &resolver);
+    // Step 5: 从 HtmlDocument 构建 Node AST
+    let node = node::build_from_html(&doc, &resolver);
     let page_config = resolver.page_config().clone();
     Ok((node, page_config))
 }
@@ -158,74 +152,7 @@ pub fn parse_markdown_with_css_strict(
 /// 注意：此函数不提取 Markdown 内的 `<style>` 标签。
 /// 如果需要内联样式支持，请使用 `parse_markdown_with_css`。
 pub fn parse_markdown_with_resolver(markdown: &str, resolver: &StyleResolver) -> Node {
-    let mdast = markdown::to_mdast(markdown, &markdown::ParseOptions::gfm()).unwrap_or_else(|_| {
-        mdast::Node::Root(mdast::Root {
-            children: vec![],
-            position: None,
-        })
-    });
-
-    node::build_ast(&mdast, resolver)
-}
-
-// ─── 内联 <style> 标签 CSS 提取 ────────────────────────────
-
-/// 从 MDAST 树中递归提取所有 `<style>` 标签内的 CSS 内容
-fn extract_style_css(node: &mdast::Node) -> String {
-    let mut css_parts = Vec::new();
-    collect_style_css(node, &mut css_parts);
-    css_parts.join("\n")
-}
-
-/// 递归收集所有 <style> 标签内的 CSS
-fn collect_style_css(node: &mdast::Node, css_parts: &mut Vec<String>) {
-    if let mdast::Node::Html(html) = node
-        && let Some(css) = extract_style_text(&html.value)
-    {
-        css_parts.push(css);
-    }
-
-    if let Some(children) = mdast_children(node) {
-        for child in children {
-            collect_style_css(child, css_parts);
-        }
-    }
-}
-
-/// 从 HTML 片段中提取 <style>...</style> 之间的文本
-fn extract_style_text(html: &str) -> Option<String> {
-    let html = html.trim();
-    let tag_start = html.find("<style")?;
-    // 找到 <style> 或 <style ...> 的结束 >
-    let after_tag = &html[tag_start..];
-    let bracket_end = after_tag.find('>')?;
-    let content_start = tag_start + bracket_end + 1;
-    let remaining = &html[content_start..];
-    let close_end = remaining.find("</style>")?;
-    let css = remaining[..close_end].trim();
-    if css.is_empty() {
-        None
-    } else {
-        Some(css.to_string())
-    }
-}
-
-/// 获取 mdast 节点的子节点列表
-fn mdast_children(node: &mdast::Node) -> Option<&[mdast::Node]> {
-    match node {
-        mdast::Node::Root(n) => Some(&n.children),
-        mdast::Node::Paragraph(n) => Some(&n.children),
-        mdast::Node::Heading(n) => Some(&n.children),
-        mdast::Node::List(n) => Some(&n.children),
-        mdast::Node::ListItem(n) => Some(&n.children),
-        mdast::Node::Blockquote(n) => Some(&n.children),
-        mdast::Node::Table(n) => Some(&n.children),
-        mdast::Node::TableRow(n) => Some(&n.children),
-        mdast::Node::TableCell(n) => Some(&n.children),
-        mdast::Node::Strong(n) => Some(&n.children),
-        mdast::Node::Emphasis(n) => Some(&n.children),
-        mdast::Node::Link(n) => Some(&n.children),
-        mdast::Node::Delete(n) => Some(&n.children),
-        _ => None,
-    }
+    let html = crate::html::md_converter::markdown_to_html(markdown);
+    let doc = crate::html::parser::parse_html(&html);
+    node::build_from_html(&doc, resolver)
 }

@@ -16,6 +16,12 @@ pub enum VisualElement {
         rect: Rect,
         style: FillStrokeStyle,
     },
+    /// 圆角矩形
+    RoundedRect {
+        rect: Rect,
+        radii: (f64, f64, f64, f64), // (top-left, top-right, bottom-right, bottom-left)
+        style: FillStrokeStyle,
+    },
     Circle {
         center: Point,
         radius: f64,
@@ -96,6 +102,11 @@ impl Clone for VisualElement {
                 rect: *rect,
                 style: style.clone(),
             },
+            VisualElement::RoundedRect { rect, radii, style } => VisualElement::RoundedRect {
+                rect: *rect,
+                radii: *radii,
+                style: style.clone(),
+            },
             VisualElement::Circle {
                 center,
                 radius,
@@ -172,6 +183,12 @@ impl std::fmt::Debug for VisualElement {
             VisualElement::Rect { rect, style } => f
                 .debug_struct("Rect")
                 .field("rect", rect)
+                .field("style", style)
+                .finish(),
+            VisualElement::RoundedRect { rect, radii, style } => f
+                .debug_struct("RoundedRect")
+                .field("rect", rect)
+                .field("radii", radii)
                 .field("style", style)
                 .finish(),
             VisualElement::Circle {

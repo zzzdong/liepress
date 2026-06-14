@@ -21,7 +21,9 @@ pub fn collect_inline_segments(children: &[Node]) -> Vec<(String, TextStyle)> {
             | NodeKind::Link {
                 children: inner, ..
             }
-            | NodeKind::Delete { children: inner } => {
+            | NodeKind::Delete { children: inner }
+            | NodeKind::Subscript { children: inner }
+            | NodeKind::Superscript { children: inner } => {
                 // 递归展开容器节点
                 segments.extend(collect_inline_segments(inner));
             }
@@ -34,6 +36,10 @@ pub fn collect_inline_segments(children: &[Node]) -> Vec<(String, TextStyle)> {
                 if !code.is_empty() {
                     segments.push((code.clone(), computed_style_to_text_style(&child.style)));
                 }
+            }
+            NodeKind::LineBreak => {
+                // <br> 插入换行符，让 parley 在排版时换行
+                segments.push(("\n".to_string(), computed_style_to_text_style(&child.style)));
             }
             _ => {
                 let text = child.kind.text_content();

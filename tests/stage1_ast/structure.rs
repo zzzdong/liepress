@@ -340,51 +340,41 @@ fn test_task_list_with_nested_content() {
                 } => {
                     assert_eq!(items.len(), 2);
 
-                    // 第一个任务项：已勾选，且内容包含 Strong（在 Paragraph 内）
+                    // 第一个任务项：已勾选，且内容包含 Strong（直接作为子节点）
                     match &items[0].kind {
                         NodeKind::TaskListItem { checked, children } => {
                             assert!(*checked);
                             assert!(!children.is_empty());
-                            // 子节点应为 Paragraph，其中包含 Strong
-                            let has_paragraph_with_strong = children.iter().any(|c| {
-                                if let NodeKind::Paragraph {
-                                    children: para_children,
-                                } = &c.kind
-                                {
-                                    para_children
-                                        .iter()
-                                        .any(|pc| matches!(pc.kind, NodeKind::Strong { .. }))
-                                } else {
-                                    false
-                                }
-                            });
+                            // pulldown-cmark 在列表项中不添加 <p> 包裹，Strong 直接作为子节点
+                            let has_strong = children
+                                .iter()
+                                .any(|c| matches!(c.kind, NodeKind::Strong { .. }));
                             assert!(
-                                has_paragraph_with_strong,
-                                "Task item should contain Paragraph > Strong"
+                                has_strong,
+                                "Task item should contain Strong (got children kinds: {:?})",
+                                children
+                                    .iter()
+                                    .map(|c| format!("{:?}", c.kind))
+                                    .collect::<Vec<_>>()
                             );
                         }
                         _ => panic!("Expected TaskListItem"),
                     }
 
-                    // 第二个任务项：未勾选，且内容包含 Emphasis（在 Paragraph 内）
+                    // 第二个任务项：未勾选，且内容包含 Emphasis（直接作为子节点）
                     match &items[1].kind {
                         NodeKind::TaskListItem { checked, children } => {
                             assert!(!*checked);
-                            let has_paragraph_with_em = children.iter().any(|c| {
-                                if let NodeKind::Paragraph {
-                                    children: para_children,
-                                } = &c.kind
-                                {
-                                    para_children
-                                        .iter()
-                                        .any(|pc| matches!(pc.kind, NodeKind::Emphasis { .. }))
-                                } else {
-                                    false
-                                }
-                            });
+                            let has_em = children
+                                .iter()
+                                .any(|c| matches!(c.kind, NodeKind::Emphasis { .. }));
                             assert!(
-                                has_paragraph_with_em,
-                                "Task item should contain Paragraph > Emphasis"
+                                has_em,
+                                "Task item should contain Emphasis (got children kinds: {:?})",
+                                children
+                                    .iter()
+                                    .map(|c| format!("{:?}", c.kind))
+                                    .collect::<Vec<_>>()
                             );
                         }
                         _ => panic!("Expected TaskListItem"),

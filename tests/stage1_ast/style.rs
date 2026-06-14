@@ -1,6 +1,6 @@
 //! AST 样式测试
 
-use liepress::ast::{FontStyle, FontWeight, NodeKind, Style, parse_markdown};
+use liepress::ast::{FontStyle, FontWeight, NodeKind, parse_markdown};
 
 #[test]
 fn test_paragraph_has_style() {

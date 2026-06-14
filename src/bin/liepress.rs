@@ -1,9 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, ValueEnum};
 use liepress::{
-    ConvertOptions, PageConfig, markdown_file_to_pdf_with_options,
-    markdown_file_to_png_with_options, markdown_file_to_svg_with_options,
+    ConvertOptions, PageConfig, markdown_file_to_pdf, markdown_file_to_png, markdown_file_to_svg,
 };
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -11,28 +10,49 @@ enum Format {
     Pdf,
     Svg,
     Png,
+    Html,
 }
 
-/// Markdown to PDF/SVG converter
+/// 从输出文件扩展名推断格式
+fn infer_format_from_ext(path: &Path) -> Option<Format> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => Some(Format::Pdf),
+        Some("svg") => Some(Format::Svg),
+        Some("png") => Some(Format::Png),
+        Some("html") | Some("htm") => Some(Format::Html),
+        _ => None,
+    }
+}
+
+/// Markdown to PDF/SVG/HTML converter
 #[derive(Parser, Debug)]
 #[command(name = "liepress")]
-#[command(about = "Convert Markdown to PDF, SVG or PNG")]
+#[command(about = "Convert Markdown to PDF, SVG, PNG or HTML")]
 struct Args {
     /// Input Markdown file path
     #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
-    /// Output file path
+    /// Output file path (format inferred from extension: .pdf, .svg, .png, .html)
     #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
-    /// Output format
-    #[arg(short, long, value_enum, default_value = "pdf")]
-    format: Format,
+    /// Output format (overrides extension-based inference)
+    #[arg(short, long, value_enum)]
+    format: Option<Format>,
 
     /// Optional CSS stylesheet file to override default styles
     #[arg(short = 's', long = "style", value_name = "CSS_FILE")]
     style: Option<PathBuf>,
+
+    /// Document title (used in HTML <title>; defaults to first <h1>)
+    #[arg(short = 't', long = "title", value_name = "TITLE")]
+    title: Option<String>,
 
     /// Strict mode: fail on CSS parsing errors instead of ignoring them
     #[arg(short = 'S', long = "strict", default_value_t = false)]
@@ -98,6 +118,10 @@ struct Args {
     /// Equivalent to --footer "".
     #[arg(long = "no-page-number", default_value_t = false)]
     no_page_number: bool,
+
+    /// Enable unlimited height mode (single page, height adapts to content)
+    #[arg(long = "height-unlimited", default_value_t = false)]
+    height_unlimited: bool,
 }
 
 /// Parse a length string with unit (pt, mm, cm, in) into points (pt)
@@ -154,7 +178,8 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
         || args.margin_right.is_some()
         || args.header.is_some()
         || args.footer.is_some()
-        || args.no_page_number;
+        || args.no_page_number
+        || args.height_unlimited;
 
     if !has_page_args {
         return None;
@@ -215,6 +240,11 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
         config.margin_right = parse_length(v);
     }
 
+    // ─── 无限高度模式 ──────────────────────────────────
+    if args.height_unlimited {
+        config.height_unlimited = Some(true);
+    }
+
     // ─── 页眉页脚 ───────────────────────────────────────
     if let Some(header) = &args.header {
         if header.is_empty() {
@@ -240,6 +270,12 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+    let format = args.format.clone().or_else(|| infer_format_from_ext(&args.output))
+        .ok_or_else(|| format!(
+            "Cannot determine output format from extension '{}'. Use -f/--format or a supported extension (.pdf, .svg, .png, .html).",
+            args.output.extension().and_then(|e| e.to_str()).unwrap_or("(none)")
+        ))?;
+
     let mut opts = ConvertOptions::default();
     if let Some(css_path) = &args.style {
         opts.css_file = Some(css_path.clone());
@@ -253,15 +289,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         opts.page_config = Some(page_config);
     }
 
-    match args.format {
+    match format {
         Format::Pdf => {
-            let pdf_bytes = markdown_file_to_pdf_with_options(&args.input, &opts)?;
+            let pdf_bytes = markdown_file_to_pdf(&args.input, &opts)?;
             std::fs::write(&args.output, pdf_bytes)?;
             println!("PDF saved to: {}", args.output.display());
         }
         Format::Svg => {
-            let svgs = markdown_file_to_svg_with_options(&args.input, &opts)?;
-            if svgs.len() == 1 {
+            let svgs = markdown_file_to_svg(&args.input, &opts)?;
+            if svgs.is_empty() {
+                eprintln!("Warning: no SVG pages generated");
+            } else if svgs.len() == 1 {
                 std::fs::write(&args.output, &svgs[0])?;
                 println!("SVG saved to: {}", args.output.display());
             } else {
@@ -285,7 +323,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Format::Png => {
-            let pngs = markdown_file_to_png_with_options(&args.input, &opts)?;
+            let pngs = markdown_file_to_png(&args.input, &opts)?;
             if pngs.len() == 1 {
                 std::fs::write(&args.output, &pngs[0])?;
                 println!("PNG saved to: {}", args.output.display());
@@ -308,6 +346,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("PNG saved to: {}", path.display());
                 }
             }
+        }
+        Format::Html => {
+            let md_content = std::fs::read_to_string(&args.input)?;
+
+            // 读取用户 CSS 文件
+            let user_css = if let Some(css_path) = &args.style {
+                Some(std::fs::read_to_string(css_path)?)
+            } else {
+                None
+            };
+
+            // 从输入文件名提取 fallback title（去掉扩展名）
+            let fallback_title = args
+                .input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string());
+
+            let html = liepress::markdown_to_html_document(
+                &md_content,
+                user_css.as_deref(),
+                args.title.as_deref(),
+                fallback_title.as_deref(),
+            );
+            std::fs::write(&args.output, html)?;
+            println!("HTML saved to: {}", args.output.display());
         }
     }
 

@@ -18,144 +18,9 @@ use super::style::*;
 ///
 /// 等效于原来的硬编码样式函数（paragraph_style, heading_style 等）。
 /// 用户可以提供自己的 CSS 来覆盖这些样式。
-pub const DEFAULT_CSS: &str = r##"/* liepress 内置默认样式表 */
-
-body {
-    font-family: serif;
-    font-size: 10.5pt;
-    line-height: 1.5;
-    color: #000;
-    margin: 0;
-    text-align: left;
-}
-
-/* 标题 (h1-h6) */
-h1 { font-size: 24pt; line-height: 1.2; font-weight: bold; margin-bottom: 12pt; }
-h2 { font-size: 18pt; line-height: 1.2; font-weight: bold; margin-bottom: 10pt; }
-h3 { font-size: 14pt; line-height: 1.2; font-weight: bold; margin-bottom: 8pt; }
-h4 { font-size: 12pt; line-height: 1.2; font-weight: bold; margin-bottom: 6pt; }
-h5 { font-size: 11pt; line-height: 1.2; font-weight: bold; margin-bottom: 6pt; }
-h6 { font-size: 10.5pt; line-height: 1.2; font-weight: bold; margin-bottom: 6pt; }
-
-/* 段落 */
-p {
-    margin-top: 0;
-    margin-bottom: 12pt;
-}
-
-/* 代码块 */
-pre {
-    font-family: monospace;
-    font-size: 9pt;
-    line-height: 1.5;
-    color: #333;
-    margin-top: 0;
-    margin-bottom: 12pt;
-    display: block;
-}
-
-/* 行内代码 */
-code {
-    font-family: monospace;
-    font-size: 10.5pt;
-    color: #333;
-    display: inline;
-}
-
-/* 图片 */
-img {
-    display: block;
-    object-fit: contain;
-    margin-top: 0;
-    margin-bottom: 12pt;
-}
-
-/* 列表容器 */
-ul, ol {
-    margin-top: 0;
-    margin-bottom: 12pt;
-    display: block;
-    list-indent: 2em;
-}
-
-/* 列表项 */
-li {
-    display: block;
-    margin-top: 0;
-    margin-bottom: 4pt;
-}
-
-/* 引用块 */
-blockquote {
-    margin-top: 12pt;
-    margin-bottom: 12pt;
-    display: block;
-}
-
-/* 分隔线 */
-hr {
-    margin-top: 18pt;
-    margin-bottom: 18pt;
-    display: block;
-}
-
-/* 居中容器 (center) */
-center {
-    display: block;
-    text-align: center;
-    margin-top: 0;
-    margin-bottom: 0;
-}
-
-/* 行内容器 (span) */
-span {
-    display: inline;
-}
-
-/* 表格 */
-table {
-    display: block;
-    margin-top: 12pt;
-    margin-bottom: 12pt;
-    border-collapse: collapse;
-    table-header-background: #e8e8e8;
-    table-alt-row-background: #f8f8f8;
-    table-border-color: #b4b4b4;
-    table-border-width: 0.5pt;
-    table-cell-padding-horizontal: 4pt;
-    table-cell-padding-vertical: 2pt;
-}
-
-/* 加粗 */
-strong {
-    font-weight: bold;
-    display: inline;
-}
-
-/* 斜体 */
-em {
-    font-style: italic;
-    display: inline;
-}
-
-/* 链接 */
-a {
-    color: #00f;
-    font-style: italic;
-    display: inline;
-}
-
-/* 删除线 */
-del {
-    display: inline;
-    text-decoration: line-through;
-}
-
-/* 普通文本 */
-span {
-    display: inline;
-}
-"##;
+///
+/// 定义在 `presets/default.css` 中。
+pub const DEFAULT_CSS: &str = include_str!("presets/default.css");
 
 /// 列表标记样式（用于 bullet 和 number 的布局计算）
 ///
@@ -163,7 +28,6 @@ span {
 /// 不由 CSS 系统控制（标记是自动生成的），因此保留为硬编码函数。
 pub fn list_marker_style() -> Style {
     Style {
-        // 使用 Source Han Serif SC 作为列表标记字体，确保在 WASM 环境中字符可显示
         font_family: vec![
             "Source Han Serif SC".to_string(),
             "Noto Sans SC".to_string(),
@@ -177,14 +41,9 @@ pub fn list_marker_style() -> Style {
         letter_spacing: 0.0,
         text_align: TextAlign::Right,
         display: Display::Inline,
-        margin_top_pt: 0.0,
-        margin_bottom_pt: 0.0,
-        margin_left_pt: 0.0,
-        margin_right_pt: 0.0,
-        padding_top_pt: 0.0,
-        padding_bottom_pt: 0.0,
-        padding_left_pt: 0.0,
-        padding_right_pt: 0.0,
+        margin: BoxSides::ZERO,
+        padding: BoxSides::ZERO,
+        border: BoxBorders::NONE,
         width: None,
         height: None,
         object_fit: ObjectFit::None,
@@ -200,6 +59,10 @@ pub fn list_marker_style() -> Style {
         link_url: None,
         text_decoration: TextDecoration::None,
         list_indent_pt: None,
+        text_indent_em: 0.0,
+        baseline_shift: 0.0,
+        white_space: WhiteSpace::Normal,
+        list_style_type: ListStyleType::Disc,
     }
 }
 
@@ -224,6 +87,7 @@ pub fn computed_style_to_text_style(style: &Style) -> crate::text::TextStyle {
         align,
         url: style.link_url.clone(),
         decoration: style.text_decoration,
+        baseline_shift: style.baseline_shift,
     }
 }
 

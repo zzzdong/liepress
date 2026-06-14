@@ -20,6 +20,15 @@ pub struct PageSettings {
     pub margin_left_pt: f32,
     pub margin_right_pt: f32,
 
+    // ─── 无限高度模式 ──────────────────────────────────────
+    /// 仅限定宽度，高度无限（不分页，所有内容连续排列在一个页面上）
+    ///
+    /// 启用后：
+    /// - `content_height()` 返回 `f32::MAX`，所有分页检查永不触发
+    /// - `start_new_page()` / `finalize_current_page()` 变为空操作
+    /// - 最终输出单页文档，页面高度 = 实际内容高度
+    pub height_unlimited: bool,
+
     // ─── 页眉页脚 ──────────────────────────────────────────
     /// 页眉文本（支持 {page} 和 {total} 模板变量）
     pub header: Option<String>,
@@ -40,6 +49,7 @@ impl Default for PageSettings {
             margin_bottom_pt: PAGE_MARGIN_BOTTOM_PT,
             margin_left_pt: PAGE_MARGIN_LEFT_PT,
             margin_right_pt: PAGE_MARGIN_RIGHT_PT,
+            height_unlimited: false,
             header: None,
             footer: Some("- {page} -".to_string()),
             header_font_size: 9.0,
@@ -72,6 +82,12 @@ impl PageSettings {
         self
     }
 
+    /// 启用无限高度模式（仅限定宽度，高度自适应内容）
+    pub fn with_height_unlimited(mut self, unlimited: bool) -> Self {
+        self.height_unlimited = unlimited;
+        self
+    }
+
     /// 内容区左上角 X 坐标
     pub fn content_x(&self) -> f32 {
         self.margin_left_pt
@@ -87,9 +103,13 @@ impl PageSettings {
         self.width_pt - self.margin_left_pt - self.margin_right_pt
     }
 
-    /// 内容区高度
+    /// 内容区高度（无限高度模式下返回 f32::MAX）
     pub fn content_height(&self) -> f32 {
-        self.height_pt - self.margin_top_pt - self.margin_bottom_pt
+        if self.height_unlimited {
+            f32::MAX
+        } else {
+            self.height_pt - self.margin_top_pt - self.margin_bottom_pt
+        }
     }
 }
 
@@ -102,6 +122,7 @@ impl From<PageConfig> for PageSettings {
             margin_bottom_pt: config.margin_bottom.unwrap_or(PAGE_MARGIN_BOTTOM_PT),
             margin_left_pt: config.margin_left.unwrap_or(PAGE_MARGIN_LEFT_PT),
             margin_right_pt: config.margin_right.unwrap_or(PAGE_MARGIN_RIGHT_PT),
+            height_unlimited: config.height_unlimited.unwrap_or(false),
             header: config.header,
             footer: config.footer,
             header_font_size: config.header_font_size.unwrap_or(9.0),
@@ -118,6 +139,30 @@ pub struct Document {
     pub page_height: f32,
     /// 文档大纲（标题层级结构）
     pub outline: Vec<OutlineEntry>,
+}
+
+/// 布局完成的文档——布局阶段的显式输出
+///
+/// `DocumentLayout` 是 `DocumentGenerator` 的产出物，代表经过完整布局计算后的文档。
+/// 它包含的内存布局布局与 `Document` 相同，但语义上明确属于"布局层"而非"渲染层"。
+/// 通过 `From` / `Into` 转换可轻松得到 `Document` 供渲染器使用。
+#[derive(Debug, Clone)]
+pub struct DocumentLayout {
+    pub pages: Vec<Page>,
+    pub page_width: f32,
+    pub page_height: f32,
+    pub outline: Vec<OutlineEntry>,
+}
+
+impl From<DocumentLayout> for Document {
+    fn from(layout: DocumentLayout) -> Self {
+        Document {
+            pages: layout.pages,
+            page_width: layout.page_width,
+            page_height: layout.page_height,
+            outline: layout.outline,
+        }
+    }
 }
 
 /// 页面结构 - 包含视觉元素列表
@@ -141,6 +186,11 @@ impl Page {
 
     pub fn add_element(&mut self, element: VisualElement) {
         self.elements.push(element);
+    }
+
+    /// 在元素列表开头插入元素（用于背景矩形，确保在文本下方绘制）
+    pub fn prepend_element(&mut self, element: VisualElement) {
+        self.elements.insert(0, element);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -171,6 +221,11 @@ impl PageContext {
         self.current_page.add_element(element);
     }
 
+    /// 在当前页元素列表开头插入元素（用于背景矩形，确保在文本下方绘制）
+    pub fn add_element_before_text(&mut self, element: VisualElement) {
+        self.current_page.prepend_element(element);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.current_page.is_empty()
     }
@@ -184,6 +239,9 @@ impl PageContext {
     }
 
     pub fn finalize_current_page(&mut self) {
+        if self.settings.height_unlimited {
+            return; // 无限高度模式：不分页，页面持续增长
+        }
         if !self.current_page.is_empty() {
             let width = self.current_page.width;
             let height = self.current_page.height;
@@ -200,11 +258,28 @@ impl PageContext {
         self.finalize_current_page();
     }
 
-    pub fn finish(mut self) -> Document {
+    pub fn finish(mut self) -> DocumentLayout {
         let page_width = self.current_page.width;
         let page_height = self.current_page.height;
+
+        if self.settings.height_unlimited {
+            // 单页模式：动态设置页面高度 = 实际内容高度 + 上下边距
+            let actual_height =
+                self.current_y + self.settings.margin_bottom_pt + self.settings.margin_top_pt;
+            self.current_page.height = actual_height;
+            if !self.current_page.is_empty() {
+                self.pages.push(self.current_page);
+            }
+            return DocumentLayout {
+                pages: self.pages,
+                page_width,
+                page_height: actual_height,
+                outline: Vec::new(),
+            };
+        }
+
         self.finalize_current_page();
-        Document {
+        DocumentLayout {
             pages: self.pages,
             page_width,
             page_height,

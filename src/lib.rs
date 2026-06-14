@@ -1,6 +1,8 @@
 pub mod ast;
+pub mod css;
 pub mod error;
 pub mod generator;
+pub mod html;
 pub mod render;
 pub mod text;
 pub mod visual;
@@ -16,10 +18,9 @@ pub use render::{
 
 pub use ast::PageConfig;
 
-use generator::{
-    Document, markdown_to_document, markdown_to_document_with_base_dir,
-    markdown_to_document_with_css_and_page_config,
-};
+pub use html::{markdown_to_html, markdown_to_html_document};
+
+use generator::Document;
 
 /// Markdown 转换配置
 ///
@@ -184,6 +185,25 @@ impl ConvertOptions {
     pub fn with_footer_font_size(mut self, size: f32) -> Self {
         let config = self.page_config.get_or_insert_with(PageConfig::default);
         config.footer_font_size = Some(size);
+        self
+    }
+
+    /// 启用无限高度模式（仅限定宽度，高度自适应内容）
+    ///
+    /// 启用后：
+    /// - 内容不分页，所有元素连续排列在一个页面上
+    /// - 页面高度根据实际内容自动扩展
+    /// - 页眉页脚仍会显示，但 `{total}` 始终为 1
+    ///
+    /// ```
+    /// use liepress::ConvertOptions;
+    ///
+    /// let opts = ConvertOptions::new()
+    ///     .with_height_unlimited(true);
+    /// ```
+    pub fn with_height_unlimited(mut self, unlimited: bool) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.height_unlimited = Some(unlimited);
         self
     }
 }
@@ -476,194 +496,197 @@ fn resolve_user_css(
     }
 }
 
-// ─── 快速入口（无额外配置） ───────────────────────────────
+// ─── Markdown 管线入口 ──────────────────────────────────────
 
-pub fn markdown_to_pdf(markdown: &str) -> crate::error::Result<Vec<u8>> {
-    render_pdf(&markdown_to_document(markdown))
-}
-
-pub fn markdown_to_svg(markdown: &str) -> crate::error::Result<Vec<String>> {
-    Ok(render_svg(&markdown_to_document(markdown)))
-}
-
-pub fn markdown_to_png(markdown: &str) -> crate::error::Result<Vec<Vec<u8>>> {
-    render_png(&markdown_to_document(markdown))
-}
-
-pub fn markdown_file_to_pdf(path: &Path) -> crate::error::Result<Vec<u8>> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    render_pdf(&markdown_to_document_with_base_dir(&markdown, base_dir))
-}
-
-pub fn markdown_file_to_svg(path: &Path) -> crate::error::Result<Vec<String>> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    Ok(render_svg(&markdown_to_document_with_base_dir(
-        &markdown, base_dir,
-    )))
-}
-
-pub fn markdown_file_to_png(path: &Path) -> crate::error::Result<Vec<Vec<u8>>> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    render_png(&markdown_to_document_with_base_dir(&markdown, base_dir))
-}
-
-// ─── 带配置的入口 ────────────────────────────────────────
-
-pub fn markdown_to_pdf_with_options(
-    markdown: &str,
-    options: &ConvertOptions,
-) -> crate::error::Result<Vec<u8>> {
+/// 核心转换逻辑：Markdown → PDF
+///
+/// 管线：Markdown → HTML → HtmlDocument → Styled Node → Document → PDF
+///
+/// 本地图片需在调用前已嵌入为 data URI（由 `markdown_file_to_pdf` 自动处理）。
+pub fn markdown_to_pdf(markdown: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
     let user_css = resolve_user_css(options, Some(markdown))?;
-    let doc = (if options.strict {
-        markdown_to_document_with_css_and_page_config(
-            markdown,
-            &user_css,
-            options.page_config.clone(),
-            None,
-            true,
-        )
-    } else {
-        markdown_to_document_with_css_and_page_config(
-            markdown,
-            &user_css,
-            options.page_config.clone(),
-            None,
-            false,
-        )
-    })
-    .map_err(crate::error::Error::CssParseError)?;
-    render_pdf(&doc)
+    let html_str = html::markdown_to_html(markdown);
+    let document = html_to_document(
+        &html_str,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    render_pdf(&document)
 }
 
-pub fn markdown_to_svg_with_options(
-    markdown: &str,
-    options: &ConvertOptions,
-) -> crate::error::Result<Vec<String>> {
-    let user_css = resolve_user_css(options, Some(markdown))?;
-    let doc = (if options.strict {
-        markdown_to_document_with_css_and_page_config(
-            markdown,
-            &user_css,
-            options.page_config.clone(),
-            None,
-            true,
-        )
-    } else {
-        markdown_to_document_with_css_and_page_config(
-            markdown,
-            &user_css,
-            options.page_config.clone(),
-            None,
-            false,
-        )
-    })
-    .map_err(crate::error::Error::CssParseError)?;
-    Ok(render_svg(&doc))
-}
-
-pub fn markdown_to_png_with_options(
-    markdown: &str,
-    options: &ConvertOptions,
-) -> crate::error::Result<Vec<Vec<u8>>> {
-    let user_css = resolve_user_css(options, Some(markdown))?;
-    let doc = (if options.strict {
-        markdown_to_document_with_css_and_page_config(
-            markdown,
-            &user_css,
-            options.page_config.clone(),
-            None,
-            true,
-        )
-    } else {
-        markdown_to_document_with_css_and_page_config(
-            markdown,
-            &user_css,
-            options.page_config.clone(),
-            None,
-            false,
-        )
-    })
-    .map_err(crate::error::Error::CssParseError)?;
-    render_png(&doc)
-}
-
-pub fn markdown_file_to_pdf_with_options(
+/// Markdown 文件 → PDF（自动将本地图片嵌入为 base64）
+pub fn markdown_file_to_pdf(
     path: &Path,
     options: &ConvertOptions,
 ) -> crate::error::Result<Vec<u8>> {
     let (markdown, base_dir) = read_markdown_file(path)?;
     let user_css = resolve_user_css(options, Some(&markdown))?;
-    let doc = (if options.strict {
-        markdown_to_document_with_css_and_page_config(
-            &markdown,
-            &user_css,
-            options.page_config.clone(),
-            base_dir,
-            true,
-        )
-    } else {
-        markdown_to_document_with_css_and_page_config(
-            &markdown,
-            &user_css,
-            options.page_config.clone(),
-            base_dir,
-            false,
-        )
-    })
-    .map_err(crate::error::Error::CssParseError)?;
-    render_pdf(&doc)
+    let html_str = html::markdown_to_html(&markdown);
+    let html_str = html::embed_local_images(&html_str, base_dir.as_deref());
+    let document = html_to_document(
+        &html_str,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    render_pdf(&document)
 }
 
-pub fn markdown_file_to_svg_with_options(
+/// 核心转换逻辑：Markdown → SVG
+pub fn markdown_to_svg(
+    markdown: &str,
+    options: &ConvertOptions,
+) -> crate::error::Result<Vec<String>> {
+    let user_css = resolve_user_css(options, Some(markdown))?;
+    let html_str = html::markdown_to_html(markdown);
+    let document = html_to_document(
+        &html_str,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    Ok(render_svg(&document))
+}
+
+/// 核心转换逻辑：Markdown → PNG
+pub fn markdown_to_png(
+    markdown: &str,
+    options: &ConvertOptions,
+) -> crate::error::Result<Vec<Vec<u8>>> {
+    let user_css = resolve_user_css(options, Some(markdown))?;
+    let html_str = html::markdown_to_html(markdown);
+    let document = html_to_document(
+        &html_str,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    render_png(&document)
+}
+
+/// Markdown 文件 → SVG（自动将本地图片嵌入为 base64）
+pub fn markdown_file_to_svg(
     path: &Path,
     options: &ConvertOptions,
 ) -> crate::error::Result<Vec<String>> {
     let (markdown, base_dir) = read_markdown_file(path)?;
     let user_css = resolve_user_css(options, Some(&markdown))?;
-    let doc = (if options.strict {
-        markdown_to_document_with_css_and_page_config(
-            &markdown,
-            &user_css,
-            options.page_config.clone(),
-            base_dir,
-            true,
-        )
-    } else {
-        markdown_to_document_with_css_and_page_config(
-            &markdown,
-            &user_css,
-            options.page_config.clone(),
-            base_dir,
-            false,
-        )
-    })
-    .map_err(crate::error::Error::CssParseError)?;
-    Ok(render_svg(&doc))
+    let html_str = html::markdown_to_html(&markdown);
+    let html_str = html::embed_local_images(&html_str, base_dir.as_deref());
+    let document = html_to_document(
+        &html_str,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    Ok(render_svg(&document))
 }
 
-pub fn markdown_file_to_png_with_options(
+/// Markdown 文件 → PNG（自动将本地图片嵌入为 base64）
+pub fn markdown_file_to_png(
     path: &Path,
     options: &ConvertOptions,
 ) -> crate::error::Result<Vec<Vec<u8>>> {
     let (markdown, base_dir) = read_markdown_file(path)?;
     let user_css = resolve_user_css(options, Some(&markdown))?;
-    let doc = (if options.strict {
-        markdown_to_document_with_css_and_page_config(
-            &markdown,
-            &user_css,
-            options.page_config.clone(),
-            base_dir,
-            true,
-        )
+    let html_str = html::markdown_to_html(&markdown);
+    let html_str = html::embed_local_images(&html_str, base_dir.as_deref());
+    let document = html_to_document(
+        &html_str,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    render_png(&document)
+}
+
+// ─── 内部：HTML → Document 公共逻辑 ────────────────────────
+
+/// HTML → Document 的核心转换逻辑
+///
+/// 被所有 markdown_to_* 入口共享。
+fn html_to_document(
+    html: &str,
+    user_css: &str,
+    strict: bool,
+    page_config: Option<PageConfig>,
+) -> crate::error::Result<generator::Document> {
+    // 1. HTML → HtmlDocument
+    let doc = html::parse_html(html);
+
+    // 2. 合并 CSS：内置样式 + <style> 标签 + 用户 CSS
+    let builtin_css = ast::presets::DEFAULT_CSS;
+    let mut engine =
+        css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
+
+    // 应用 <style> 标签中的 CSS
+    for sheet in &doc.style_sheets {
+        engine = engine
+            .with_user_css(sheet)
+            .map_err(crate::error::Error::CssParseError)?;
+    }
+
+    // 应用用户提供的 CSS
+    if !user_css.is_empty() {
+        engine = engine
+            .with_user_css(user_css)
+            .map_err(crate::error::Error::CssParseError)?;
+    }
+
+    if strict {
+        engine = engine.with_strict_mode(true);
+    }
+
+    // 检测根元素字号：解析 <html> 元素，将计算后的 font-size 设为根字号
+    // 这让 rem 单位能正确参考根元素的实际字号
+    let default_style = ast::Style::default();
+    let root_style = engine.resolve_style("html", &[], None, &[], &default_style);
+    engine.set_root_font_size(root_style.font_size_pt);
+
+    // 3. HtmlDocument → Styled Node Tree
+    let styled_node = html::html_to_styled_nodes(&doc, &engine);
+
+    // 4. Styled Node → Document（布局）
+    let page_config = page_config.unwrap_or_else(|| engine.page_config().clone());
+    let mut generator = generator::DocumentGenerator::with_settings(page_config.into());
+
+    if let ast::NodeKind::Document { children } = &styled_node.kind {
+        for child in children {
+            generator.layout_node(child);
+        }
     } else {
-        markdown_to_document_with_css_and_page_config(
-            &markdown,
-            &user_css,
-            options.page_config.clone(),
-            base_dir,
-            false,
-        )
-    })
-    .map_err(crate::error::Error::CssParseError)?;
-    render_png(&doc)
+        generator.layout_node(&styled_node);
+    }
+
+    Ok(generator.finish().into())
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+
+    fn sample_markdown() -> &'static str {
+        "# Hello World\n\nThis is a **test** paragraph with *italic* text.\n\n- item 1\n- item 2\n- [ ] unchecked task\n- [x] checked task\n\n> A blockquote\n\n| A | B |\n|---|---|\n| 1 | 2 |"
+    }
+
+    #[test]
+    fn test_pdf_generation() {
+        let opts = ConvertOptions::default();
+        let result = markdown_to_pdf(sample_markdown(), &opts);
+        assert!(result.is_ok(), "PDF generation should succeed");
+        let pdf = result.unwrap();
+        assert!(!pdf.is_empty(), "PDF bytes should not be empty");
+        assert!(pdf.starts_with(b"%PDF"), "Should be valid PDF");
+    }
+
+    #[test]
+    fn test_svg_generation() {
+        let opts = ConvertOptions::default();
+        let result = markdown_to_svg(sample_markdown(), &opts);
+        assert!(result.is_ok(), "SVG generation should succeed");
+        let svgs = result.unwrap();
+        assert!(!svgs.is_empty(), "Should generate at least one SVG page");
+        assert!(svgs[0].contains("<svg"), "Should contain SVG tag");
+    }
 }

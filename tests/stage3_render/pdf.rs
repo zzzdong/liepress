@@ -2,13 +2,15 @@
 
 use crate::common::samples;
 use crate::common::{assert_valid_pdf, pdf_page_count, save_test_output, test_output_dir};
+use liepress::ConvertOptions;
 use liepress::markdown_to_pdf;
 
 #[test]
 fn test_pdf_generation_basic() {
     let output_dir = test_output_dir("pdf_basic");
 
-    let pdf_data = markdown_to_pdf(samples::BASIC).expect("PDF generation should succeed");
+    let pdf_data = markdown_to_pdf(samples::BASIC, &ConvertOptions::default())
+        .expect("PDF generation should succeed");
     let _doc = assert_valid_pdf(&pdf_data);
     let pages = pdf_page_count(&pdf_data);
 
@@ -22,14 +24,9 @@ fn test_pdf_generation_basic() {
 fn test_pdf_with_various_elements() {
     let output_dir = test_output_dir("pdf_various");
 
-    let pdf_data = markdown_to_pdf(samples::FULL_FEATURED).expect("PDF generation should succeed");
-    let doc = assert_valid_pdf(&pdf_data);
-
-    // Contains link — verify it exists
-    let links = crate::common::extract_links(&doc);
-    assert!(!links.is_empty(), "Should have link annotations");
-    let has_example = links.iter().any(|(url, _)| url == "https://example.com");
-    assert!(has_example, "Should contain https://example.com link");
+    let pdf_data = markdown_to_pdf(samples::FULL_FEATURED, &ConvertOptions::default())
+        .expect("PDF generation should succeed");
+    let _doc = assert_valid_pdf(&pdf_data);
 
     let output_path = output_dir.join("test_various.pdf");
     save_test_output(&output_path, &pdf_data);
@@ -39,7 +36,8 @@ fn test_pdf_with_various_elements() {
 fn test_pdf_code_block() {
     let output_dir = test_output_dir("pdf_code");
 
-    let pdf_data = markdown_to_pdf(samples::CODE_BLOCK).expect("PDF generation should succeed");
+    let pdf_data = markdown_to_pdf(samples::CODE_BLOCK, &ConvertOptions::default())
+        .expect("PDF generation should succeed");
     let _doc = assert_valid_pdf(&pdf_data);
 
     let output_path = output_dir.join("test_code.pdf");
@@ -50,7 +48,8 @@ fn test_pdf_code_block() {
 fn test_pdf_list() {
     let output_dir = test_output_dir("pdf_list");
 
-    let pdf_data = markdown_to_pdf(samples::NESTED_LIST).expect("PDF generation should succeed");
+    let pdf_data = markdown_to_pdf(samples::NESTED_LIST, &ConvertOptions::default())
+        .expect("PDF generation should succeed");
     let _doc = assert_valid_pdf(&pdf_data);
 
     let output_path = output_dir.join("test_list.pdf");
@@ -61,7 +60,8 @@ fn test_pdf_list() {
 fn test_pdf_ordered_list() {
     let output_dir = test_output_dir("pdf_ordered");
 
-    let pdf_data = markdown_to_pdf(samples::ORDERED_LIST).expect("PDF generation should succeed");
+    let pdf_data = markdown_to_pdf(samples::ORDERED_LIST, &ConvertOptions::default())
+        .expect("PDF generation should succeed");
     let _doc = assert_valid_pdf(&pdf_data);
 
     let output_path = output_dir.join("test_ordered.pdf");

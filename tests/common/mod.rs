@@ -2,6 +2,8 @@
 //!
 //! 提供测试共享的工具函数和类型
 
+#![allow(dead_code)]
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -234,6 +236,150 @@ pub fn group_links_by_url(report: &PdfReport) -> std::collections::HashMap<Strin
         }
     }
     groups
+}
+
+// ─── lopdf 深度验证工具 ──────────────────────────────────
+
+/// 从 PDF 页面内容流中提取文本字符串（解析 Tj / TJ 操作符）
+///
+/// 返回每个页面的文本字符串列表
+pub fn extract_pdf_text(doc: &Document) -> Vec<String> {
+    let mut page_texts = Vec::new();
+    let pages = doc.get_pages();
+    for (_page_num, page_id) in pages.iter() {
+        let mut text = String::new();
+        if let Ok(content) = doc.get_and_decode_page_content(*page_id) {
+            // 遍历 Content Stream 的操作符
+            for operation in &content.operations {
+                match operation.operator.as_str() {
+                    "Tj" => {
+                        // 单字符串文本
+                        if let Some(lopdf::Object::String(bytes, _)) = operation.operands.first() {
+                            text.push_str(&String::from_utf8_lossy(bytes));
+                        }
+                    }
+                    "TJ" => {
+                        // 数组形式文本（可能混合字符串和间距调整）
+                        if let Some(lopdf::Object::Array(arr)) = operation.operands.first() {
+                            for item in arr {
+                                if let lopdf::Object::String(bytes, _) = item {
+                                    text.push_str(&String::from_utf8_lossy(bytes));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        page_texts.push(text);
+    }
+    page_texts
+}
+
+/// 断言 PDF 中包含指定文本
+pub fn assert_pdf_contains_text(doc: &Document, expected: &str) {
+    let page_texts = extract_pdf_text(doc);
+    let all_text: String = page_texts.join(" ");
+    assert!(
+        all_text.contains(expected),
+        "PDF should contain text {:?}, but extracted text is: {:?}",
+        expected,
+        &all_text[..all_text.len().min(500)]
+    );
+}
+
+/// 提取 PDF 元数据（Title, Author, Subject 等）
+pub fn get_pdf_metadata(doc: &Document) -> std::collections::HashMap<String, String> {
+    let mut meta = std::collections::HashMap::new();
+    if let Ok(catalog) = doc.catalog() {
+        if let Ok(info_ref) = catalog.get(b"Info") {
+            if let Ok(info_id) = info_ref.as_reference() {
+                if let Ok(info_dict) = doc.get_object(info_id).and_then(|o| o.as_dict()) {
+                    for key in &["Title", "Author", "Subject", "Creator", "Producer"] {
+                        if let Ok(val) = info_dict.get(key.as_bytes()) {
+                            if let Ok(s) = val.as_str() {
+                                meta.insert(
+                                    key.to_string(),
+                                    String::from_utf8_lossy(s).to_string(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 回退：从 trailer Info 字典中读取
+    if meta.is_empty() {
+        if let Some(info_id) = doc
+            .trailer
+            .get(b"Info")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
+        {
+            if let Ok(info_dict) = doc.get_object(info_id).and_then(|o| o.as_dict()) {
+                for key in &["Title", "Author", "Subject", "Creator", "Producer"] {
+                    if let Ok(val) = info_dict.get(key.as_bytes()) {
+                        if let Ok(s) = val.as_str() {
+                            meta.insert(key.to_string(), String::from_utf8_lossy(s).to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    meta
+}
+
+/// 统计 PDF 中嵌入的字体资源数量
+pub fn count_font_resources(doc: &Document) -> usize {
+    let mut font_count = 0;
+    let pages = doc.get_pages();
+    for (_page_num, page_id) in pages.iter() {
+        if let Ok(fonts) = doc.get_page_fonts(*page_id) {
+            font_count += fonts.len();
+        }
+    }
+    font_count
+}
+
+/// 获取所有页面的 MediaBox 尺寸 [(width, height), ...]
+pub fn get_page_media_boxes(doc: &Document) -> Vec<(f64, f64)> {
+    let mut boxes = Vec::new();
+    let pages = doc.get_pages();
+    for (_page_num, page_id) in pages.iter() {
+        if let Ok(page_dict) = doc.get_dictionary(*page_id) {
+            if let Ok(media_box) = page_dict.get(b"MediaBox").and_then(|o| o.as_array()) {
+                if media_box.len() == 4 {
+                    let x0 = media_box[0].as_float().unwrap_or(0.0) as f64;
+                    let y0 = media_box[1].as_float().unwrap_or(0.0) as f64;
+                    let x1 = media_box[2].as_float().unwrap_or(0.0) as f64;
+                    let y1 = media_box[3].as_float().unwrap_or(0.0) as f64;
+                    boxes.push((x1 - x0, y1 - y0));
+                }
+            }
+        }
+    }
+    boxes
+}
+
+/// 验证 PDF 页面尺寸是否为 A4 (595.276 x 841.890 pt)
+pub fn assert_a4_page_size(doc: &Document, tolerance: f64) {
+    let boxes = get_page_media_boxes(doc);
+    for (i, (w, h)) in boxes.iter().enumerate() {
+        // A4 纵向：595.276 x 841.890 pt
+        let is_a4_portrait = (w - 595.276).abs() < tolerance && (h - 841.890).abs() < tolerance;
+        // A4 横向：841.890 x 595.276 pt
+        let is_a4_landscape = (w - 841.890).abs() < tolerance && (h - 595.276).abs() < tolerance;
+        assert!(
+            is_a4_portrait || is_a4_landscape,
+            "Page {} should be A4 size, got ({:.1}, {:.1})",
+            i + 1,
+            w,
+            h
+        );
+    }
 }
 
 /// 测试用的 Markdown 样本
