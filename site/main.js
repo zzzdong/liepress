@@ -4,35 +4,48 @@ let monacoReady = false;
 let editorInstance = null;
 let currentPdfBase64 = null;
 
+/**
+ * 每个字体条目包含：
+ * - name:     字体实际名称（注册到 WASM 和 浏览器 FontFace 的主要名称）
+ * - family:   字体所属的通用族（对应 CSS 的 generic family keyword）
+ *             等宽 → "monospace"，衬线 → "serif"，无衬线 → "sans-serif"
+ * - url:      字体文件地址
+ */
 const FONTS_TO_LOAD = [
+    // 等宽字体（用于代码块）
     {
         name: 'JetBrains Mono',
+        family: 'monospace',
         url: 'https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/ttf/JetBrainsMono-Regular.ttf',
     },
-    // 中文宋体（Noto Sans Serif SC）
-    {
-        name: 'Noto Sans Serif SC',
-        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf',
-    },
-    // 中文黑体（Noto Sans SC）
-    {
-        name: 'Noto Sans SC',
-        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf',
-    },
-    // 拉丁衬线字体（Noto Serif）
-    {
-        name: 'Noto Serif',
-        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSerif/NotoSerif-Regular.ttf',
-    },
-    // 拉丁无衬线字体（Noto Sans）
-    {
-        name: 'Noto Sans',
-        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf',
-    },
-    // 拉丁等宽字体（Noto Sans Mono）
     {
         name: 'Noto Sans Mono',
+        family: 'monospace',
         url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansMono/NotoSansMono-Regular.ttf',
+    },
+    // 拉丁衬线字体
+    {
+        name: 'Noto Serif',
+        family: 'serif',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSerif/NotoSerif-Regular.ttf',
+    },
+    // 拉丁无衬线字体
+    {
+        name: 'Noto Sans',
+        family: 'sans-serif',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf',
+    },
+    // 中文衬线字体（Noto Serif SC）
+    {
+        name: 'Noto Serif SC',
+        family: 'serif',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf',
+    },
+    // 中文无衬线字体（Noto Sans SC）
+    {
+        name: 'Noto Sans SC',
+        family: 'sans-serif',
+        url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf',
     },
 ];
 
@@ -166,7 +179,6 @@ async function initWasm() {
 
 async function loadFonts() {
     const renderBtn = document.getElementById('render-pdf');
-    let lastFontBytes = null;
 
     for (const font of FONTS_TO_LOAD) {
         try {
@@ -180,12 +192,16 @@ async function loadFonts() {
             const bytes = new Uint8Array(arrayBuffer);
             console.log('Font bytes loaded:', font.name, 'size:', bytes.length);
 
-            lastFontBytes = { arrayBuffer, bytes };
-
-            console.log('Registering font with WASM:', font.name);
+            // // 1. 以实际名称注册到 WASM（供 parley 通过 Named 名称查找）
             wasmModule.register_font_bytes(font.name, bytes);
             console.log('Font registered with WASM:', font.name);
 
+            // 2. 以通用族名注册到 WASM（供 CSS generic family 关键字 serif/sans-serif/monospace 使用）
+            //    同一个字体字节可以注册多次到不同名称下，parley 的 fontdb 会共享数据
+            wasmModule.register_font_bytes(font.family, bytes);
+            console.log('Font registered with WASM as generic family:', font.family);
+
+            // 3. 注册到浏览器中（用于编辑器等 HTML 渲染）
             try {
                 const fontFace = new FontFace(font.name, arrayBuffer);
                 const loadedFont = await fontFace.load();
@@ -196,17 +212,6 @@ async function loadFonts() {
             }
         } catch (err) {
             console.warn('Font load failed:', font.name, err);
-        }
-    }
-
-    if (lastFontBytes) {
-        try {
-            wasmModule.register_font_bytes('sans-serif', lastFontBytes.bytes);
-            const fontFaceSs = new FontFace('sans-serif', lastFontBytes.arrayBuffer);
-            const loadedSsFont = await fontFaceSs.load();
-            document.fonts.add(loadedSsFont);
-        } catch (err) {
-            console.warn('Fallback font failed:', err);
         }
     }
 
@@ -239,8 +244,14 @@ async function renderPdf() {
 
     try {
         console.log('Calling markdown_to_pdf_base64 with:', markdown.substring(0, 50) + '...');
-        // Use comprehensive font stack: Latin fonts first, then Chinese fonts as fallback
-        const base64 = wasmModule.markdown_to_pdf_base64(markdown, 'Noto Serif, Source Han Serif SC, Noto Sans SC, Georgia, serif', '');
+        // 字体栈：显式指定具体字体名称，配合通用族名回退
+        // 这里的 font-family 生成 body { font-family: ... }，正文用衬线/无衬线
+        // 代码块不受影响（<pre>/<code> 有自己的 font-family: monospace, sans-serif）
+        const fontFamily = [
+            'Noto Serif', 'Noto Serif SC', 'serif',
+            'Noto Sans', 'Noto Sans SC', 'sans-serif',
+        ].join(', ');
+        const base64 = wasmModule.markdown_to_pdf_base64(markdown, fontFamily, '');
         console.log('PDF generated, base64 length:', base64.length);
         currentPdfBase64 = base64;
         

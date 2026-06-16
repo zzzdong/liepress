@@ -5,7 +5,7 @@
 
 use crate::ast::style::{
     CssLength, Display, FontStyle, FontWeight, LineHeight, ObjectFit, PageBreak, PageConfig, Style,
-    TextAlign, TextDecoration,
+    TextAlign, TextDecoration, WhiteSpace,
 };
 use crate::visual::Color;
 use lightningcss::rules::CssRule;
@@ -571,6 +571,9 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
         "object-fit" => {
             style.object_fit = parse_object_fit(value);
         }
+        "white-space" => {
+            style.white_space = parse_white_space(value);
+        }
         "text-decoration" => {
             let v = value.trim().to_lowercase();
             if v == "line-through" {
@@ -903,6 +906,14 @@ fn parse_object_fit(value: &str) -> ObjectFit {
         "fill" => ObjectFit::Fill,
         "none" => ObjectFit::None,
         _ => ObjectFit::Contain,
+    }
+}
+
+fn parse_white_space(value: &str) -> WhiteSpace {
+    match value.trim().to_lowercase().as_str() {
+        "pre" => WhiteSpace::Pre,
+        "nowrap" => WhiteSpace::NoWrap,
+        _ => WhiteSpace::Normal,
     }
 }
 

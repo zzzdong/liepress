@@ -349,14 +349,16 @@ mod tests {
 
         let code = code.unwrap();
         let class = code.attrs.get("class").map(|s| s.as_str()).unwrap_or("");
-        assert!(
-            class.contains("language-rust"),
-            "Code should have language-rust class, got: {}",
+        assert_eq!(
+            class, "language-rust",
+            "Code should have exact language-rust class, got: {}",
             class
         );
-        assert!(
-            code.text_content().contains("fn main()"),
-            "Code content should contain fn main()"
+        // 代码块内容应原样保留，包括换行
+        assert_eq!(
+            code.text_content(),
+            "fn main() {}\n",
+            "Code content should be preserved exactly with newlines"
         );
     }
 

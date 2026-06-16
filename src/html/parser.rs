@@ -86,15 +86,24 @@ impl DomSink {
     }
 
     fn collect_children(&self, handle: &Handle) -> Vec<HtmlNode> {
+        self.collect_children_with_opts(handle, false)
+    }
+
+    /// 收集子节点，`in_pre` 为 true 时不 trim 文本节点（保留 <pre> 内的原始空白）
+    fn collect_children_with_opts(&self, handle: &Handle, in_pre: bool) -> Vec<HtmlNode> {
         let mut result = Vec::new();
         let mut pending_text = String::new();
 
         for child in handle.children.borrow().iter() {
             if let Some(ref name) = child.element_name {
                 // Element node - flush pending text first
-                let text = pending_text.trim().to_string();
+                let text = if in_pre {
+                    pending_text.clone()
+                } else {
+                    pending_text.trim().to_string()
+                };
                 if !text.is_empty() {
-                    result.push(HtmlNode::Text(collapse_whitespace(&text)));
+                    result.push(HtmlNode::Text(text));
                 }
                 pending_text.clear();
 
@@ -108,7 +117,8 @@ impl DomSink {
                     map
                 };
 
-                let children = self.collect_children(child);
+                let child_in_pre = tag_name == "pre" || (in_pre && tag_name != "pre");
+                let children = self.collect_children_with_opts(child, child_in_pre);
 
                 let children = if tag_name == "head" {
                     children
@@ -131,8 +141,8 @@ impl DomSink {
                     children,
                 }));
             } else if child.is_document {
-                // Document node - recurse into children
-                let doc_children = self.collect_children(child);
+                // Document node - recurse into children, preserving in_pre context
+                let doc_children = self.collect_children_with_opts(child, in_pre);
                 result.extend(doc_children);
             } else {
                 // Text or comment node
@@ -143,9 +153,13 @@ impl DomSink {
         }
 
         // Flush remaining text
-        let text = pending_text.trim().to_string();
+        let text = if in_pre {
+            pending_text.clone()
+        } else {
+            pending_text.trim().to_string()
+        };
         if !text.is_empty() {
-            result.push(HtmlNode::Text(collapse_whitespace(&text)));
+            result.push(HtmlNode::Text(text));
         }
 
         result
@@ -430,24 +444,6 @@ fn collect_styles(element: &HtmlElement, sheets: &mut Vec<String>) {
             collect_styles(elem, sheets);
         }
     }
-}
-
-/// Collapse whitespace: replace sequences of whitespace with a single space
-fn collapse_whitespace(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_space = false;
-    for ch in s.chars() {
-        if ch.is_ascii_whitespace() {
-            if !in_space {
-                result.push(' ');
-                in_space = true;
-            }
-        } else {
-            result.push(ch);
-            in_space = false;
-        }
-    }
-    result
 }
 
 #[cfg(test)]

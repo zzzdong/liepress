@@ -78,7 +78,8 @@ fn test_parse_code_block() {
             match &children[0].kind {
                 NodeKind::CodeBlock { lang, code } => {
                     assert_eq!(lang.as_deref(), Some("rust"));
-                    assert_eq!(code, "fn main() {}");
+                    // 围栏代码块内容包含末尾换行符（CommonMark 规范）
+                    assert_eq!(code, "fn main() {}\n");
                 }
                 _ => panic!("Expected CodeBlock"),
             }
@@ -96,10 +97,36 @@ fn test_parse_codeblock_without_lang() {
         NodeKind::Document { children } => match &children[0].kind {
             NodeKind::CodeBlock { lang, code } => {
                 assert!(lang.is_none());
-                assert_eq!(code, "some code");
+                // 围栏代码块内容包含末尾换行符（CommonMark 规范）
+                assert_eq!(code, "some code\n");
             }
             _ => panic!("Expected CodeBlock"),
         },
+        _ => panic!("Expected Document root"),
+    }
+}
+
+#[test]
+fn test_parse_code_block_preserves_newlines() {
+    // 多行代码块：换行和缩进必须原样保留
+    let md = "```rust\nfn main() {\n    println!(\"Hello\");\n}\n```";
+    let node = parse_markdown(md).unwrap();
+
+    match &node.kind {
+        NodeKind::Document { children } => {
+            assert_eq!(children.len(), 1);
+                match &children[0].kind {
+                    NodeKind::CodeBlock { lang, code } => {
+                        assert_eq!(lang.as_deref(), Some("rust"));
+                        // 必须精确保留换行和缩进
+                        assert_eq!(
+                            code,
+                            "fn main() {\n    println!(\"Hello\");\n}\n"
+                        );
+                    }
+                    _ => panic!("Expected CodeBlock"),
+                }
+        }
         _ => panic!("Expected Document root"),
     }
 }

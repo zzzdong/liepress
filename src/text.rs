@@ -179,7 +179,31 @@ pub enum FontSource {
     Memory(Vec<u8>),
 }
 
+/// 解析通用字体名称到 GenericFamily
+fn parse_generic_family_name(name: &str) -> Option<GenericFamily> {
+    match name.to_lowercase().as_str() {
+        "serif" => Some(GenericFamily::Serif),
+        "sans-serif" | "sansserif" => Some(GenericFamily::SansSerif),
+        "monospace" => Some(GenericFamily::Monospace),
+        "cursive" => Some(GenericFamily::Cursive),
+        "fantasy" => Some(GenericFamily::Fantasy),
+        "system-ui" | "systemui" => Some(GenericFamily::SystemUi),
+        "ui-serif" | "uiserif" => Some(GenericFamily::UiSerif),
+        "ui-sans-serif" | "uisansserif" => Some(GenericFamily::UiSansSerif),
+        "ui-monospace" | "uimonospace" => Some(GenericFamily::UiMonospace),
+        "ui-rounded" | "uirounded" => Some(GenericFamily::UiRounded),
+        "emoji" => Some(GenericFamily::Emoji),
+        "math" => Some(GenericFamily::Math),
+        "fangsong" => Some(GenericFamily::FangSong),
+        _ => None,
+    }
+}
+
 /// 注册自定义字体到全局字体上下文。
+///
+/// 如果 `family_name_override` 是通用字体名称（如 `monospace`、`serif`、`sans-serif`），
+/// 则字体会被注册到对应的通用字体族，这样当 CSS 使用 `font-family: monospace` 时，
+/// 会使用注册的字体而不是系统默认字体。
 pub fn register_font(
     source: FontSource,
     family_name_override: Option<&str>,
@@ -199,15 +223,30 @@ pub fn register_font(
         }
     };
 
-    let override_info = family_name_override.map(|name| parley::fontique::FontInfoOverride {
-        family_name: Some(name),
-        ..Default::default()
-    });
+    // 检查是否是通用字体族名称
+    let generic_family = family_name_override.and_then(|name| parse_generic_family_name(name));
+
+    // 如果是通用字体族，不覆盖家族名称，让字体使用原始名称
+    let override_info = if generic_family.is_some() {
+        None
+    } else {
+        family_name_override.map(|name| parley::fontique::FontInfoOverride {
+            family_name: Some(name),
+            ..Default::default()
+        })
+    };
 
     crate::text::with_font_context(|font_cx| {
-        font_cx.collection.register_fonts(data, override_info);
+        let registered = font_cx.collection.register_fonts(data, override_info);
+
+        // 如果是通用字体族，将注册的字体族关联到对应的 GenericFamily
+        if let Some(generic) = generic_family {
+            let family_ids: Vec<_> = registered.into_iter().map(|(id, _)| id).collect();
+            font_cx.collection.append_generic_families(generic, family_ids.into_iter());
+        }
     });
 
+    // 缓存字体数据（用于后续嵌入 PDF）
     if let Some(family) = family_name_override {
         FONT_BYTES.with(|cache| {
             cache.borrow_mut().insert(family.to_string(), arc_bytes);

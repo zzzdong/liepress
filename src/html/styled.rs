@@ -341,10 +341,11 @@ fn convert_children(
     for child in children {
         match child {
             HtmlNode::Text(text) => {
-                if !text.trim().is_empty() {
+                let text = collapse_whitespace(text);
+                if !text.is_empty() {
                     let style = resolver.resolve_text(parent_style);
                     result.push(Node::new(
-                        NodeKind::Text { text: text.clone() },
+                        NodeKind::Text { text },
                         style,
                         true,
                     ));
@@ -378,10 +379,11 @@ fn convert_inline_children(
     for child in children {
         match child {
             HtmlNode::Text(text) => {
-                if !text.trim().is_empty() {
+                let text = collapse_whitespace(text);
+                if !text.is_empty() {
                     let style = resolver.resolve_text(parent_style);
                     result.push(Node::new(
-                        NodeKind::Text { text: text.clone() },
+                        NodeKind::Text { text },
                         style,
                         true,
                     ));
@@ -710,6 +712,26 @@ mod tests {
         let node = html_to_styled("<pre><code>let x = 1;</code></pre>");
         let code = find_node(&node, |k| matches!(k, NodeKind::CodeBlock { .. })).unwrap();
         assert!(matches!(&code.kind, NodeKind::CodeBlock { code, .. } if code == "let x = 1;"));
+    }
+
+    #[test]
+    fn test_code_block_preserves_exact_content() {
+        // 多行代码块，换行和缩进必须原样保留
+        // 直接构造 HTML，验证 styled 转换后 CodeBlock 内容精确匹配
+        let html = concat!(
+            "<pre><code class=\"language-rust\">fn main() {\n",
+            "    println!(\"Hello, World!\");\n",
+            "}\n",
+            "</code></pre>"
+        );
+        let styled = html_to_styled(html);
+        let code_node = find_node(&styled, |k| matches!(k, NodeKind::CodeBlock { .. })).unwrap();
+        let expected = concat!(
+            "fn main() {\n",
+            "    println!(\"Hello, World!\");\n",
+            "}\n"
+        );
+        assert!(matches!(&code_node.kind, NodeKind::CodeBlock { code, .. } if code == expected));
     }
 
     #[test]

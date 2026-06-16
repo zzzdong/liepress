@@ -1,7 +1,7 @@
 /* liepress 内置默认样式表 */
 
 body {
-    font-family: serif;
+    font-family: serif, sans-serif;
     font-size: 10.5pt;
     line-height: 1.5;
     color: #000;
@@ -25,7 +25,7 @@ p {
 
 /* 代码块 */
 pre {
-    font-family: monospace;
+    font-family: monospace, sans-serif;
     font-size: 9pt;
     line-height: 1.5;
     color: #333;
@@ -37,7 +37,7 @@ pre {
 
 /* 行内代码 */
 code {
-    font-family: monospace;
+    font-family: monospace, sans-serif;
     font-size: 10.5pt;
     color: #333;
     display: inline;
