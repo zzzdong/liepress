@@ -224,7 +224,7 @@ pub fn register_font(
     };
 
     // 检查是否是通用字体族名称
-    let generic_family = family_name_override.and_then(|name| parse_generic_family_name(name));
+    let generic_family = family_name_override.and_then(parse_generic_family_name);
 
     // 如果是通用字体族，不覆盖家族名称，让字体使用原始名称
     let override_info = if generic_family.is_some() {
@@ -242,7 +242,9 @@ pub fn register_font(
         // 如果是通用字体族，将注册的字体族关联到对应的 GenericFamily
         if let Some(generic) = generic_family {
             let family_ids: Vec<_> = registered.into_iter().map(|(id, _)| id).collect();
-            font_cx.collection.append_generic_families(generic, family_ids.into_iter());
+            font_cx
+                .collection
+                .append_generic_families(generic, family_ids.into_iter());
         }
     });
 
@@ -271,6 +273,7 @@ struct GlyphRaw {
 /// 每个 TextLine.bounds.origin 表示该行在 layout 中的位置：
 /// - x = 该行最左字形相对于 layout 左侧的偏移
 /// - y = 该行顶部相对于 layout 顶部的累积偏移
+///
 /// runs[].glyphs[].x/y = glyph 坐标 - 行原点，即相对行左上角的偏移
 fn extract_lines_from_parley(
     layout: &parley::Layout<Color>,

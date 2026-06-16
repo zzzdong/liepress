@@ -601,6 +601,83 @@ pub fn markdown_file_to_png(
     render_png(&document)
 }
 
+// ─── HTML → PDF/SVG/PNG ─────────────────────────────────────
+
+/// HTML → PDF 转换
+///
+/// 直接将 HTML 内容转换为 PDF，不经过 Markdown 解析。
+/// 适用于已有 HTML 文件的场景。
+pub fn html_to_pdf(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+    let user_css = resolve_user_css(options, None)?;
+    let document = html_to_document(html, &user_css, options.strict, options.page_config.clone())?;
+    render_pdf(&document)
+}
+
+/// HTML 文件 → PDF（自动将本地图片嵌入为 base64）
+pub fn html_file_to_pdf(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
+    let base_dir = path.parent();
+    let html = html::embed_local_images(&html, base_dir);
+    let user_css = resolve_user_css(options, None)?;
+    let document = html_to_document(
+        &html,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    render_pdf(&document)
+}
+
+/// HTML → SVG 转换
+pub fn html_to_svg(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<String>> {
+    let user_css = resolve_user_css(options, None)?;
+    let document = html_to_document(html, &user_css, options.strict, options.page_config.clone())?;
+    Ok(render_svg(&document))
+}
+
+/// HTML 文件 → SVG（自动将本地图片嵌入为 base64）
+pub fn html_file_to_svg(
+    path: &Path,
+    options: &ConvertOptions,
+) -> crate::error::Result<Vec<String>> {
+    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
+    let base_dir = path.parent();
+    let html = html::embed_local_images(&html, base_dir);
+    let user_css = resolve_user_css(options, None)?;
+    let document = html_to_document(
+        &html,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    Ok(render_svg(&document))
+}
+
+/// HTML → PNG 转换
+pub fn html_to_png(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<Vec<u8>>> {
+    let user_css = resolve_user_css(options, None)?;
+    let document = html_to_document(html, &user_css, options.strict, options.page_config.clone())?;
+    render_png(&document)
+}
+
+/// HTML 文件 → PNG（自动将本地图片嵌入为 base64）
+pub fn html_file_to_png(
+    path: &Path,
+    options: &ConvertOptions,
+) -> crate::error::Result<Vec<Vec<u8>>> {
+    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
+    let base_dir = path.parent();
+    let html = html::embed_local_images(&html, base_dir);
+    let user_css = resolve_user_css(options, None)?;
+    let document = html_to_document(
+        &html,
+        &user_css,
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    render_png(&document)
+}
+
 // ─── 内部：HTML → Document 公共逻辑 ────────────────────────
 
 /// HTML → Document 的核心转换逻辑

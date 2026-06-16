@@ -344,11 +344,7 @@ fn convert_children(
                 let text = collapse_whitespace(text);
                 if !text.is_empty() {
                     let style = resolver.resolve_text(parent_style);
-                    result.push(Node::new(
-                        NodeKind::Text { text },
-                        style,
-                        true,
-                    ));
+                    result.push(Node::new(NodeKind::Text { text }, style, true));
                 }
             }
             HtmlNode::Element(elem) => {
@@ -382,11 +378,7 @@ fn convert_inline_children(
                 let text = collapse_whitespace(text);
                 if !text.is_empty() {
                     let style = resolver.resolve_text(parent_style);
-                    result.push(Node::new(
-                        NodeKind::Text { text },
-                        style,
-                        true,
-                    ));
+                    result.push(Node::new(NodeKind::Text { text }, style, true));
                 }
             }
             HtmlNode::Element(elem) => {
@@ -726,11 +718,7 @@ mod tests {
         );
         let styled = html_to_styled(html);
         let code_node = find_node(&styled, |k| matches!(k, NodeKind::CodeBlock { .. })).unwrap();
-        let expected = concat!(
-            "fn main() {\n",
-            "    println!(\"Hello, World!\");\n",
-            "}\n"
-        );
+        let expected = concat!("fn main() {\n", "    println!(\"Hello, World!\");\n", "}\n");
         assert!(matches!(&code_node.kind, NodeKind::CodeBlock { code, .. } if code == expected));
     }
 

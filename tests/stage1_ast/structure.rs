@@ -115,17 +115,14 @@ fn test_parse_code_block_preserves_newlines() {
     match &node.kind {
         NodeKind::Document { children } => {
             assert_eq!(children.len(), 1);
-                match &children[0].kind {
-                    NodeKind::CodeBlock { lang, code } => {
-                        assert_eq!(lang.as_deref(), Some("rust"));
-                        // 必须精确保留换行和缩进
-                        assert_eq!(
-                            code,
-                            "fn main() {\n    println!(\"Hello\");\n}\n"
-                        );
-                    }
-                    _ => panic!("Expected CodeBlock"),
+            match &children[0].kind {
+                NodeKind::CodeBlock { lang, code } => {
+                    assert_eq!(lang.as_deref(), Some("rust"));
+                    // 必须精确保留换行和缩进
+                    assert_eq!(code, "fn main() {\n    println!(\"Hello\");\n}\n");
                 }
+                _ => panic!("Expected CodeBlock"),
+            }
         }
         _ => panic!("Expected Document root"),
     }

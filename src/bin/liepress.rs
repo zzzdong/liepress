@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, ValueEnum};
 use liepress::{
-    ConvertOptions, PageConfig, markdown_file_to_pdf, markdown_file_to_png, markdown_file_to_svg,
+    ConvertOptions, PageConfig, html_file_to_pdf, html_file_to_png, html_file_to_svg,
+    markdown_file_to_pdf, markdown_file_to_png, markdown_file_to_svg,
 };
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -10,6 +11,12 @@ enum Format {
     Pdf,
     Svg,
     Png,
+    Html,
+}
+
+#[derive(Clone, Debug)]
+enum InputFormat {
+    Markdown,
     Html,
 }
 
@@ -29,12 +36,26 @@ fn infer_format_from_ext(path: &Path) -> Option<Format> {
     }
 }
 
-/// Markdown to PDF/SVG/HTML converter
+/// 从输入文件扩展名推断格式
+fn infer_input_format_from_ext(path: &Path) -> Option<InputFormat> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
+        Some("md") | Some("markdown") => Some(InputFormat::Markdown),
+        Some("html") | Some("htm") => Some(InputFormat::Html),
+        _ => None,
+    }
+}
+
+/// Markdown/HTML to PDF/SVG/PNG/HTML converter
 #[derive(Parser, Debug)]
 #[command(name = "liepress")]
-#[command(about = "Convert Markdown to PDF, SVG, PNG or HTML")]
+#[command(about = "Convert Markdown or HTML to PDF, SVG, PNG or HTML")]
 struct Args {
-    /// Input Markdown file path
+    /// Input file path (Markdown: .md, .markdown; HTML: .html, .htm)
     #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
@@ -270,6 +291,14 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+    // 推断输入格式
+    let input_format = infer_input_format_from_ext(&args.input)
+        .ok_or_else(|| format!(
+            "Cannot determine input format from extension '{}'. Supported: .md, .markdown, .html, .htm",
+            args.input.extension().and_then(|e| e.to_str()).unwrap_or("(none)")
+        ))?;
+
+    // 推断输出格式
     let format = args.format.clone().or_else(|| infer_format_from_ext(&args.output))
         .ok_or_else(|| format!(
             "Cannot determine output format from extension '{}'. Use -f/--format or a supported extension (.pdf, .svg, .png, .html).",
@@ -289,13 +318,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         opts.page_config = Some(page_config);
     }
 
-    match format {
-        Format::Pdf => {
+    match (input_format, format) {
+        // Markdown → PDF/SVG/PNG
+        (InputFormat::Markdown, Format::Pdf) => {
             let pdf_bytes = markdown_file_to_pdf(&args.input, &opts)?;
             std::fs::write(&args.output, pdf_bytes)?;
             println!("PDF saved to: {}", args.output.display());
         }
-        Format::Svg => {
+        (InputFormat::Markdown, Format::Svg) => {
             let svgs = markdown_file_to_svg(&args.input, &opts)?;
             if svgs.is_empty() {
                 eprintln!("Warning: no SVG pages generated");
@@ -322,7 +352,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Format::Png => {
+        (InputFormat::Markdown, Format::Png) => {
             let pngs = markdown_file_to_png(&args.input, &opts)?;
             if pngs.len() == 1 {
                 std::fs::write(&args.output, &pngs[0])?;
@@ -347,7 +377,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Format::Html => {
+        // Markdown → HTML
+        (InputFormat::Markdown, Format::Html) => {
             let md_content = std::fs::read_to_string(&args.input)?;
 
             // 读取用户 CSS 文件
@@ -371,6 +402,71 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 fallback_title.as_deref(),
             );
             std::fs::write(&args.output, html)?;
+            println!("HTML saved to: {}", args.output.display());
+        }
+
+        // HTML → PDF/SVG/PNG
+        (InputFormat::Html, Format::Pdf) => {
+            let pdf_bytes = html_file_to_pdf(&args.input, &opts)?;
+            std::fs::write(&args.output, pdf_bytes)?;
+            println!("PDF saved to: {}", args.output.display());
+        }
+        (InputFormat::Html, Format::Svg) => {
+            let svgs = html_file_to_svg(&args.input, &opts)?;
+            if svgs.is_empty() {
+                eprintln!("Warning: no SVG pages generated");
+            } else if svgs.len() == 1 {
+                std::fs::write(&args.output, &svgs[0])?;
+                println!("SVG saved to: {}", args.output.display());
+            } else {
+                let stem = args
+                    .output
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let ext = args
+                    .output
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let parent = args.output.parent().unwrap_or(std::path::Path::new("."));
+                for (i, svg) in svgs.iter().enumerate() {
+                    let filename = format!("{}_{}.{}", stem, i + 1, ext);
+                    let path = parent.join(&filename);
+                    std::fs::write(&path, svg)?;
+                    println!("SVG saved to: {}", path.display());
+                }
+            }
+        }
+        (InputFormat::Html, Format::Png) => {
+            let pngs = html_file_to_png(&args.input, &opts)?;
+            if pngs.len() == 1 {
+                std::fs::write(&args.output, &pngs[0])?;
+                println!("PNG saved to: {}", args.output.display());
+            } else {
+                let stem = args
+                    .output
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let ext = args
+                    .output
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let parent = args.output.parent().unwrap_or(std::path::Path::new("."));
+                for (i, png) in pngs.iter().enumerate() {
+                    let filename = format!("{}_{}.{}", stem, i + 1, ext);
+                    let path = parent.join(&filename);
+                    std::fs::write(&path, png)?;
+                    println!("PNG saved to: {}", path.display());
+                }
+            }
+        }
+        // HTML → HTML（直接复制）
+        (InputFormat::Html, Format::Html) => {
+            let html_content = std::fs::read_to_string(&args.input)?;
+            std::fs::write(&args.output, html_content)?;
             println!("HTML saved to: {}", args.output.display());
         }
     }
