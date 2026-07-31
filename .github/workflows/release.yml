@@ -60,7 +60,7 @@ jobs:
           retention-days: 30
 
   build-aarch64:
-    runs-on: ubuntu-24.04-arm64   # ← 官方 ARM64 托管机，原生！
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
