@@ -1,0 +1,137 @@
+name: release-centos7
+
+on:
+  # 手动触发（workflow_dispatch 必带，参数可选）
+  workflow_dispatch:
+    inputs:
+      upload_artifacts:
+        description: "是否上传构建产物到 Actions Artifacts"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      dry_run:
+        description: "仅编译不跑符号检查（调试用）"
+        required: false
+        default: "false"
+        type: choice
+        options: ["true", "false"]
+
+  # 打 tag 自动触发
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: liepress
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x86_64 → CentOS 7（glibc 2.17）
+          - arch: x86_64
+            rust_target: x86_64-unknown-linux-gnu.2.17
+            base: x86_64-unknown-linux-gnu
+            pkg_arch: ""
+            apt_suffix: ""
+          # aarch64 → 麒麟 V10 SP1（glibc 2.28）
+          - arch: aarch64
+            rust_target: aarch64-unknown-linux-gnu.2.28
+            base: aarch64-unknown-linux-gnu
+            pkg_arch: ":arm64"
+            apt_suffix: ":arm64"
+
+    steps:
+      # 1. 拉代码
+      - uses: actions/checkout@v4
+
+      # 2. 装 Rust（带两个 target）
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: |
+            x86_64-unknown-linux-gnu
+            aarch64-unknown-linux-gnu
+
+      # 3. 缓存 cargo 依赖（按 target 分 key）
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.rust_target }}
+
+      # 4. 装系统依赖
+      #    x86_64：本机 amd64 的 -dev 包（给 build.rs 的 pkg-config 用）
+      #    aarch64：先加 arm64 架构，再装 :arm64 的 -dev 包
+      - name: Install system deps (x86_64)
+        if: matrix.arch == 'x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfontconfig1-dev libfreetype6-dev libexpat1-dev \
+            pkg-config
+
+      - name: Install system deps (aarch64)
+        if: matrix.arch == 'aarch64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfontconfig1-dev${{ matrix.apt_suffix }} \
+            libfreetype6-dev${{ matrix.apt_suffix }} \
+            libexpat1-dev${{ matrix.apt_suffix }} \
+            pkg-config
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> "$GITHUB_ENV"
+
+      # 5. 装 Zig（mlugg/setup-zig，给 cargo-zigbuild 用）
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.13.0"
+
+      # 6. 装 cargo-zigbuild
+      - name: Install cargo-zigbuild
+        run: pip3 install cargo-zigbuild
+
+      # 7. 编译（zigbuild 锁 glibc 版本）
+      - name: Build with zigbuild
+        run: |
+          cargo zigbuild --release --target ${{ matrix.rust_target }}
+          cp target/${{ matrix.base }}/release/${{ env.BINARY_NAME }} \
+             ${{ env.BINARY_NAME }}-${{ matrix.arch }}-${{ matrix.rust_target == 'x86_64-unknown-linux-gnu.2.17' && 'centos7' || 'kylin-sp1' }}
+
+      # 8. 冒烟检查：glibc 符号上限 + file 类型
+      - name: Sanity check binary
+        run: |
+          BIN=${{ env.BINARY_NAME }}-${{ matrix.arch }}-${{ matrix.rust_target == 'x86_64-unknown-linux-gnu.2.17' && 'centos7' || 'kylin-sp1' }}
+          echo "=== file ==="
+          file "$BIN"
+          echo "=== max GLIBC version referenced ==="
+          readelf -W --version-info "$BIN" \
+            | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1
+          echo "=== fontconfig symbols (should be @FONTCONFIG_2.10 only) ==="
+          nm -D --undefined-only "$BIN" 2>/dev/null | grep -i '^.* U Fc' || echo "no Fc symbols (static or unused)"
+
+      # 9. 防爆检查：不允许引用 FONTCONFIG_2.11+
+      - name: Reject fontconfig symbols newer than 2.10
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          BIN=${{ env.BINARY_NAME }}-${{ matrix.arch }}-${{ matrix.rust_target == 'x86_64-unknown-linux-gnu.2.17' && 'centos7' || 'kylin-sp1' }}
+          echo "Scanning for forbidden fontconfig 2.11+ symbols..."
+          if nm -D --undefined-only "$BIN" 2>/dev/null \
+              | grep -E ' U Fc[A-Z][a-zA-Z0-9_]*@FONTCCONFIG_2\.(1[1-9]|[2-9][0-9])'; then
+            echo "❌ ERROR: binary references fontconfig symbols newer than 2.10"
+            echo "   This will break at runtime on CentOS 7 / old Kylin."
+            exit 1
+          fi
+          echo "✅ fontconfig symbol check passed"
+
+      # 10. 上传产物
+      - name: Upload artifact
+        if: ${{ github.event.inputs.upload_artifacts != 'false' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.arch }}
+          path: ${{ env.BINARY_NAME }}-${{ matrix.arch }}-*
+          retention-days: 30
