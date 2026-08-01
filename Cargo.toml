@@ -1,6 +1,6 @@
 [package]
 name = "liepress"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Markdown to PDF/SVG/PNG converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ name = "liepress"
 path = "src/bin/liepress.rs"
 
 [dependencies]
-base64 = { version = "0.22", default-features = false, features = ["std"] }
+base64 = { version = "0.23", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 html5ever = "0.39.0"
 pulldown-cmark = "0.13.4"
@@ -23,15 +23,15 @@ lightningcss = "1.0.0-alpha.71"
 image = { version = "0.25" }
 kamadak-exif = "0.6"
 krilla = "0.8"
-parley = "0.10.0"
+parley = "0.11.0"
 thiserror = "2.0"
-vello_cpu = "0.0.9"
+vello_cpu = "0.1.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
-lopdf = "0.40"
+lopdf = "0.44"
 
 [profile.release]
 lto = "fat"

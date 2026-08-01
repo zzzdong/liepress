@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use vello_cpu::kurbo::{BezPath, PathSeg, Point, Rect};
 
 pub struct SvgDocumentGenerator {
+    #[allow(dead_code)]
     name: String,
 }
 

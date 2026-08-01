@@ -1,4 +1,4 @@
-name: release-centos7
+name: release
 
 on:
   workflow_dispatch:
@@ -17,7 +17,8 @@ env:
   BINARY_NAME: liepress
 
 jobs:
-  build-x86_64:
+  build-x86_64-linux:
+    name: Build x86_64 Linux (gnu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,11 +56,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ github.event.inputs.upload_artifacts != 'false' }}
         with:
-          name: ${{ env.BINARY_NAME }}-x86_64-centos7
+          name: ${{ env.BINARY_NAME }}-x86_64-linux-gnu
           path: target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
           retention-days: 30
 
-  build-aarch64:
+  build-aarch64-linux:
+    name: Build aarch64 Linux (gnu)
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +99,47 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ github.event.inputs.upload_artifacts != 'false' }}
         with:
-          name: ${{ env.BINARY_NAME }}-aarch64-kylin-sp1
+          name: ${{ env.BINARY_NAME }}-aarch64-linux-gnu
           path: target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
+          retention-days: 30
+
+  build-x86_64-windows:
+    name: Build x86_64 Windows (MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-windows-msvc
+
+      - name: Install NASM (for some native deps)
+        run: |
+          choco install nasm -y
+          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Sanity check
+        run: |
+          $BIN = "target\x86_64-pc-windows-msvc\release\${{ env.BINARY_NAME }}.exe"
+          if (Test-Path $BIN) {
+            Write-Host "Binary exists: $BIN"
+            $size = (Get-Item $BIN).Length
+            Write-Host "Binary size: $([math]::Round($size / 1MB, 2)) MB"
+          } else {
+            Write-Error "Binary not found: $BIN"
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ github.event.inputs.upload_artifacts != 'false' }}
+        with:
+          name: ${{ env.BINARY_NAME }}-x86_64-windows-msvc
+          path: target\x86_64-pc-windows-msvc\release\${{ env.BINARY_NAME }}.exe
           retention-days: 30

@@ -132,8 +132,8 @@ pub fn extract_links(doc: &Document) -> Vec<(String, Vec<f32>)> {
                 if subtype != b"Link" {
                     continue;
                 }
-                let url = url_from_annot_dict(doc, &annot_dict);
-                let rect = rect_from_annot_dict(&annot_dict);
+                let url = url_from_annot_dict(doc, annot_dict);
+                let rect = rect_from_annot_dict(annot_dict);
                 links.push((url, rect));
             }
         }
@@ -207,12 +207,12 @@ pub fn validate_pdf_structure(data: &[u8]) -> PdfReport {
 
         if let Ok(annots) = doc.get_page_annotations(*page_id) {
             for annot in annots {
-                if let Ok(subtype) = annot.get(b"Subtype").and_then(|o| o.as_name()) {
-                    if subtype == b"Link" {
-                        let url = url_from_annot_dict(&doc, &annot);
-                        let rect = rect_from_annot_dict(&annot);
-                        page_info.annotations.push(LinkInfo { url, rect });
-                    }
+                if let Ok(subtype) = annot.get(b"Subtype").and_then(|o| o.as_name())
+                    && subtype == b"Link"
+                {
+                    let url = url_from_annot_dict(&doc, annot);
+                    let rect = rect_from_annot_dict(annot);
+                    page_info.annotations.push(LinkInfo { url, rect });
                 }
             }
         }
@@ -246,7 +246,7 @@ pub fn group_links_by_url(report: &PdfReport) -> std::collections::HashMap<Strin
 pub fn extract_pdf_text(doc: &Document) -> Vec<String> {
     let mut page_texts = Vec::new();
     let pages = doc.get_pages();
-    for (_page_num, page_id) in pages.iter() {
+    for page_id in pages.values() {
         let mut text = String::new();
         if let Ok(content) = doc.get_and_decode_page_content(*page_id) {
             // 遍历 Content Stream 的操作符
@@ -292,40 +292,33 @@ pub fn assert_pdf_contains_text(doc: &Document, expected: &str) {
 /// 提取 PDF 元数据（Title, Author, Subject 等）
 pub fn get_pdf_metadata(doc: &Document) -> std::collections::HashMap<String, String> {
     let mut meta = std::collections::HashMap::new();
-    if let Ok(catalog) = doc.catalog() {
-        if let Ok(info_ref) = catalog.get(b"Info") {
-            if let Ok(info_id) = info_ref.as_reference() {
-                if let Ok(info_dict) = doc.get_object(info_id).and_then(|o| o.as_dict()) {
-                    for key in &["Title", "Author", "Subject", "Creator", "Producer"] {
-                        if let Ok(val) = info_dict.get(key.as_bytes()) {
-                            if let Ok(s) = val.as_str() {
-                                meta.insert(
-                                    key.to_string(),
-                                    String::from_utf8_lossy(s).to_string(),
-                                );
-                            }
-                        }
-                    }
-                }
+    if let Ok(catalog) = doc.catalog()
+        && let Ok(info_ref) = catalog.get(b"Info")
+        && let Ok(info_id) = info_ref.as_reference()
+        && let Ok(info_dict) = doc.get_object(info_id).and_then(|o| o.as_dict())
+    {
+        for key in &["Title", "Author", "Subject", "Creator", "Producer"] {
+            if let Ok(val) = info_dict.get(key.as_bytes())
+                && let Ok(s) = val.as_str()
+            {
+                meta.insert(key.to_string(), String::from_utf8_lossy(s).to_string());
             }
         }
     }
     // 回退：从 trailer Info 字典中读取
-    if meta.is_empty() {
-        if let Some(info_id) = doc
+    if meta.is_empty()
+        && let Some(info_id) = doc
             .trailer
             .get(b"Info")
             .ok()
             .and_then(|o| o.as_reference().ok())
-        {
-            if let Ok(info_dict) = doc.get_object(info_id).and_then(|o| o.as_dict()) {
-                for key in &["Title", "Author", "Subject", "Creator", "Producer"] {
-                    if let Ok(val) = info_dict.get(key.as_bytes()) {
-                        if let Ok(s) = val.as_str() {
-                            meta.insert(key.to_string(), String::from_utf8_lossy(s).to_string());
-                        }
-                    }
-                }
+        && let Ok(info_dict) = doc.get_object(info_id).and_then(|o| o.as_dict())
+    {
+        for key in &["Title", "Author", "Subject", "Creator", "Producer"] {
+            if let Ok(val) = info_dict.get(key.as_bytes())
+                && let Ok(s) = val.as_str()
+            {
+                meta.insert(key.to_string(), String::from_utf8_lossy(s).to_string());
             }
         }
     }
@@ -336,7 +329,7 @@ pub fn get_pdf_metadata(doc: &Document) -> std::collections::HashMap<String, Str
 pub fn count_font_resources(doc: &Document) -> usize {
     let mut font_count = 0;
     let pages = doc.get_pages();
-    for (_page_num, page_id) in pages.iter() {
+    for page_id in pages.values() {
         if let Ok(fonts) = doc.get_page_fonts(*page_id) {
             font_count += fonts.len();
         }
@@ -348,17 +341,16 @@ pub fn count_font_resources(doc: &Document) -> usize {
 pub fn get_page_media_boxes(doc: &Document) -> Vec<(f64, f64)> {
     let mut boxes = Vec::new();
     let pages = doc.get_pages();
-    for (_page_num, page_id) in pages.iter() {
-        if let Ok(page_dict) = doc.get_dictionary(*page_id) {
-            if let Ok(media_box) = page_dict.get(b"MediaBox").and_then(|o| o.as_array()) {
-                if media_box.len() == 4 {
-                    let x0 = media_box[0].as_float().unwrap_or(0.0) as f64;
-                    let y0 = media_box[1].as_float().unwrap_or(0.0) as f64;
-                    let x1 = media_box[2].as_float().unwrap_or(0.0) as f64;
-                    let y1 = media_box[3].as_float().unwrap_or(0.0) as f64;
-                    boxes.push((x1 - x0, y1 - y0));
-                }
-            }
+    for page_id in pages.values() {
+        if let Ok(page_dict) = doc.get_dictionary(*page_id)
+            && let Ok(media_box) = page_dict.get(b"MediaBox").and_then(|o| o.as_array())
+            && media_box.len() == 4
+        {
+            let x0 = media_box[0].as_float().unwrap_or(0.0) as f64;
+            let y0 = media_box[1].as_float().unwrap_or(0.0) as f64;
+            let x1 = media_box[2].as_float().unwrap_or(0.0) as f64;
+            let y1 = media_box[3].as_float().unwrap_or(0.0) as f64;
+            boxes.push((x1 - x0, y1 - y0));
         }
     }
     boxes

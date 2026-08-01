@@ -420,15 +420,16 @@ fn compute_column_starts(col_widths: &[f32]) -> Vec<f32> {
 fn compute_row_starts_range(row_heights: &[f32], row_start: usize, row_end: usize) -> Vec<f32> {
     let mut starts = Vec::with_capacity(row_end - row_start);
     let mut y = 0.0_f32;
-    for i in row_start..row_end {
+    for &height in row_heights.iter().take(row_end).skip(row_start) {
         starts.push(y);
-        y += row_heights[i];
+        y += height;
     }
     starts
 }
 
 // ─── 生成单元格文本 ───
 
+#[allow(clippy::too_many_arguments)]
 fn layout_cell_texts(
     rows: &[Vec<&Node>],
     col_starts: &[f32],
@@ -512,6 +513,7 @@ fn layout_cell_texts(
 // ─── 绘制区间边框 ───
 
 /// 绘制 [row_start..row_end) 行区间内的边框
+#[allow(clippy::too_many_arguments)]
 fn draw_table_borders_range(
     col_starts: &[f32],
     col_widths: &[f32],

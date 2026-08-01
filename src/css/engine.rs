@@ -33,6 +33,7 @@ pub struct CssEngine {
 
 /// 解析后的 CSS 规则
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ResolvedRule {
     /// 选择器信息（用于匹配）
     selectors: Vec<SelectorInfo>,
@@ -237,7 +238,7 @@ fn extract_selector_info(
     selector_list
         .0
         .iter()
-        .filter_map(|selector| {
+        .map(|selector| {
             let mut target_tag = None;
             let mut target_classes = Vec::new();
             let mut target_id = None;
@@ -309,13 +310,13 @@ fn extract_selector_info(
                 });
             }
 
-            Some(SelectorInfo {
+            SelectorInfo {
                 target_tag,
                 target_classes,
                 target_id,
                 ancestors,
                 specificity,
-            })
+            }
         })
         .collect()
 }
@@ -811,44 +812,24 @@ fn parse_length(value: &str) -> Option<CssLength> {
         return Some(CssLength::Pt(0.0));
     }
 
-    if value.ends_with("pt") {
-        return value[..value.len() - 2]
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(CssLength::Pt);
+    if let Some(stripped) = value.strip_suffix("pt") {
+        return stripped.trim().parse::<f32>().ok().map(CssLength::Pt);
     }
 
-    if value.ends_with("px") {
-        return value[..value.len() - 2]
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(CssLength::Px);
+    if let Some(stripped) = value.strip_suffix("px") {
+        return stripped.trim().parse::<f32>().ok().map(CssLength::Px);
     }
 
-    if value.ends_with("em") {
-        return value[..value.len() - 2]
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(CssLength::Em);
+    if let Some(stripped) = value.strip_suffix("em") {
+        return stripped.trim().parse::<f32>().ok().map(CssLength::Em);
     }
 
-    if value.ends_with("rem") {
-        return value[..value.len() - 3]
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(CssLength::Rem);
+    if let Some(stripped) = value.strip_suffix("rem") {
+        return stripped.trim().parse::<f32>().ok().map(CssLength::Rem);
     }
 
-    if value.ends_with('%') {
-        return value[..value.len() - 1]
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(CssLength::Percent);
+    if let Some(stripped) = value.strip_suffix('%') {
+        return stripped.trim().parse::<f32>().ok().map(CssLength::Percent);
     }
 
     if let Ok(n) = value.parse::<f32>() {

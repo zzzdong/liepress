@@ -124,8 +124,16 @@ fn convert_element(elem: &HtmlElement, resolver: &mut StyleResolver, parent_styl
             convert_tag_block(elem, &style, resolver)
         };
 
+        // 链接节点的 style 需要携带 link_url（用于生成注解/超链接）
+        let mut final_style = style;
+        if let NodeKind::Link { url, .. } = &kind
+            && !url.is_empty()
+        {
+            final_style.link_url = Some(url.clone());
+        }
+
         let splittable = kind.is_splittable();
-        Node::new(kind, style, splittable)
+        Node::new(kind, final_style, splittable)
     })
 }
 

@@ -99,20 +99,20 @@ impl DebugRenderer {
     }
 
     pub fn begin_page(&mut self, w: f32, h: f32) {
-        if let Some(page) = self.current_page.take() {
-            if !page.elements.is_empty() {
-                self.pages.push(page);
-            }
+        if let Some(page) = self.current_page.take()
+            && !page.elements.is_empty()
+        {
+            self.pages.push(page);
         }
         self.width = w;
         self.height = h;
     }
 
     pub fn finalize(mut self) -> Vec<DebugPage> {
-        if let Some(page) = self.current_page.take() {
-            if !page.elements.is_empty() {
-                self.pages.push(page);
-            }
+        if let Some(page) = self.current_page.take()
+            && !page.elements.is_empty()
+        {
+            self.pages.push(page);
         }
         self.pages
     }

@@ -64,6 +64,7 @@ impl DomSink {
     }
 
     /// Convert the internal DOM tree to our HtmlDocument
+    #[allow(clippy::wrong_self_convention)]
     fn into_html_document(&self) -> HtmlDocument {
         let root = self.collect_children(&self.document);
         let html_elem = root
@@ -117,7 +118,7 @@ impl DomSink {
                     map
                 };
 
-                let child_in_pre = tag_name == "pre" || (in_pre && tag_name != "pre");
+                let child_in_pre = tag_name == "pre" || in_pre;
                 let children = self.collect_children_with_opts(child, child_in_pre);
 
                 let children = if tag_name == "head" {

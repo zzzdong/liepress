@@ -127,7 +127,7 @@ fn test_pdf_basic_structure() {
     let doc = assert_valid_pdf(&pdf_data);
 
     // 验证页数
-    assert!(doc.get_pages().len() >= 1, "Should have at least 1 page");
+    assert!(!doc.get_pages().is_empty(), "Should have at least 1 page");
 
     // 验证页面尺寸为 A4
     assert_a4_page_size(&doc, 1.0);

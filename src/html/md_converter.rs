@@ -247,22 +247,22 @@ mod tests {
     }
 
     /// 辅助：在 HtmlElement 树中查找第一个匹配标签的元素
-    fn find_element<'a>(elem: &'a HtmlElement, tag: HtmlTag) -> Option<&'a HtmlElement> {
+    fn find_element(elem: &HtmlElement, tag: HtmlTag) -> Option<&HtmlElement> {
         if elem.tag == tag {
             return Some(elem);
         }
         for child in &elem.children {
-            if let HtmlNode::Element(e) = child {
-                if let Some(found) = find_element(e, tag) {
-                    return Some(found);
-                }
+            if let HtmlNode::Element(e) = child
+                && let Some(found) = find_element(e, tag)
+            {
+                return Some(found);
             }
         }
         None
     }
 
     /// 辅助：收集所有匹配标签的元素
-    fn find_all_elements<'a>(elem: &'a HtmlElement, tag: HtmlTag) -> Vec<&'a HtmlElement> {
+    fn find_all_elements(elem: &HtmlElement, tag: HtmlTag) -> Vec<&HtmlElement> {
         let mut result = Vec::new();
         if elem.tag == tag {
             result.push(elem);

@@ -13,6 +13,7 @@ use vello_cpu::peniko::{Extend, ImageQuality, ImageSampler};
 use vello_cpu::{Image, ImageSource, Pixmap, Resources};
 
 pub struct PixmapDocumentGenerator {
+    #[allow(dead_code)]
     name: String,
 }
 
@@ -23,6 +24,7 @@ impl PixmapDocumentGenerator {
 }
 
 impl PixmapDocumentGenerator {
+    #[allow(dead_code)]
     fn render_page(&mut self, page: &Page) -> Result<()> {
         PixmapRenderer::new(page.width, page.height, DEFAULT_DPI);
 
@@ -47,10 +49,12 @@ pub struct PixmapRenderer {
     width: u32,
     height: u32,
     /// DPI (dots per inch)，默认 72
+    #[allow(dead_code)]
     dpi: f32,
     /// 缩放因子 = dpi / 72.0
     scale: f32,
     /// 当前页面的变换矩阵（用于整体缩放）
+    #[allow(dead_code)]
     transform: Affine,
 }
 
@@ -84,7 +88,7 @@ impl PixmapRenderer {
 
     pub fn render_to_png(&mut self) -> Result<Vec<u8>> {
         let mut pixmap = Pixmap::new(self.width as u16, self.height as u16);
-        self.ctx.render_to_pixmap(&mut self.resources, &mut pixmap);
+        self.ctx.render(&mut pixmap, &mut self.resources);
 
         let png = pixmap
             .into_png()
@@ -106,6 +110,7 @@ impl PixmapRenderer {
     }
 
     /// 将 pt 坐标转换为像素坐标
+    #[allow(dead_code)]
     fn pt_to_px(&self, pt: f64) -> f64 {
         pt * self.scale as f64
     }
@@ -157,6 +162,7 @@ impl PixmapRenderer {
     /// 创建缩放后的文本布局
     ///
     /// 当 DPI 不为 72 时，需要重新计算文本布局以使用缩放后的字体大小
+    #[allow(dead_code)]
     fn create_scaled_text_layout(
         &self,
         text: &str,

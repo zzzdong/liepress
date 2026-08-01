@@ -7,9 +7,9 @@ use liepress::generator::markdown_to_document;
 use liepress::visual::VisualElement;
 use liepress::{ConvertOptions, markdown_to_pdf};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-fn output_dir_markdown_to_svg(md: &str, output_dir: &std::path::PathBuf, name: &str) {
+fn output_dir_markdown_to_svg(md: &str, output_dir: &Path, name: &str) {
     use liepress::PageRenderer;
     use liepress::generator::markdown_to_document;
     use liepress::render::SvgRenderer;
@@ -25,7 +25,7 @@ fn output_dir_markdown_to_svg(md: &str, output_dir: &std::path::PathBuf, name: &
     }
 }
 
-fn output_dir_markdown_to_pdf(md: &str, output_dir: &std::path::PathBuf, name: &str) {
+fn output_dir_markdown_to_pdf(md: &str, output_dir: &Path, name: &str) {
     let pdf_data =
         markdown_to_pdf(md, &ConvertOptions::default()).expect("PDF generation should succeed");
     let path = output_dir.join(format!("{}.pdf", name));

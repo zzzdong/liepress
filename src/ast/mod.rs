@@ -6,21 +6,21 @@
 //!
 //! # 样式系统
 //!
-//! 本模块实现了完整的 CSS 样式系统：
+//! 样式解析统一由 `crate::css::engine::CssEngine`（基于 Lightning CSS）处理：
 //! - 内置默认 CSS 样式表（由 presets::DEFAULT_CSS 定义）
 //! - 可选的用户 CSS 覆盖
-//! - CSS 解析、选择器匹配、级联与特异性计算
+//! - HTML→Styled Node 的转换统一在 `crate::html::styled` 中完成
 
-pub mod css;
 pub mod node;
 pub mod presets;
 pub mod style;
 
 // 重新导出主要类型
-pub use css::*;
 pub use node::*;
 pub use presets::*;
 pub use style::*;
+
+use crate::css::engine::CssEngine;
 
 /// 使用内置默认样式解析 Markdown
 ///
@@ -38,6 +38,50 @@ pub use style::*;
 pub fn parse_markdown(markdown: &str) -> Result<Node, String> {
     let (node, _page_config) = parse_markdown_with_css(markdown, "")?;
     Ok(node)
+}
+
+/// 内部共享：构建 CssEngine + 解析 Styled Node
+fn build_engine_and_parse(
+    markdown: &str,
+    user_css: &str,
+    strict_mode: bool,
+) -> Result<(Node, PageConfig), String> {
+    // Step 1: Markdown → HTML
+    let html = crate::html::md_converter::markdown_to_html(markdown);
+
+    // Step 2: HTML → HtmlDocument（含 <style> 标签 CSS 提取）
+    let doc = crate::html::parser::parse_html(&html);
+
+    // Step 3: 合并 CSS（内置 + 用户 + 内联 <style>）
+    let inline_css = doc.style_sheets.join("\n");
+    let combined_css = if user_css.is_empty() {
+        inline_css
+    } else if inline_css.is_empty() {
+        user_css.to_string()
+    } else {
+        format!("{}\n{}", user_css, inline_css)
+    };
+
+    // Step 4: 构建 CssEngine（Lightning CSS），内置样式始终加载
+    let mut engine = CssEngine::new(DEFAULT_CSS)?.with_strict_mode(strict_mode);
+    if !combined_css.is_empty() {
+        engine = engine.with_user_css(&combined_css)?;
+    }
+
+    // Step 5: 从 HtmlDocument 构建 Node AST（使用新管线 html/styled）
+    let mut node = crate::html::styled::html_to_styled_nodes(&doc, &engine);
+    // 保证根节点一定是 Document（兼容测试和下游消费者）
+    if !matches!(node.kind, NodeKind::Document { .. }) {
+        node = Node::new(
+            NodeKind::Document {
+                children: vec![node],
+            },
+            Style::default(),
+            false,
+        );
+    }
+    let page_config = engine.page_config().clone();
+    Ok((node, page_config))
 }
 
 /// 使用自定义 CSS 解析 Markdown（非严格模式）
@@ -68,31 +112,7 @@ pub fn parse_markdown_with_css(
     markdown: &str,
     user_css: &str,
 ) -> Result<(Node, PageConfig), String> {
-    // Step 1: Markdown → HTML
-    let html = crate::html::md_converter::markdown_to_html(markdown);
-
-    // Step 2: HTML → HtmlDocument（含 <style> 标签 CSS 提取）
-    let doc = crate::html::parser::parse_html(&html);
-
-    // Step 3: 合并 CSS（内置 + 用户 + 内联 <style>）
-    let inline_css = doc.style_sheets.join("\n");
-    let combined_css = if user_css.is_empty() {
-        inline_css
-    } else if inline_css.is_empty() {
-        user_css.to_string()
-    } else {
-        format!("{}\n{}", user_css, inline_css)
-    };
-
-    // Step 4: 构建样式解析器（非严格模式）
-    let resolver = StyleResolver::new(DEFAULT_CSS)?
-        .with_strict_mode(false)
-        .with_user_css(&combined_css)?;
-
-    // Step 5: 从 HtmlDocument 构建 Node AST
-    let node = node::build_from_html(&doc, &resolver);
-    let page_config = resolver.page_config().clone();
-    Ok((node, page_config))
+    build_engine_and_parse(markdown, user_css, false)
 }
 
 /// 使用自定义 CSS 解析 Markdown（严格模式）
@@ -119,31 +139,7 @@ pub fn parse_markdown_with_css_strict(
     markdown: &str,
     user_css: &str,
 ) -> Result<(Node, PageConfig), String> {
-    // Step 1: Markdown → HTML
-    let html = crate::html::md_converter::markdown_to_html(markdown);
-
-    // Step 2: HTML → HtmlDocument（含 <style> 标签 CSS 提取）
-    let doc = crate::html::parser::parse_html(&html);
-
-    // Step 3: 合并 CSS（内置 + 用户 + 内联 <style>）
-    let inline_css = doc.style_sheets.join("\n");
-    let combined_css = if user_css.is_empty() {
-        inline_css
-    } else if inline_css.is_empty() {
-        user_css.to_string()
-    } else {
-        format!("{}\n{}", user_css, inline_css)
-    };
-
-    // Step 4: 构建样式解析器（严格模式）
-    let resolver = StyleResolver::new(DEFAULT_CSS)?
-        .with_strict_mode(true)
-        .with_user_css(&combined_css)?;
-
-    // Step 5: 从 HtmlDocument 构建 Node AST
-    let node = node::build_from_html(&doc, &resolver);
-    let page_config = resolver.page_config().clone();
-    Ok((node, page_config))
+    build_engine_and_parse(markdown, user_css, true)
 }
 
 /// 使用自定义样式解析器解析 Markdown
@@ -151,8 +147,19 @@ pub fn parse_markdown_with_css_strict(
 /// 适用于需要多次解析但共享同一个解析器的场景（如批量处理）。
 /// 注意：此函数不提取 Markdown 内的 `<style>` 标签。
 /// 如果需要内联样式支持，请使用 `parse_markdown_with_css`。
-pub fn parse_markdown_with_resolver(markdown: &str, resolver: &StyleResolver) -> Node {
+pub fn parse_markdown_with_resolver(markdown: &str, engine: &CssEngine) -> Node {
     let html = crate::html::md_converter::markdown_to_html(markdown);
     let doc = crate::html::parser::parse_html(&html);
-    node::build_from_html(&doc, resolver)
+    let mut node = crate::html::styled::html_to_styled_nodes(&doc, engine);
+    // 保证根节点一定是 Document
+    if !matches!(node.kind, NodeKind::Document { .. }) {
+        node = Node::new(
+            NodeKind::Document {
+                children: vec![node],
+            },
+            Style::default(),
+            false,
+        );
+    }
+    node
 }

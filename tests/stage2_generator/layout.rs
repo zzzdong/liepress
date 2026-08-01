@@ -12,8 +12,8 @@ fn get_element_bounds(elem: &VisualElement) -> (f64, f64, f64, f64) {
         VisualElement::Image { position, size, .. } => (
             position.x,
             position.y,
-            position.x + size.x as f64,
-            position.y + size.y as f64,
+            position.x + size.x,
+            position.y + size.y,
         ),
         _ => (0.0, 0.0, 0.0, 0.0),
     }

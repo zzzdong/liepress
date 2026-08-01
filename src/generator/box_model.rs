@@ -164,6 +164,7 @@ pub(crate) fn draw_box_border(
 }
 
 /// 绘制边框矩形（四边），支持圆角
+#[allow(clippy::too_many_arguments)]
 fn draw_border(
     ctx: &mut PageContext,
     x: f32,
