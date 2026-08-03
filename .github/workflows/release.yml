@@ -143,3 +143,53 @@ jobs:
           name: ${{ env.BINARY_NAME }}-x86_64-windows-msvc
           path: target\x86_64-pc-windows-msvc\release\${{ env.BINARY_NAME }}.exe
           retention-days: 30
+
+  release:
+    name: Package and publish GitHub Release
+    needs:
+      - build-x86_64-linux
+      - build-aarch64-linux
+      - build-x86_64-windows
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.upload_artifacts != 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cd artifacts
+
+          # x86_64 Linux
+          BIN="${{ env.BINARY_NAME }}-x86_64-linux-gnu/${{ env.BINARY_NAME }}"
+          tar -czf "../dist/${{ env.BINARY_NAME }}-x86_64-linux-gnu.tar.gz" -C "${{ env.BINARY_NAME }}-x86_64-linux-gnu" "${{ env.BINARY_NAME }}"
+
+          # aarch64 Linux
+          tar -czf "../dist/${{ env.BINARY_NAME }}-aarch64-linux-gnu.tar.gz" -C "${{ env.BINARY_NAME }}-aarch64-linux-gnu" "${{ env.BINARY_NAME }}"
+
+          # x86_64 Windows
+          cd "${{ env.BINARY_NAME }}-x86_64-windows-msvc"
+          zip -q "../../dist/${{ env.BINARY_NAME }}-x86_64-windows-msvc.zip" "${{ env.BINARY_NAME }}.exe"
+          cd ../..
+
+          # Checksums
+          cd dist
+          sha256sum *.tar.gz *.zip > sha256.txt
+          cat sha256.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/sha256.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
