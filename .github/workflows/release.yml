@@ -28,6 +28,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          # 版本号提取（支持语义化版本，含预发布/构建后缀，如 v0.1.4-beta.1）
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+          fi
+          VER="${TAG#v}"
+          # 完整 SemVer 匹配：MAJOR.MINOR.PATCH[-pre][+build]，未匹配则回退 Cargo.toml
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            VER="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)".*/\1/')"
+          fi
+          echo "version=v${VER}" >> "$GITHUB_OUTPUT"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
@@ -61,7 +78,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ github.event.inputs.upload_artifacts != 'false' }}
         with:
-          name: ${{ env.BINARY_NAME }}-x86_64-linux-gnu
+          name: ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-x86_64-linux-gnu
           path: target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
           retention-days: 30
 
@@ -70,6 +87,23 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          # 版本号提取（支持语义化版本，含预发布/构建后缀，如 v0.1.4-beta.1）
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+          fi
+          VER="${TAG#v}"
+          # 完整 SemVer 匹配：MAJOR.MINOR.PATCH[-pre][+build]，未匹配则回退 Cargo.toml
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            VER="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)".*/\1/')"
+          fi
+          echo "version=v${VER}" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -104,7 +138,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ github.event.inputs.upload_artifacts != 'false' }}
         with:
-          name: ${{ env.BINARY_NAME }}-aarch64-linux-gnu
+          name: ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-aarch64-linux-gnu
           path: target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
           retention-days: 30
 
@@ -113,6 +147,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          # 版本号提取（支持语义化版本，含预发布/构建后缀，如 v0.1.4-beta.1）
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+          fi
+          VER="${TAG#v}"
+          # 完整 SemVer 匹配：MAJOR.MINOR.PATCH[-pre][+build]，未匹配则回退 Cargo.toml
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            VER="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)".*/\1/')"
+          fi
+          echo "version=v${VER}" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -145,7 +196,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ github.event.inputs.upload_artifacts != 'false' }}
         with:
-          name: ${{ env.BINARY_NAME }}-x86_64-windows-msvc
+          name: ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-x86_64-windows-msvc
           path: target\x86_64-pc-windows-msvc\release\${{ env.BINARY_NAME }}.exe
           retention-days: 30
 
@@ -164,6 +215,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          # 版本号优先级：
+          #   1) push tag（如 v0.1.4-beta.1）→ github.ref_name
+          #   2) 手动触发的 release_tag input（如 v0.1.4-beta.1 或 0.1.4-beta.1）
+          #   3) 兜底：Cargo.toml 的 package.version
+          # 统一带 v 前缀（如 v0.1.4-beta.1），支持语义化版本（含预发布/构建后缀）
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+          fi
+          VER="${TAG#v}"
+          # 完整 SemVer 匹配：MAJOR.MINOR.PATCH[-pre][+build]，未匹配则回退 Cargo.toml
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            VER="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)".*/\1/')"
+          fi
+          echo "version=v${VER}" >> "$GITHUB_OUTPUT"
+          echo "Release version: v${VER}"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -173,19 +246,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
           mkdir -p dist
           cd artifacts
 
           # x86_64 Linux
-          BIN="${{ env.BINARY_NAME }}-x86_64-linux-gnu/${{ env.BINARY_NAME }}"
-          tar -czf "../dist/${{ env.BINARY_NAME }}-x86_64-linux-gnu.tar.gz" -C "${{ env.BINARY_NAME }}-x86_64-linux-gnu" "${{ env.BINARY_NAME }}"
+          tar -czf "../dist/${{ env.BINARY_NAME }}-${VER}-x86_64-linux-gnu.tar.gz" -C "${{ env.BINARY_NAME }}-${VER}-x86_64-linux-gnu" "${{ env.BINARY_NAME }}"
 
           # aarch64 Linux
-          tar -czf "../dist/${{ env.BINARY_NAME }}-aarch64-linux-gnu.tar.gz" -C "${{ env.BINARY_NAME }}-aarch64-linux-gnu" "${{ env.BINARY_NAME }}"
+          tar -czf "../dist/${{ env.BINARY_NAME }}-${VER}-aarch64-linux-gnu.tar.gz" -C "${{ env.BINARY_NAME }}-${VER}-aarch64-linux-gnu" "${{ env.BINARY_NAME }}"
 
           # x86_64 Windows
-          cd "${{ env.BINARY_NAME }}-x86_64-windows-msvc"
-          zip -q "../../dist/${{ env.BINARY_NAME }}-x86_64-windows-msvc.zip" "${{ env.BINARY_NAME }}.exe"
+          cd "${{ env.BINARY_NAME }}-${VER}-x86_64-windows-msvc"
+          zip -q "../../dist/${{ env.BINARY_NAME }}-${VER}-x86_64-windows-msvc.zip" "${{ env.BINARY_NAME }}.exe"
           cd ../..
 
           # Checksums
