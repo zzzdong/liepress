@@ -20,6 +20,26 @@ use vello_cpu::kurbo::{Point, Rect};
 use super::DocumentGenerator;
 use crate::generator::box_model::BgStyle;
 
+/// 判断节点是否为内联（行内）节点。
+///
+/// 内联节点应在同一段落中连续布局，不能作为独立块级节点被 `layout_node` 处理，
+/// 否则会落入 `_ => {}` 分支被静默丢弃（例如列表项中的行内代码）。
+fn is_inline_node(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Text { .. }
+            | NodeKind::Strong { .. }
+            | NodeKind::Emphasis { .. }
+            | NodeKind::InlineCode { .. }
+            | NodeKind::Link { .. }
+            | NodeKind::Delete { .. }
+            | NodeKind::Subscript { .. }
+            | NodeKind::Superscript { .. }
+            | NodeKind::Span { .. }
+            | NodeKind::LineBreak
+    )
+}
+
 // ═══════════════════════════════════════════════════════════
 // Block Layout Methods
 // ═══════════════════════════════════════════════════════════
@@ -580,6 +600,7 @@ impl DocumentGenerator {
             url: None,
             decoration: crate::text::TextDecoration::None,
             baseline_shift: 0.0,
+            background_color: None,
         };
 
         let label_height = if !alt.is_empty() {
@@ -723,12 +744,18 @@ impl DocumentGenerator {
         start: u32,
         style: &crate::ast::Style,
     ) {
+        // 消费 ul/ol 自身的 margin.top（保持与段落/容器等其他块级元素一致的盒模型行为）
+        self.page_context.consume_height(style.margin.top);
+
         let list_indent = style
             .list_indent_pt
             .unwrap_or_else(|| crate::ast::calculate_list_indent(style.font_size_pt));
         self.with_additional_indent(list_indent, |s| {
             s.layout_list_with_indent(children, ordered, start, style);
         });
+
+        // 消费 ul/ol 自身的 margin.bottom（避免与后续块元素间距叠加）
+        self.page_context.consume_height(style.margin.bottom);
     }
 
     fn layout_list_with_indent(
@@ -775,15 +802,42 @@ impl DocumentGenerator {
 
             // 在内容缩进上下文中布局列表项
             self.with_indent(content_indent, |s| {
+                // 将列表项内的连续内联节点（Text/Strong/Emphasis/InlineCode/Link/Delete/Subscript/
+                // Superscript/Span/LineBreak）合并为一个 Paragraph 统一布局，避免后续内联节点
+                // 在 layout_node 中被静默丢弃（例如 "- 统计基于 `xxx` 表" 中的行内代码）。
                 let mut is_first = true;
+                let mut inline_buf: Vec<Node> = Vec::new();
+                let flush_inline = |s: &mut Self, buf: &mut Vec<Node>, marker: &str| {
+                    if buf.is_empty() {
+                        return;
+                    }
+                    let para = Node::new(
+                        NodeKind::Paragraph {
+                            children: std::mem::take(buf),
+                        },
+                        style.clone(),
+                        true,
+                    );
+                    s.layout_list_item_first_child(&para, style, marker);
+                };
+
                 for grandchild in item_children {
+                    if is_inline_node(&grandchild.kind) {
+                        inline_buf.push(grandchild.clone());
+                        is_first = false;
+                        continue;
+                    }
+                    // 遇到块级节点：先冲刷累积的内联内容（含标记），再布局块级节点
+                    flush_inline(&mut *s, &mut inline_buf, &marker);
                     if is_first {
-                        s.layout_list_item_first_child(grandchild, &marker);
+                        s.layout_list_item_first_child(grandchild, style, &marker);
                         is_first = false;
                     } else {
                         s.layout_node_with_indent(grandchild, style);
                     }
                 }
+                // 冲刷尾部累积的内联内容
+                flush_inline(&mut *s, &mut inline_buf, &marker);
             });
         }
     }
@@ -811,7 +865,16 @@ impl DocumentGenerator {
         (width + 4.0).clamp(12.0, 30.0) // 最小12pt，最大30pt
     }
 
-    fn layout_list_item_first_child(&mut self, node: &Node, marker: &str) {
+    /// 布局列表项的首个子节点（带列表标记）。
+    ///
+    /// `item_style` 是列表项（`<li>`）自身的 style，用于消费列表项的 margin.bottom；
+    /// 段落/内联节点自身的 margin 不应在列表项内生效（CSS box model：li 内容是 inline flow）。
+    fn layout_list_item_first_child(
+        &mut self,
+        node: &Node,
+        item_style: &crate::ast::Style,
+        marker: &str,
+    ) {
         const MARKER_GAP: f32 = 6.0;
 
         let content_x = self.page_context.settings.content_x();
@@ -865,7 +928,7 @@ impl DocumentGenerator {
                 let combined: Vec<(&str, &TextStyle)> =
                     segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
                 let available_width = self.page_context.settings.content_width() - content_indent;
-                let margin_bottom = node.style.margin.bottom;
+                let margin_bottom = item_style.margin.bottom;
 
                 FONT_CONTEXT.with(|font_cx| {
                     LAYOUT_CONTEXT.with(|layout_cx| {
@@ -993,7 +1056,7 @@ impl DocumentGenerator {
             | NodeKind::Link { .. }
             | NodeKind::InlineCode { .. } => {
                 // 将单个内联节点包装为段落处理
-                let margin_bottom = 0.0;
+                let margin_bottom = item_style.margin.bottom;
                 let fake_children = vec![node.clone()];
                 let segments = collect_inline_segments(&fake_children);
                 if segments.is_empty() {

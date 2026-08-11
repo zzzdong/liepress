@@ -143,7 +143,7 @@ LiePress 是一个 Rust 实现的 Markdown 到多格式文档生成器，支持�
 | `table` | `border-collapse: collapse; font-size: 10pt` | 表格 |
 | `th` | `font-weight: bold; background-color: #F0F0F0` | 表头 |
 | `tr:nth-child(even)` | `background-color: #F8F8F8` | 交替行 |
-| `code` | `font-family: monospace; color: #333` | 行内代码 |
+| `code` | `font-family: monospace; color: #24292e; background-color: #f6f8fa` | 行内代码（等宽字体 + 浅灰背景，参考 GitHub 风格） |
 | `a` | `color: #0000FF; font-style: italic` | 超链接（蓝色斜体） |
 | `strong` | `font-weight: bold` | 粗体 |
 | `em` | `font-style: italic` | 斜体 |
@@ -208,12 +208,12 @@ Style::inherit_from(parent_style) → 拷贝可继承属性
 **示例**：
 ```markdown
 <style>
-body { font-family: "Noto Sans SC", serif; }
+body { font-family: "Noto Sans CJK SC", serif; }
 h1 { color: #c00; }
 </style>
 
 # 标题会继承 body 的字体
-段落也会使用 Noto Sans SC 字体。
+段落也会使用 Noto Sans CJK SC 字体。
 ```
 
 **继承模型**：
@@ -287,7 +287,7 @@ h1 { color: #c00; }
 
 | 主要语言 | 推荐字体列表 |
 |----------|-------------|
-| Han（中文） | `Noto Serif SC`, `Source Han Serif SC`, `SimSun`, `SimSun-ExtB`, `serif` |
+| Han（中文） | `FangSong`, `FangSong_GB2312`, `Noto Serif CJK SC`, `Source Han Serif SC`, `Noto Serif SC`, `SimSun`, `SimSun-ExtB`, `serif` |
 | Japanese（日文） | `Noto Serif CJK JP`, `Noto Serif JP`, `serif` |
 | Korean（韩文） | `Noto Serif CJK KR`, `Noto Serif KR`, `serif` |
 | Latin（拉丁文） | `Noto Serif`, `Georgia`, `Times New Roman`, `serif` |
@@ -398,8 +398,8 @@ Document { pages: Vec<Page> }
 
 core 函数：
 
-- **`collect_inline_segments()`**: 递归收集内联子节点（Strong、Emphasis、Link、InlineCode、Text）的文本段和样式
-- **`annotate_runs_with_urls()`**: 通过 run 的 `text_range` 匹配对应的 segment，将超链接 URL 回填到 TextRun 的 `url` 字段
+- **`collect_inline_segments()`**: 递归收集内联子节点（Strong、Emphasis、Link、InlineCode、Text）的文本段和样式，每个 segment 携带 `TextStyle`（含行内背景色）
+- **`annotate_runs_with_urls()`**: 通过 run 的 `text_range` 匹配对应的 segment，将超链接 URL、删除线装饰、行内背景色回填到 TextRun 的 `url`/`decoration`/`background_color` 字段
 
 这两个函数是 generator 层面的辅助工具，不涉及 parley 布局细节。
 Text 引擎的布局细节全部封装在 [`src/text.rs`](../src/text.rs) 中。
@@ -464,8 +464,9 @@ enum VisualElement {
   - `glyphs: Vec<Glyph>` — 字形列表（坐标相对 `TextLine.bounds.origin`）
   - `baseline_x/y`: 基线位置
   - `url`: 超链接 URL（可选）
+  - `background_color`: 行内背景色（可选，用于行内代码/高亮，渲染时先画背景矩形再画字形）
 - **`Glyph`**: 单个字形信息（id, x, y, advance）
-- **`TextStyle`**: 样式输入（color, font_family, font_size, font_weight, font_style, align, url）
+- **`TextStyle`**: 样式输入（color, font_family, font_size, font_weight, font_style, align, url, background_color）
 
 #### 4.2 排版流程
 
@@ -488,13 +489,14 @@ extract_lines_from_parley() 提取行和字形
 返回 TextLayout { lines: Vec<TextLine>, width, height }
     │
     ▼
-[generator 层] annotate_runs_with_urls() 回填 URL
+[generator 层] annotate_runs_with_urls() 回填 URL / 删除线 / 行内背景色
     │
     ▼
 [generator 层] place_text_lines() 分页 + 绝对定位
     │
     ▼
 渲染时遍历 TextLine → TextRun → Glyph，逐个绘制
+    │        （若 run 有 background_color，先画背景矩形再画字形）
 ```
 
 Text 引擎负责前三步（排版 → 断行 → 提取为自有结构），
@@ -507,6 +509,8 @@ generator 负责后三步（URL 回填 → 分页定位 → 渲染）。
 2. 以第一段样式为默认样式
 3. 后续各段通过 `RangedBuilder.push()` 覆盖特定范围的样式属性
 4. 支持字体家族、字号、颜色、字重、字体样式
+5. 行内背景色（`background_color`）**不经过 parley**，由 generator 层在
+   `annotate_runs_with_urls()` 中按字符位置回填到 `TextRun`，再由渲染层绘制
 
 #### 4.4 样式映射
 
@@ -687,7 +691,7 @@ use liepress::ConvertOptions;
 use std::path::PathBuf;
 
 let opts = ConvertOptions::new()
-    .with_font_family(&["Noto Sans SC", "sans-serif"])
+    .with_font_family(&["Noto Sans CJK SC", "sans-serif"])
     .with_css("h1 { color: red; }")
     .with_css_file(PathBuf::from("style.css"))
     .with_strict(true)
@@ -702,7 +706,7 @@ let opts = ConvertOptions::new()
 | `user_css` | `String` | `""` | 用户 CSS 样式字符串，叠加在默认样式之上 |
 | `css_file` | `Option<PathBuf>` | `None` | 用户 CSS 样式文件路径，与 `user_css` 合并 |
 | `strict` | `bool` | `false` | 严格模式：CSS 解析失败时返回错误 |
-| `auto_font` | `bool` | `true` | 自动字体检测：根据文档内容选择匹配字体（中文→Noto Serif SC/宋体，日文→Noto Serif CJK JP） |
+| `auto_font` | `bool` | `true` | 自动字体检测：根据文档内容选择匹配字体（中文→仿宋 FangSong，日文→Noto Serif CJK JP） |
 | `page_config` | `Option<PageConfig>` | `None` | 页面配置（尺寸、边距、页眉页脚），优先级高于 CSS `@page` |
 
 **Builder 方法**：
@@ -926,7 +930,7 @@ pub enum Error {
 2. **Markdown 中 `<style>` 标签**：最便捷，直接在文档头部写 CSS 规则
    ```markdown
    <style>
-   body { font-family: "Noto Sans SC", serif; }
+   body { font-family: "Noto Sans CJK SC", serif; }
    h1 { color: #c00; border-bottom: 1px solid #ccc; }
    </style>
    ```
@@ -993,11 +997,11 @@ pub enum Error {
 
 ### 短期
 
-1. **删除线渲染**: 实现 Delete NodeKind 的样式渲染（text-decoration: line-through）
-2. **两端对齐**: 实现 TextAlign::Justify 的完整支持
-3. **行内代码高亮**: 为 InlineCode 添加背景色和边框
-4. **代码语法高亮**: 基于代码块 lang 实现语法着色
-5. **显式分页符**: 支持 `\pagebreak` 或 `---` 分页控制
+1. **两端对齐**: 实现 TextAlign::Justify 的完整支持
+2. **行内代码边框/圆角**: 行内代码背景色已实现（`background-color` 传导到 TextRun，渲染层绘制背景矩形），但边框和圆角尚未实现（需支持 `border`/`border-radius` 在行内文本的绘制）
+3. **代码语法高亮**: 基于代码块 lang 实现语法着色
+4. **显式分页符**: 支持 `\pagebreak` 或 `---` 分页控制
+5. **删除线**: 已实现（text-decoration: line-through，`draw_text_run` 在基线上方绘制横线）
 
 ### 中期
 

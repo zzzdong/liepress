@@ -59,7 +59,7 @@ let md = "# Hello\n\nThis is a **Markdown** document.";
 let pdf = markdown_to_pdf_with_options(
     md,
     &ConvertOptions::new()
-        .with_font_family(&["Noto Sans SC", "sans-serif"])
+        .with_font_family(&["Noto Sans CJK SC", "sans-serif"])
         .with_css("h1 { color: #c00; }")
         .with_header("My Document")
         .with_footer("- {page} -"),
@@ -70,7 +70,7 @@ let pdf = markdown_to_pdf_with_options(
 
 ```markdown
 <style>
-body { font-family: "Noto Sans SC", serif; }
+body { font-family: "Noto Sans CJK SC", serif; }
 h1 { color: #c00; border-bottom: 1px solid #ccc; }
 @page {
     margin: 36pt 54pt;

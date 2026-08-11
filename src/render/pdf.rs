@@ -509,6 +509,22 @@ impl PageRenderer for PdfRenderer<'_, '_> {
             return;
         }
 
+        // 行内背景色（行内代码/高亮）：在字形之前先绘制背景矩形
+        if let Some(bg) = run.background_color {
+            // 背景矩形：以行基线为参照，左右各加一点水平内边距，高度略高于字形
+            let pad = run.font_size * 0.1;
+            let x = position.x as f32 + run.baseline_x - pad;
+            let y = position.y as f32;
+            let w = run.advance + pad * 2.0;
+            let h = run.font_size * 1.25;
+            let rect = Rect::new(x as f64, y as f64, (x + w) as f64, (y + h) as f64);
+            let style = FillStrokeStyle {
+                fill: Some(bg),
+                stroke: None,
+            };
+            self.draw_rect(rect, &style);
+        }
+
         let font_key = FontCacheKey::from_font_data(&run.font_data);
 
         if let std::collections::hash_map::Entry::Vacant(e) = self.font_cache.entry(font_key) {

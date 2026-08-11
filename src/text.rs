@@ -75,6 +75,8 @@ pub struct TextRun {
     pub decoration: TextDecoration,
     /// 基线偏移（pt，使上下标相对行内位置上下移动）
     pub baseline_shift: f32,
+    /// 行内背景色（用于行内代码、高亮等，None 表示无背景）
+    pub background_color: Option<Color>,
 }
 
 /// 文本行 - 包含一行中的所有 Run
@@ -152,6 +154,8 @@ pub struct TextStyle {
     pub decoration: TextDecoration,
     /// 基线偏移（pt，正数=上移用于上标，负数=下移用于下标）
     pub baseline_shift: f32,
+    /// 行内背景色（用于行内代码、高亮等，None 表示无背景）
+    pub background_color: Option<Color>,
 }
 
 impl Default for TextStyle {
@@ -166,6 +170,7 @@ impl Default for TextStyle {
             url: None,
             decoration: TextDecoration::None,
             baseline_shift: 0.0,
+            background_color: None,
         }
     }
 }
@@ -419,6 +424,7 @@ fn extract_lines_from_parley(
                 url: None,
                 decoration: lookup_decoration(text_range.start, decoration_map),
                 baseline_shift: shift,
+                background_color: None,
             });
         }
 

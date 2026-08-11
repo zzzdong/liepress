@@ -42,6 +42,7 @@ pub(crate) fn inject_header_footer(doc: &mut DocumentLayout, settings: &PageSett
                 url: None,
                 decoration: crate::text::TextDecoration::None,
                 baseline_shift: 0.0,
+                background_color: None,
             };
 
             let layout = crate::text::layout_text(
@@ -105,6 +106,7 @@ pub(crate) fn inject_header_footer(doc: &mut DocumentLayout, settings: &PageSett
                 url: None,
                 decoration: crate::text::TextDecoration::None,
                 baseline_shift: 0.0,
+                background_color: None,
             };
 
             let layout = crate::text::layout_text(

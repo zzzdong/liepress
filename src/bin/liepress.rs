@@ -121,7 +121,7 @@ struct Args {
 
     /// Disable auto font detection (enabled by default).
     /// When enabled, the font-family is chosen based on the detected
-    /// language of the document (e.g. Chinese → Noto Serif SC, SimSun).
+    /// language of the document (e.g. Chinese → FangSong 仿宋).
     #[arg(long = "no-auto-font", default_value_t = false)]
     no_auto_font: bool,
 

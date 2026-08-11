@@ -29,7 +29,11 @@ pub const DEFAULT_CSS: &str = include_str!("presets/default.css");
 pub fn list_marker_style() -> Style {
     Style {
         font_family: vec![
+            "FangSong".to_string(),
+            "FangSong_GB2312".to_string(),
+            "Noto Serif CJK SC".to_string(),
             "Source Han Serif SC".to_string(),
+            "Noto Sans CJK SC".to_string(),
             "Noto Sans SC".to_string(),
             "serif".to_string(),
         ],
@@ -88,6 +92,7 @@ pub fn computed_style_to_text_style(style: &Style) -> crate::text::TextStyle {
         url: style.link_url.clone(),
         decoration: style.text_decoration,
         baseline_shift: style.baseline_shift,
+        background_color: style.background_color,
     }
 }
 

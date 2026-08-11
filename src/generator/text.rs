@@ -76,9 +76,10 @@ pub fn annotate_runs_with_urls(
 
             if seg_idx < segments.len() {
                 let (_seg_text, seg_style) = &segments[seg_idx];
-                // 只添加 URL 和 decoration，不覆盖文本
+                // 只添加 URL、decoration、背景色，不覆盖文本
                 run.url = seg_style.url.clone();
                 run.decoration = seg_style.decoration;
+                run.background_color = seg_style.background_color;
                 seg_char_consumed += run.text.chars().count();
             }
         }

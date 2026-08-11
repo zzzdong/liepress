@@ -30,7 +30,7 @@ use generator::Document;
 /// use liepress::ConvertOptions;
 ///
 /// let opts = ConvertOptions::new()
-///     .with_font_family(&["Noto Sans SC", "sans-serif"])
+///     .with_font_family(&["Noto Sans CJK SC", "sans-serif"])
 ///     .with_css("h1 { color: red; }")
 ///     .with_strict(true);
 /// ```
@@ -52,7 +52,7 @@ pub struct ConvertOptions {
     /// 自动字体：根据文档内容自动选择合适的字体（默认 true）
     ///
     /// 启用后，如果没有显式设置 `font_family`，会根据文档中的字符分布
-    /// 自动推荐字体列表（如中文优先 Noto Serif SC + SimSun，日文优先 Noto Serif CJK JP）。
+    /// 自动推荐字体列表（如中文优先仿宋 FangSong，日文优先 Noto Serif CJK JP）。
     /// 用户提供的 CSS（包括 `<style>` 中的 `body { font-family }`）始终最高优先级。
     pub auto_font: bool,
     /// 页面配置（页面尺寸、边距等）
@@ -76,7 +76,7 @@ impl ConvertOptions {
     /// use liepress::ConvertOptions;
     ///
     /// // 单个字体 + 回退
-    /// let opts = ConvertOptions::new().with_font_family(&["Noto Sans SC", "sans-serif"]);
+    /// let opts = ConvertOptions::new().with_font_family(&["Noto Sans CJK SC", "sans-serif"]);
     ///
     /// // 使用通用字体
     /// let opts = ConvertOptions::new().with_font_family(&["serif"]);
@@ -360,16 +360,23 @@ fn infer_font_family(markdown: &str) -> Vec<String> {
         .unwrap_or(ScriptRange::Other);
 
     // 基础中文字体列表（作为所有语言场景的回退）
-    // 包含衬线体（Serif）和无衬线体（Sans-serif）
+    // 包含衬线体（Serif）和无衬线体（Sans-serif）。
+    // 中文 serif 优先使用仿宋（FangSong，公文/报告排版惯例）。
+    // 说明：代码/CLI 场景优先使用 Noto CJK 统一系列（与 JP/KR 同族、字形规范统一），
+    // 再回退到独立 Noto SC / 思源宋体（Source Han）及系统宋体。
     let chinese_serif_fonts = vec![
-        "Noto Serif SC".to_string(),
+        "FangSong".to_string(),
+        "FangSong_GB2312".to_string(),
+        "Noto Serif CJK SC".to_string(),
         "Source Han Serif SC".to_string(),
+        "Noto Serif SC".to_string(),
         "SimSun".to_string(),
         "SimSun-ExtB".to_string(),
     ];
     let chinese_sans_fonts = vec![
-        "Noto Sans SC".to_string(),
+        "Noto Sans CJK SC".to_string(),
         "Source Han Sans SC".to_string(),
+        "Noto Sans SC".to_string(),
         "Microsoft YaHei".to_string(),
         "WenQuanYi Micro Hei".to_string(),
     ];

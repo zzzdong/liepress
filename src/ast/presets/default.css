@@ -36,10 +36,16 @@ pre {
 }
 
 /* 行内代码 */
+/* 参考常见 Markdown 渲染器（GitHub/Typora）样式：
+   等宽字体 + 浅灰背景 + 深色文字，以与正文区分。
+   background-color 会传导到行内文本渲染，生成背景色块；
+   水平内边距由渲染层按字号比例自动加上（约 0.1em 两侧），
+   高度略高于字形（约 1.25em）。 */
 code {
     font-family: monospace, sans-serif;
     font-size: 10.5pt;
-    color: #333;
+    color: #24292e;
+    background-color: #f6f8fa;
     display: inline;
 }
 

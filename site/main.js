@@ -36,6 +36,10 @@ const FONTS_TO_LOAD = [
         url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf',
     },
     // 中文衬线字体（Noto Serif SC）
+    // 注：代码侧（src/lib.rs）优先使用 Noto CJK 统一系列（Noto Serif CJK SC），
+    // 但 GitHub Pages 前端受 jsdelivr 20MB 限制，无法加载完整 CJK 版
+    // （Serif 完整版 24.5MB 返回 403），故这里退而加载小体积的独立 SC 子集版，
+    // name 与实际加载的字体内容保持一致。
     {
         name: 'Noto Serif SC',
         family: 'serif',
@@ -248,8 +252,8 @@ async function renderPdf() {
         // 这里的 font-family 生成 body { font-family: ... }，正文用衬线/无衬线
         // 代码块不受影响（<pre>/<code> 有自己的 font-family: monospace, sans-serif）
         const fontFamily = [
-            'Noto Serif', 'Noto Serif SC', 'serif',
-            'Noto Sans', 'Noto Sans SC', 'sans-serif',
+            'Noto Serif', 'Noto Serif SC', 'Noto Serif CJK SC', 'serif',
+            'Noto Sans', 'Noto Sans SC', 'Noto Sans CJK SC', 'sans-serif',
         ].join(', ');
         const base64 = wasmModule.markdown_to_pdf_base64(markdown, fontFamily, '');
         console.log('PDF generated, base64 length:', base64.length);

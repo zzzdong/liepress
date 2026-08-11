@@ -185,6 +185,7 @@ impl PixmapRenderer {
             url: style.url.clone(),
             decoration: style.decoration,
             baseline_shift: 0.0,
+            background_color: style.background_color,
         };
 
         // 缩放最大宽度
@@ -400,6 +401,21 @@ impl PageRenderer for PixmapRenderer {
 
         if glyphs.is_empty() {
             return;
+        }
+
+        // 行内背景色（行内代码/高亮）：在字形之前先绘制背景矩形
+        if let Some(bg) = run.background_color {
+            let pad = run.font_size as f64 * 0.1;
+            let x = position.x + run.baseline_x as f64 - pad;
+            let y = position.y;
+            let w = run.advance as f64 + pad * 2.0;
+            let h = run.font_size as f64 * 1.25;
+            let rect = Rect::new(x, y, x + w, y + h);
+            let style = FillStrokeStyle {
+                fill: Some(bg),
+                stroke: None,
+            };
+            self.draw_rect(rect, &style);
         }
 
         // 设置颜色
