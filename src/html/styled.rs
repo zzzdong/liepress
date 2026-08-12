@@ -370,6 +370,8 @@ fn convert_children(
         }
     }
 
+    // 块级文本流的真正起点/终点丢弃孤立空白（CSS 行首/行尾语义）
+    trim_text_sequence(&mut result, true);
     result
 }
 
@@ -397,10 +399,106 @@ fn convert_inline_children(
             }
         }
     }
+    // 行内流：边界空格必须保留（与父级相邻文本跨边界合并），
+    // 只删除折叠后为空的文本节点。
+    trim_text_sequence(&mut result, false);
     result
 }
 
 // ─── 辅助函数 ─────────────────────────────────────────────
+
+/// 对兄弟节点序列做边界空白修剪。
+///
+/// `block_boundary=true` 表示该序列是一个**块级文本流**的边界：
+/// 去掉首节点（若为 Text）的开头空白、尾节点（若为 Text）的结尾空白，
+/// 即 CSS 行首/行尾孤立的折叠空格不渲染。中间节点的边界空格保留，
+/// 保证跨片段分词（`Hello` + `<b> world </b>` 的衔接空格不丢）。
+///
+/// `block_boundary=false` 表示行内流：边界空格保留（与父级相邻文本
+/// 跨边界合并），只删除折叠后为空的文本节点。
+///
+/// 空文本节点（折叠后为空白串）始终被移除。
+fn trim_text_sequence(nodes: &mut Vec<Node>, block_boundary: bool) {
+    // 1) 移除空文本节点
+    nodes.retain(|n| match &n.kind {
+        NodeKind::Text { text } => !text.trim().is_empty(),
+        _ => true,
+    });
+
+    // 2) 块级流边界：首节点去开头空白、尾节点去结尾空白
+    if block_boundary {
+        if let Some(first) = nodes.first_mut() {
+            strip_leading_space(first);
+        }
+        if let Some(last) = nodes.last_mut() {
+            strip_trailing_space(last);
+        }
+    }
+
+    // 3) 再次移除因去空而变空的文本节点（例如首尾节点原本就是纯空白）
+    nodes.retain(|n| match &n.kind {
+        NodeKind::Text { text } => !text.is_empty(),
+        _ => true,
+    });
+}
+
+/// 去掉节点文本流的**开头**空白。
+///
+/// 若节点是 Text，直接 trim_start；若是行内容器（Strong/Em/Span/...），
+/// 穿透到其第一个产生内容的子节点（CSS 行首空白在块级边界被丢弃）。
+fn strip_leading_space(node: &mut Node) {
+    if let NodeKind::Text { text } = &mut node.kind {
+        let trimmed = text.trim_start();
+        if trimmed != text.as_str() {
+            *text = trimmed.to_string();
+        }
+        return;
+    }
+    match &mut node.kind {
+        NodeKind::Span { children }
+        | NodeKind::Strong { children }
+        | NodeKind::Emphasis { children }
+        | NodeKind::Delete { children }
+        | NodeKind::Link { children, .. }
+        | NodeKind::Subscript { children }
+        | NodeKind::Superscript { children }
+        | NodeKind::Paragraph { children } => {
+            if let Some(first) = children.first_mut() {
+                strip_leading_space(first);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 去掉节点文本流的**结尾**空白。
+///
+/// 若节点是 Text，直接 trim_end；若是行内容器，穿透到其最后一个
+/// 产生内容的子节点。
+fn strip_trailing_space(node: &mut Node) {
+    if let NodeKind::Text { text } = &mut node.kind {
+        let trimmed = text.trim_end();
+        if trimmed != text.as_str() {
+            *text = trimmed.to_string();
+        }
+        return;
+    }
+    match &mut node.kind {
+        NodeKind::Span { children }
+        | NodeKind::Strong { children }
+        | NodeKind::Emphasis { children }
+        | NodeKind::Delete { children }
+        | NodeKind::Link { children, .. }
+        | NodeKind::Subscript { children }
+        | NodeKind::Superscript { children }
+        | NodeKind::Paragraph { children } => {
+            if let Some(last) = children.last_mut() {
+                strip_trailing_space(last);
+            }
+        }
+        _ => {}
+    }
+}
 
 /// 获取标题级别
 fn heading_level(tag: HtmlTag) -> u8 {
@@ -774,6 +872,32 @@ mod tests {
         let em = find_node(&node, |k| matches!(k, NodeKind::Emphasis { .. })).unwrap();
         assert!(matches!(&strong.kind, NodeKind::Strong { .. }));
         assert!(matches!(&em.kind, NodeKind::Emphasis { .. }));
+    }
+
+    #[test]
+    fn test_whitespace_preserved_around_inline_style() {
+        // 跨样式片段的分词空格必须保留：
+        // `This is a <b>Markdown</b> document.`
+        // → `This is a` + `Markdown` + ` document.`（前后空格都在）
+        let node = html_to_styled("<p>This is a <strong>Markdown</strong> document.</p>");
+        let para = find_node(&node, |k| matches!(k, NodeKind::Paragraph { .. })).unwrap();
+        let children = match &para.kind {
+            NodeKind::Paragraph { children } => children,
+            _ => unreachable!("already matched Paragraph"),
+        };
+
+        // 3 个直接子节点：Text("This is a ") / Strong / Text(" document.")
+        assert_eq!(children.len(), 3, "paragraph should have 3 direct children");
+        let first = match &children[0].kind {
+            NodeKind::Text { text } => text.as_str(),
+            _ => panic!("first child should be text"),
+        };
+        let last = match &children[2].kind {
+            NodeKind::Text { text } => text.as_str(),
+            _ => panic!("last child should be text"),
+        };
+        assert_eq!(first, "This is a ", "leading text trailing space must survive");
+        assert_eq!(last, " document.", "trailing text leading space must survive");
     }
 
     #[test]

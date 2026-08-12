@@ -389,8 +389,13 @@ fn extract_lines_from_parley(
             let text_end = run_text_range.end;
             let text_range = text_start..text_end;
 
-            // 提取该 run 的文本内容（保留整段，使 glyph.cluster 的全局字节偏移可直接使用）
-            let run_text = full_text.to_string();
+            // 提取该 run 的文本内容。`text_range` 是相对 `full_text` 的字节区间，
+            // 按该区间切片，使每个 run 只携带自身对应的文本（而非整段全文），
+            // 否则每段样式 run 都会携带整段文本，导致文本重复/拆行。
+            let run_text = full_text
+                .get(text_start..text_end)
+                .map(str::to_string)
+                .unwrap_or_default();
 
             let relative_glyphs: Vec<Glyph> = glyph_data[*start_idx..*end_idx]
                 .iter()

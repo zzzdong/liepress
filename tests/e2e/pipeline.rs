@@ -2,7 +2,34 @@
 
 use crate::common::samples;
 use crate::common::{assert_valid_pdf, pdf_page_count};
-use liepress::{ConvertOptions, markdown_to_pdf};
+use liepress::{ConvertOptions, ast_to_skeleton, markdown_to_pdf};
+
+/// 将 Markdown 跑完整条「非 PDF」管线，返回骨架文本内容。
+///
+/// 用于验证 Unicode 文本层面的输出（PDF 字体是 CID 编码，直接提取是 glyph id，
+/// 无法可靠断言文本，因此在此层验证分词空格）。
+fn md_to_skeleton_text(md: &str) -> String {
+    let html = liepress::markdown_to_html(md);
+    let doc = liepress::html::parse_html(&html);
+    let engine = liepress::css::CssEngine::new(liepress::ast::presets::DEFAULT_CSS)
+        .expect("default css should parse");
+    let styled = liepress::html::html_to_styled_nodes(&doc, &engine);
+    let skeleton = ast_to_skeleton(&styled, &liepress::PageSettings::default());
+    skeleton.blocks.iter().map(|b| b.text_content()).collect()
+}
+
+#[test]
+fn test_whitespace_preserved_across_bold() {
+    // 回归测试：`This is a **Markdown** document.` 加粗片段两端的分词空格必须保留。
+    let text = md_to_skeleton_text("# Space\n\nThis is a **Markdown** document.");
+    assert!(
+        text.contains("a Markdown document"),
+        "bold-adjacent spaces must be preserved, got: {:?}",
+        text
+    );
+    // 行首/行尾的孤立空白应被折叠丢弃
+    assert_eq!(text.trim(), text, "no leading/trailing whitespace in skeleton");
+}
 
 #[test]
 fn test_full_pipeline_pdf() {

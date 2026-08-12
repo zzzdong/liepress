@@ -578,12 +578,17 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             }
             BlockKind::Blockquote { children } => {
                 let pad = 8.0;
-                let bh = measure_block_recursive(children, &self.settings, x + pad + 4.0);
+                let inner_x = x + pad + 4.0;
+                // 内容高度 = 子块高度之和 + 底部内边距
+                let content_h = measure_block_recursive(children, &self.settings, inner_x) + 4.0;
+                // 该块在父级中分配的总高度（含引用块自身的上下 margin）
+                let total_h = block_height(block, &self.settings, x);
+                // 左侧竖条跨越整个块（含 margin 区），内容在块内垂直居中
                 self.draw_rect(
                     x,
                     y,
                     2.0,
-                    bh,
+                    total_h,
                     Some(DocColor {
                         r: 200,
                         g: 200,
@@ -592,10 +597,11 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     }),
                     None,
                 );
-                let mut cy = y;
+                let offset = ((total_h - content_h) / 2.0).max(0.0);
+                let mut cy = y + offset;
                 for child in children {
-                    self.draw_block(child, x + pad + 4.0, cy, false);
-                    cy += block_height(child, &self.settings, x + pad + 4.0);
+                    self.draw_block(child, inner_x, cy, false);
+                    cy += block_height(child, &self.settings, inner_x);
                 }
             }
             BlockKind::List { children, .. } => {
@@ -690,6 +696,12 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         let body: &[TableRow] = if repeat_header { rows } else { &rows[1.min(rows.len())..] };
 
         let row_h = 18.0;
+        let border = DocColor {
+            r: 200,
+            g: 200,
+            b: 200,
+            a: 255,
+        };
         let draw_row = |r: &mut PdfRenderer<'_, '_>, row: &TableRow, cy: f64, is_header: bool| {
             r.draw_rect(
                 x,
@@ -711,16 +723,13 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                         a: 255,
                     }
                 }),
-                Some((
-                    DocColor {
-                        r: 200,
-                        g: 200,
-                        b: 200,
-                        a: 255,
-                    },
-                    0.5,
-                )),
+                Some((border, 0.5)),
             );
+            // 列间分隔竖线：在每列交界处画一条垂直边框线。
+            for col in 1..ncols {
+                let sep_x = x + col as f64 * col_w;
+                r.draw_line(sep_x, cy, sep_x, cy + row_h, border, 0.5);
+            }
             let mut cx = x;
             for cell in row.cells.iter() {
                 let cell_x = cx + 3.0;
@@ -871,9 +880,13 @@ fn paginate_table(
 }
 
 /// 测量单个块高度（递归）。
+///
+/// 返回的块高**包含该块的上下 margin**（`style.margin_top` + `margin_bottom`），
+/// 使不同元素之间产生垂直间距。容器块（List/Blockquote/Document 等）先累加
+/// 子块高度（子块已含自身 margin），再加上容器自身的 margin。
 fn block_height(block: &SkeletonBlock, settings: &PageSettings, x: f64) -> f64 {
     let style = &block.style;
-    match &block.kind {
+    let base = match &block.kind {
         BlockKind::Heading { children, .. } => children.iter().map(|c| block_height(c, settings, x)).sum(),
         BlockKind::Paragraph { lines } => (lines.len().max(1) as f64) * style.line_height_pt as f64,
         BlockKind::CodeBlock { code, .. } => (code.lines().count().max(1) as f64) * 18.0 + 8.0,
@@ -916,7 +929,8 @@ fn block_height(block: &SkeletonBlock, settings: &PageSettings, x: f64) -> f64 {
         }
         BlockKind::LineBreak => style.line_height_pt as f64 / 2.0,
         BlockKind::Document { children, .. } => children.iter().map(|c| block_height(c, settings, x)).sum(),
-    }
+    };
+    base + style.margin_top as f64 + style.margin_bottom as f64
 }
 
 /// 递归测量子块总高度（供 Blockquote 绘制背景用）。

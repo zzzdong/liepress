@@ -30,6 +30,7 @@
 2. 任何输出后端都**不反向**从 PDF 像素还原结构；它们都正向消费 `Document`。
 3. `Document` 不持有 parley 字体句柄 / 字形——只存字体名、字号、颜色等纯样式描述，保证 DOCX/HTML 可消费、可序列化。
 4. 过渡期内允许旧 `generator::Document` 与新 `Document` 并存，但 S6 收口时删除旧层（B=选项2 的终点）。
+5. **Markdown 不是第二种源，而是 HTML 的语法糖**：Markdown 块（`#` / `-` / `> ` / ` ``` ` 等）在 `markdown_to_html` 阶段展开为 HTML 标签；Markdown 内嵌的 raw HTML 片段（`Event::Html` / `Event::InlineHtml`）原样透传，二者在 HTML 层天然汇合。因此**不存在「Markdown 直接到 Document」的路径**——HTML 是 Markdown 与 CSS 选择器（`DEFAULT_CSS` + 用户 CSS + 内嵌 `<style>` + 内联 `style`）的**唯一交汇点**，绕过 HTML 即丢失 CSS 可配置化。
 
 ---
 
@@ -77,6 +78,7 @@ HtmlDocument ──▶ Styled Node (Node + 已解析 Style)          ← Layer 2
 ```
 
 要点：
+- **HTML 是 Markdown 与 CSS 的唯一交汇点**：Markdown 先展开为 HTML（内嵌 raw HTML 原样透传），再经 `html5ever` 解析为元素树供 CSS 选择器匹配，最终汇入 `Document`。CSS 的可配置化（`DEFAULT_CSS` + 用户 CSS + `<style>` + 内联 `style`）强依赖 HTML 元素树——`h1 {}`、`.highlight {}`、`p[style=...]` 都是 HTML 语义。因此「Markdown → HTML → Document」是**必经链路**，不可跳过 HTML 直接解析 Markdown（否则需在 `Document` 上重新发明一套 selector 机制，既重复又丢失 `<style>` / class / 内联 `style` 的天然支持）。详见 §1.3 原则 5。
 - **Document 是汇合点**：Markdown 与 HTML 两种源都先汇入 Styled Node，再由 generator 产出统一的 `Document`。
 - **五后端并列**：`PDF / DOCX / HTML / SVG / PNG` 地位平等，都从 `Document` 读数据。HTML/SVG/PNG 同为连续流、共用非分页展平逻辑（评审意见 3）。
 - **分页下沉**：`Document` 不含页序列；PDF 后端内做 `paginate(doc, A4)`，DOCX 只写 `sectPr`，HTML/SVG/PNG 直接展平。

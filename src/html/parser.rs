@@ -98,11 +98,10 @@ impl DomSink {
         for child in handle.children.borrow().iter() {
             if let Some(ref name) = child.element_name {
                 // Element node - flush pending text first
-                let text = if in_pre {
-                    pending_text.clone()
-                } else {
-                    pending_text.trim().to_string()
-                };
+                // 注意：这里不做 trim，保留文本节点原始空白。跨元素分词的边界
+                // 空格（如 `This is a <b> bold </b> text`）必须在元素边界保留，
+                // 否则被误删；CSS 空白折叠与块级边界去空由 styled 层处理。
+                let text = pending_text.clone();
                 if !text.is_empty() {
                     result.push(HtmlNode::Text(text));
                 }
@@ -154,11 +153,8 @@ impl DomSink {
         }
 
         // Flush remaining text
-        let text = if in_pre {
-            pending_text.clone()
-        } else {
-            pending_text.trim().to_string()
-        };
+        // 同样不做 trim：保留原始空白，交给 styled 层的块级边界去空。
+        let text = pending_text.clone();
         if !text.is_empty() {
             result.push(HtmlNode::Text(text));
         }

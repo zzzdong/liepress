@@ -294,6 +294,66 @@ fn collect_inline_segments(children: &[Node]) -> Vec<(String, TextStyle)> {
     segments
 }
 
+/// 对展平后的文本段序列做 CSS 空白折叠与合并（`white-space: normal`）。
+///
+/// 规则：
+/// 1. 每个段内部连续空白折叠为单个空格，但**保留边界单空格**
+///    （来自 `collapse_whitespace`），用于跨段分词。
+/// 2. **跨段合并**：若前一段以空格结尾、后一段以空格开头，则去掉后一段
+///    的开头空格，避免 `Hello ` + ` world ` 产生双空格。
+/// 3. **块级流边界去空**：去掉首段的开头空格、末段的结尾空格
+///    （CSS 行首/行尾孤立空白不渲染）。
+/// 4. 折叠后为空的段被移除。
+///
+/// `\n`（`LineBreak`）段视为硬换行，作为分隔符处理，不被折叠或删空。
+fn fold_segments_whitespace(segments: &mut Vec<(String, TextStyle)>) {
+    if segments.is_empty() {
+        return;
+    }
+
+    // 1) 折叠每个段的内部空白（保留边界单空格）；空段标记删除。
+    let mut retained: Vec<(String, TextStyle)> = Vec::with_capacity(segments.len());
+    for (text, style) in segments.drain(..) {
+        if text == "\n" {
+            retained.push((text, style));
+            continue;
+        }
+        let folded = crate::html::ast::collapse_whitespace(&text);
+        if !folded.is_empty() {
+            retained.push((folded, style));
+        }
+    }
+
+    // 2) 跨段合并：前段结尾空格 + 后段开头空格 → 只保留一个。
+    let mut i = 1;
+    while i < retained.len() {
+        let prev_ends_space = retained[i - 1].0.ends_with(' ');
+        let cur_starts_space = retained[i].0.starts_with(' ');
+        if prev_ends_space && cur_starts_space && retained[i].0 != "\n" {
+            let cur = &mut retained[i].0;
+            *cur = cur.trim_start().to_string();
+        }
+        i += 1;
+    }
+
+    // 3) 块级流边界去空：首段开头、末段结尾。
+    if let Some(first) = retained.first_mut()
+        && first.0 != "\n"
+    {
+        first.0 = first.0.trim_start().to_string();
+    }
+    if let Some(last) = retained.last_mut()
+        && last.0 != "\n"
+    {
+        last.0 = last.0.trim_end().to_string();
+    }
+
+    // 4) 移除因去空而变空的段。
+    retained.retain(|(text, _)| !text.is_empty());
+
+    *segments = retained;
+}
+
 /// 从 segments 生成 URL 映射，并标注到 TextLine 的 runs 上。
 ///
 /// 使用顺序匹配：runs 在行中的顺序与 segments 一致。通过跟踪每个 segment
@@ -333,7 +393,9 @@ fn layout_inline(
     style: &crate::ast::Style,
     settings: &PageSettings,
 ) -> Vec<DocTextLine> {
-    let segments = collect_inline_segments(children);
+    let mut segments = collect_inline_segments(children);
+    // CSS 空白折叠与合并（跨段分词、行首/行尾去空）
+    fold_segments_whitespace(&mut segments);
     if segments.is_empty() {
         return Vec::new();
     }
@@ -411,6 +473,60 @@ mod tests {
             crate::ast::Style::default(),
             false,
         )
+    }
+
+    fn make_segments(parts: &[&str]) -> Vec<(String, crate::text::TextStyle)> {
+        parts
+            .iter()
+            .map(|s| (s.to_string(), crate::text::TextStyle::default()))
+            .collect()
+    }
+
+    #[test]
+    fn test_fold_segments_whitespace_cross_style() {
+        // `This is a **Markdown** document.`
+        // 对应 segment 序列：["This is a ", "Markdown", " document."]
+        // → 折叠后应为 "This is a Markdown document."（分词空格保留，无双空格）
+        let mut segs = make_segments(&["This is a ", "Markdown", " document."]);
+        fold_segments_whitespace(&mut segs);
+        let joined: String = segs.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(joined, "This is a Markdown document.");
+    }
+
+    #[test]
+    fn test_fold_segments_whitespace_boundary() {
+        // 块级流起点/终点的孤立空白被丢弃
+        let mut segs = make_segments(&["  leading", "text", "trailing  "]);
+        fold_segments_whitespace(&mut segs);
+        let joined: String = segs.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(joined, "leadingtexttrailing");
+    }
+
+    #[test]
+    fn test_fold_segments_whitespace_double_space_across_boundary() {
+        // 前段结尾空格 + 后段开头空格 → 只保留一个
+        let mut segs = make_segments(&["Hello ", " world"]);
+        fold_segments_whitespace(&mut segs);
+        let joined: String = segs.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(joined, "Hello world");
+    }
+
+    #[test]
+    fn test_fold_segments_whitespace_internal_collapse() {
+        // 段内连续空白折叠为单空格
+        let mut segs = make_segments(&["a   b", "c\nd"]);
+        fold_segments_whitespace(&mut segs);
+        let joined: String = segs.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(joined, "a bc d");
+    }
+
+    #[test]
+    fn test_fold_segments_whitespace_linebreak_preserved() {
+        // `<br>` 产生的 \n 段作为硬换行保留，不删空
+        let mut segs = make_segments(&["before", "\n", "after"]);
+        fold_segments_whitespace(&mut segs);
+        let joined: String = segs.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(joined, "before\nafter");
     }
 
     #[test]

@@ -919,7 +919,14 @@ pub fn unescape_html(s: &str) -> String {
     result
 }
 
-/// 折叠空白：将连续的空白字符合并为单个空格，去除首尾空白
+/// 折叠空白：将连续的空白字符合并为单个空格。
+///
+/// CSS `white-space: normal` 语义下，折叠只发生在文本节点内部；
+/// **边界单空格必须保留**，因为它用于与相邻节点的空白跨边界合并
+/// （如 `Hello` + `<b> world </b>` 的分词）。首/尾孤立的折叠空格
+/// 是否丢弃由文本流级处理决定，不应在本函数内 trim。
+///
+/// `\u{00A0}`（`&nbsp;`）不属于 ASCII 空白，保持不变。
 pub fn collapse_whitespace(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut in_space = false;
@@ -934,9 +941,7 @@ pub fn collapse_whitespace(s: &str) -> String {
             in_space = false;
         }
     }
-    // 去除首尾空格
-
-    result.trim().to_string()
+    result
 }
 
 #[cfg(test)]
@@ -961,9 +966,12 @@ mod tests {
     #[test]
     fn test_collapse_whitespace() {
         assert_eq!(collapse_whitespace("hello   world"), "hello world");
-        assert_eq!(collapse_whitespace("  leading"), "leading");
-        assert_eq!(collapse_whitespace("trailing  "), "trailing");
+        // 边界单空格保留（CSS 折叠语义），由文本流级决定是否丢弃
+        assert_eq!(collapse_whitespace("  leading"), " leading");
+        assert_eq!(collapse_whitespace("trailing  "), "trailing ");
         assert_eq!(collapse_whitespace("hello\nworld"), "hello world");
+        // &nbsp; (U+00A0) 不被折叠/删除
+        assert_eq!(collapse_whitespace("a\u{00A0}\u{00A0}b"), "a\u{00A0}\u{00A0}b");
     }
 
     #[test]
