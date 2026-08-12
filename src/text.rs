@@ -1,5 +1,5 @@
+use crate::color::Color;
 use crate::error::Error;
-use crate::visual::Color;
 use parley::fontique::GenericFamily;
 use parley::style::{
     FontFamily, FontFamilyName, FontStyle as ParleyFontStyle, FontWeight, StyleProperty,
@@ -40,6 +40,8 @@ pub struct Glyph {
     pub y: f32,
     /// 前进宽度
     pub advance: f32,
+    /// 字节簇偏移（相对该 Run 自身的 text，即 `text[cluster..]`）
+    pub cluster: u32,
 }
 
 /// 文本 Run - 与 parley 的 GlyphRun 一一对应
@@ -161,7 +163,7 @@ pub struct TextStyle {
 impl Default for TextStyle {
     fn default() -> Self {
         Self {
-            color: Color::BLACK,
+            color: Color::black(),
             font_family: vec!["sans-serif".to_string()],
             font_size: 10.5,
             font_weight: "normal".to_string(),
@@ -271,6 +273,7 @@ struct GlyphRaw {
     x: f32,
     y: f32,
     advance: f32,
+    cluster: u32,
 }
 
 /// 从 parley Layout 提取行列表，返回相对 layout 原点的 TextLine 集合。
@@ -319,16 +322,28 @@ fn extract_lines_from_parley(
 
                 run_infos.push((color, font_data, font_size, *run, first_glyph_x));
 
-                for g in glyph_run.positioned_glyphs() {
-                    glyph_data.push((
-                        GlyphRaw {
-                            id: g.id,
-                            x: g.x,
-                            y: g.y,
-                            advance: g.advance,
-                        },
-                        next_run_idx,
-                    ));
+                // 收集已定位字形（含坐标），再用 cluster 的 text_range 提供字节簇偏移
+                let positioned: Vec<_> = glyph_run.positioned_glyphs().collect();
+                let mut gi = 0usize;
+                for cluster in glyph_run.run().visual_clusters() {
+                    let cluster_byte = cluster.text_range().start as u32;
+                    let cluster_glyphs: Vec<_> = cluster.glyphs().collect();
+                    for _cg in &cluster_glyphs {
+                        if gi < positioned.len() {
+                            let g = &positioned[gi];
+                            glyph_data.push((
+                                GlyphRaw {
+                                    id: g.id,
+                                    x: g.x,
+                                    y: g.y,
+                                    advance: g.advance,
+                                    cluster: cluster_byte,
+                                },
+                                next_run_idx,
+                            ));
+                            gi += 1;
+                        }
+                    }
                 }
                 next_run_idx += 1;
             }
@@ -374,12 +389,8 @@ fn extract_lines_from_parley(
             let text_end = run_text_range.end;
             let text_range = text_start..text_end;
 
-            // 提取该 run 的文本内容
-            let run_text = if text_end <= full_text.len() {
-                full_text[text_start..text_end].to_string()
-            } else {
-                String::new()
-            };
+            // 提取该 run 的文本内容（保留整段，使 glyph.cluster 的全局字节偏移可直接使用）
+            let run_text = full_text.to_string();
 
             let relative_glyphs: Vec<Glyph> = glyph_data[*start_idx..*end_idx]
                 .iter()
@@ -388,6 +399,7 @@ fn extract_lines_from_parley(
                     x: g.x - min_x,
                     y: g.y - row_top_rel,
                     advance: g.advance,
+                    cluster: g.cluster,
                 })
                 .collect();
 
@@ -405,6 +417,7 @@ fn extract_lines_from_parley(
                     x: g.x,
                     y: g.y + shift, // 上标：shift>0 → y 值增大 → 视觉上移（parley y 轴向下为正）
                     advance: g.advance,
+                    cluster: g.cluster,
                 })
                 .collect();
 

@@ -3,7 +3,7 @@
 //! 定义所有支持的样式属性和计算后的样式值。
 //! 这是布局引擎消费的最终样式数据结构。
 
-use crate::visual::Color;
+use crate::color::Color;
 
 // ─── 字体字重 ───
 

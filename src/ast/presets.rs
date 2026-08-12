@@ -10,7 +10,7 @@
 //! - `list_marker_style`: 列表标记样式（用于 bullet/number 布局计算）
 //! - `LIST_INDENT_PT` / `calculate_list_indent`: 列表缩进计算
 
-use crate::visual::Color;
+use crate::color::Color;
 
 use super::style::*;
 
