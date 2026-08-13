@@ -255,8 +255,8 @@ fn escape_html(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::*;
     use crate::dom::parser::parse_html;
+    use crate::dom::*;
 
     /// 辅助：将 Markdown 转换为 HtmlDocument
     fn md_to_doc(md: &str) -> HtmlDocument {

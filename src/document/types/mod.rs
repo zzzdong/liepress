@@ -8,9 +8,9 @@
 //! 旧像素层 `visual` 已删除；`style`/`image`/`color` 等在此重新投影，
 //! 供 `Document` 与 PDF 输出后端共用。
 
-mod style;
 mod image;
 pub mod page;
+mod style;
 
 pub use crate::ast::{ObjectFit, TextAlign, TextDecoration, WhiteSpace};
 pub use image::DocImage;

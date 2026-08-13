@@ -13,11 +13,11 @@ use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::color::rgb::Color as RgbColor;
 use krilla::destination::{Destination, XyzDestination};
 use krilla::document::Document as KrillaDocument;
-use krilla::outline::{Outline, OutlineNode};
 use krilla::geom::{
     PathBuilder, Point as KrillaPoint, Rect as KrillaRect, Size, Transform as KrillaTransform,
 };
 use krilla::num::NormalizedF32;
+use krilla::outline::{Outline, OutlineNode};
 use krilla::page::PageSettings as KrillaPageSettings;
 use krilla::paint::{Fill, FillRule, LineCap, LineJoin, Paint, Stroke as KrillaStroke};
 use krilla::surface::Surface;
@@ -34,8 +34,8 @@ use crate::document::types::{ResolvedStyle, TextAlign};
 use crate::error::{Error, Result};
 
 use super::common::{
-    BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, apply_heading_style, block_height,
-    blockquote_content_height, heading_font_size, text_style, text_style_from_resolved,
+    BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, apply_heading_style, block_height, blockquote_content_height,
+    heading_font_size, text_style, text_style_from_resolved,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -158,7 +158,7 @@ impl PdfDocumentGenerator {
                         (self.settings.margin_top_pt - 6.0).max(2.0) as f64,
                         9.0,
                         LayoutAlign::Center,
-                        content_w as f64,
+                        content_w,
                     );
                 }
                 if let Some(f) = &page.footer {
@@ -171,7 +171,7 @@ impl PdfDocumentGenerator {
                         (height - self.settings.margin_bottom_pt + 4.0) as f64,
                         9.0,
                         LayoutAlign::Center,
-                        content_w as f64,
+                        content_w,
                     );
                 }
                 for pb in &page.blocks {
@@ -187,12 +187,12 @@ impl PdfDocumentGenerator {
                     // 内部锚点（#fn-def-<id>）→ 目标 destination；否则视为外部 URL 动作。
                     let target = if let Some(internal) = url.strip_prefix('#') {
                         match footnote_targets.get(internal) {
-                            Some((page_idx, tx, ty)) => Target::Destination(Destination::Xyz(
-                                XyzDestination::new(
+                            Some((page_idx, tx, ty)) => {
+                                Target::Destination(Destination::Xyz(XyzDestination::new(
                                     *page_idx,
                                     KrillaPoint::from_xy(*tx as f32, *ty as f32),
-                                ),
-                            )),
+                                )))
+                            }
                             None => {
                                 let action = Action::from(LinkAction::new(url.clone()));
                                 Target::Action(action)
@@ -589,8 +589,8 @@ impl<'a, 's> PdfRenderer<'a, 's> {
     /// `text` 的局部偏移），可直接消费，无需任何重建或还原。
     fn draw_doc_lines(&mut self, lines: &[TextLine], x: f64, y: f64) {
         for line in lines {
-            let line_x = x + line.bounds.x0 as f64;
-            let line_y = y + line.bounds.y0 as f64;
+            let line_x = x + line.bounds.x0;
+            let line_y = y + line.bounds.y0;
             for run in &line.runs {
                 self.draw_text_run(run, Point::new(line_x, line_y));
             }
@@ -703,64 +703,20 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     cy += block_height(child, &self.settings, x);
                 }
             }
-            BlockKind::ListItem {
-                marker, children, ..
-            } => {
-                let mstyle = text_style(
-                    Color::from(style.color),
-                    style
-                        .font_family
-                        .first()
-                        .map(|s| s.as_str())
-                        .unwrap_or("serif"),
-                    style.font_size_pt,
-                    if style.font_style_italic {
-                        "italic"
-                    } else {
-                        "normal"
-                    },
-                    if style.font_weight_bold {
-                        "bold"
-                    } else {
-                        "normal"
-                    },
-                );
-                let mseg = [(marker.as_str(), &mstyle)];
-                let mlayout = layout_text(&mseg, None, LayoutAlign::Left);
-                if let Some(tl) = mlayout.lines.last() {
-                    for run in &tl.runs {
-                        self.draw_text_run(run, Point::new(x, y));
-                    }
-                }
+            BlockKind::ListItem { marker, children } => {
+                let indent = crate::output::common::list_item_indent(marker, style);
                 let mut cy = y;
                 for child in children {
-                    self.draw_block(child, x + 18.0, cy, false);
-                    cy += block_height(child, &self.settings, x + 18.0);
+                    self.draw_block(child, x + indent, cy, false);
+                    cy += block_height(child, &self.settings, x + indent);
                 }
             }
-            BlockKind::TaskListItem {
-                checked, children, ..
-            } => {
-                let box_color = if *checked {
-                    Color {
-                        r: 40,
-                        g: 120,
-                        b: 220,
-                        a: 255,
-                    }
-                } else {
-                    Color {
-                        r: 150,
-                        g: 150,
-                        b: 150,
-                        a: 255,
-                    }
-                };
-                self.draw_rect(x, y + 2.0, 10.0, 10.0, None, Some((box_color, 1.0)));
+            BlockKind::TaskListItem { marker, children, .. } => {
+                let indent = crate::output::common::list_item_indent(marker, style);
                 let mut cy = y;
                 for child in children {
-                    self.draw_block(child, x + 18.0, cy, false);
-                    cy += block_height(child, &self.settings, x + 18.0);
+                    self.draw_block(child, x + indent, cy, false);
+                    cy += block_height(child, &self.settings, x + indent);
                 }
             }
             BlockKind::Container { children, .. } => {
@@ -798,7 +754,15 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 row_heights,
                 ..
             } => {
-                self.draw_table(rows, col_widths, row_heights, style, x, y, repeat_table_header);
+                self.draw_table(
+                    rows,
+                    col_widths,
+                    row_heights,
+                    style,
+                    x,
+                    y,
+                    repeat_table_header,
+                );
             }
             BlockKind::Document { children, .. } => {
                 let mut cy = y;
@@ -944,10 +908,7 @@ fn build_krilla_outline(entries: &[OutlineEntry]) -> Outline {
             if e.level <= parent_level {
                 break;
             }
-            let dest = XyzDestination::new(
-                e.page_index,
-                KrillaPoint::from_xy(0.0, e.y as f32),
-            );
+            let dest = XyzDestination::new(e.page_index, KrillaPoint::from_xy(0.0, e.y as f32));
             let mut child = OutlineNode::new(e.title.clone(), dest);
             *i += 1;
             push_children(&mut child, entries, i, e.level);
@@ -959,10 +920,7 @@ fn build_krilla_outline(entries: &[OutlineEntry]) -> Outline {
     let mut i = 0usize;
     while i < entries.len() {
         let e = &entries[i];
-        let dest = XyzDestination::new(
-            e.page_index,
-            KrillaPoint::from_xy(0.0, e.y as f32),
-        );
+        let dest = XyzDestination::new(e.page_index, KrillaPoint::from_xy(0.0, e.y as f32));
         let mut node = OutlineNode::new(e.title.clone(), dest);
         i += 1;
         push_children(&mut node, entries, &mut i, e.level);

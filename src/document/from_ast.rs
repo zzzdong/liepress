@@ -20,10 +20,12 @@
 
 use crate::ast::{Node, NodeKind, computed_style_to_text_style};
 use crate::color::Color;
-use crate::document::layout::{BlockKind, DefinitionItemBlock, Document, Block, TableCell, TableRow};
-use crate::document::types::page::PageSettings;
-use crate::document::types::{DocImage, ObjectFit, ResolvedStyle};
+use crate::document::layout::{
+    Block, BlockKind, DefinitionItemBlock, Document, TableCell, TableRow,
+};
 use crate::document::text::{FONT_CONTEXT, LAYOUT_CONTEXT, TextLine, TextStyle};
+use crate::document::types::page::PageSettings;
+use crate::document::types::{DocImage, ResolvedStyle};
 
 /// 将带样式的 AST 根节点转换为文档 `Document`（不分页的源 IR）。
 ///
@@ -80,9 +82,7 @@ fn measure_cell(node: &Node, style: &crate::ast::Style, padding_h: f64) -> CellM
     // 最宽不可断词宽度
     let min_width = segments
         .iter()
-        .flat_map(|(text, st)| {
-            split_words(text).into_iter().map(move |w| (w, st))
-        })
+        .flat_map(|(text, st)| split_words(text).into_iter().map(move |w| (w, st)))
         .filter(|(w, _)| !w.is_empty())
         .fold(0.0_f64, |acc, (word, st)| {
             let w = FONT_CONTEXT.with(|font_cx| {
@@ -109,7 +109,9 @@ fn measure_cell(node: &Node, style: &crate::ast::Style, padding_h: f64) -> CellM
 
 /// 按空白把文本拆分为不可断词（连续非空白段）。
 fn split_words(text: &str) -> Vec<&str> {
-    text.split(char::is_whitespace).filter(|s| !s.is_empty()).collect()
+    text.split(char::is_whitespace)
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// 计算表格的列宽与行高（参考 main 分支 `generator/table.rs` 算法）。
@@ -261,12 +263,12 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             // Markdown 图片（`![alt](src)`）经 pulldown 包在 `<p>` 段落内。纯图片段落
             // 提升为独立的 `BlockKind::Image`（而非降级为 alt 文本），并默认居中。
             // 文本+图片混排的段落仍走内联排版（图片暂作 alt 文本占位）。
-            if children.len() == 1 {
-                if let NodeKind::Image { .. } = &children[0].kind {
-                    let mut centered = style.clone();
-                    centered.text_align = crate::ast::TextAlign::Center;
-                    return convert_image_node(&children[0], &centered, settings);
-                }
+            if children.len() == 1
+                && let NodeKind::Image { .. } = &children[0].kind
+            {
+                let mut centered = style.clone();
+                centered.text_align = crate::ast::TextAlign::Center;
+                return convert_image_node(&children[0], &centered, settings);
             }
             Block::new(
                 BlockKind::Paragraph {
@@ -281,7 +283,8 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             start,
             children,
         } => {
-            // 注入列表项 marker（方案 §3.6）：有序用 "N."，无序用 "•"。
+            // 注入列表项 marker（方案 §3.6）：有序用 "N."，无序用 "●"（实心大圆点，
+            // 比默认的 "•" 在正文同字号下视觉更大更清晰）。
             // 子列表（ListItem 内的 List）由其自身 List 节点重新计数，因此递归到
             // convert_list_item 后，内层 List 的 convert_node 会再次计算序号。
             let start_n: u32 = start.unwrap_or(if *ordered { 1 } else { 0 });
@@ -294,7 +297,7 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                         idx += 1;
                         m
                     } else {
-                        "•".to_string()
+                        "●".to_string()
                     };
                     convert_list_item(c, &marker, settings)
                 })
@@ -314,7 +317,11 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             let items_blocks: Vec<DefinitionItemBlock> = items
                 .iter()
                 .map(|item| DefinitionItemBlock {
-                    term: item.term.iter().map(|c| convert_node(c, settings)).collect(),
+                    term: item
+                        .term
+                        .iter()
+                        .map(|c| convert_node(c, settings))
+                        .collect(),
                     definition: item
                         .definition
                         .iter()
@@ -332,10 +339,8 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
         }
         NodeKind::FootnoteDef { id, children } => {
             // 脚注定义（末尾聚合）：子节点转为块序列，携带 label 供 PDF 内部跳转定位。
-            let child_blocks: Vec<Block> = children
-                .iter()
-                .map(|c| convert_node(c, settings))
-                .collect();
+            let child_blocks: Vec<Block> =
+                children.iter().map(|c| convert_node(c, settings)).collect();
             Block::new(
                 BlockKind::FootnoteDef {
                     id: id.clone(),
@@ -381,9 +386,7 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             style,
             node.splittable,
         ),
-        NodeKind::ThematicBreak => {
-            Block::new(BlockKind::ThematicBreak, style, node.splittable)
-        }
+        NodeKind::ThematicBreak => Block::new(BlockKind::ThematicBreak, style, node.splittable),
         NodeKind::Table { children, align } => {
             // 先收集所有单元格的原始 AST 节点（行→列），用于真实度量列宽/行高。
             let cell_nodes: Vec<Vec<&Node>> = children
@@ -413,7 +416,11 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                             // 与 compute_table_layout 的 padding_h 保持一致（内容区减 2*padding）。
                             let col_w = col_widths.get(ci).copied().unwrap_or(content_w);
                             TableCell {
-                                children: vec![convert_cell(cell, settings, (col_w - 8.0).max(1.0))],
+                                children: vec![convert_cell(
+                                    cell,
+                                    settings,
+                                    (col_w - 8.0).max(1.0),
+                                )],
                             }
                         })
                         .collect(),
@@ -422,7 +429,7 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             Block::new(
                 BlockKind::Table {
                     rows,
-                    column_align: align.iter().copied().collect(),
+                    column_align: align.to_vec(),
                     col_widths,
                     row_heights,
                 },
@@ -431,15 +438,15 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             )
         }
         NodeKind::Image { .. } => convert_image_node(node, &style, settings),
-        NodeKind::Center { children } | NodeKind::Container { children } | NodeKind::Span { children } => {
-            Block::new(
-                BlockKind::Container {
-                    children: children.iter().map(|c| convert_node(c, settings)).collect(),
-                },
-                style,
-                node.splittable,
-            )
-        }
+        NodeKind::Center { children }
+        | NodeKind::Container { children }
+        | NodeKind::Span { children } => Block::new(
+            BlockKind::Container {
+                children: children.iter().map(|c| convert_node(c, settings)).collect(),
+            },
+            style,
+            node.splittable,
+        ),
         // 内联节点不应作为块级顶层出现；若遇到，包裹为段落。
         NodeKind::Text { .. }
         | NodeKind::Strong { .. }
@@ -471,7 +478,7 @@ fn convert_list_item(node: &Node, marker: &str, settings: &PageSettings) -> Bloc
         NodeKind::ListItem { children } => Block::new(
             BlockKind::ListItem {
                 marker: marker.to_string(),
-                children: group_inline_children(children, settings),
+                children: group_inline_children(children, settings, &format!("{} ", marker)),
             },
             ResolvedStyle::from(node.style.clone()),
             node.splittable,
@@ -480,7 +487,7 @@ fn convert_list_item(node: &Node, marker: &str, settings: &PageSettings) -> Bloc
             BlockKind::TaskListItem {
                 marker: marker.to_string(),
                 checked: *checked,
-                children: group_inline_children(children, settings),
+                children: group_inline_children(children, settings, &format!("{} ", marker)),
             },
             ResolvedStyle::from(node.style.clone()),
             node.splittable,
@@ -517,7 +524,7 @@ fn convert_image_node(node: &Node, style: &ResolvedStyle, settings: &PageSetting
             data,
             format,
             alt: alt.clone(),
-            object_fit: ObjectFit::from(node.style.object_fit),
+            object_fit: node.style.object_fit,
             background: None,
         }),
         style.clone(),
@@ -542,32 +549,46 @@ fn is_inline_node(n: &Node) -> bool {
 }
 
 /// 将连续的內联兄弟节点合并为单个 `Paragraph`，块级节点保持独立。
-fn group_inline_children(children: &[Node], settings: &PageSettings) -> Vec<Block> {
+/// `prefix` 仅作用于首个内联段落（用于注入列表 marker）。
+fn group_inline_children(children: &[Node], settings: &PageSettings, prefix: &str) -> Vec<Block> {
     let mut out = Vec::new();
     let mut inline_buf: Vec<&Node> = Vec::new();
+    let mut first = true;
     for c in children {
         if is_inline_node(c) {
             inline_buf.push(c);
         } else {
-            flush_inline_buffer(&mut inline_buf, &mut out, settings);
+            let p = if first { prefix } else { "" };
+            flush_inline_buffer(&mut inline_buf, &mut out, settings, p);
+            first = false;
             out.push(convert_node(c, settings));
         }
     }
-    flush_inline_buffer(&mut inline_buf, &mut out, settings);
+    let p = if first { prefix } else { "" };
+    flush_inline_buffer(&mut inline_buf, &mut out, settings, p);
     out
 }
 
 /// 把缓冲的连续内联节点合并成一个 `Paragraph` 块（整体排版）。
+/// `prefix` 仅对第一个缓冲段落生效，用来把列表 marker 注入列表项内容
+/// 首行，使其参与 layout（占用首行宽度、续行对齐到 marker 之后）。
 fn flush_inline_buffer(
     buf: &mut Vec<&Node>,
     out: &mut Vec<Block>,
     settings: &PageSettings,
+    prefix: &str,
 ) {
     if buf.is_empty() {
         return;
     }
-    let nodes: Vec<Node> = buf.iter().map(|n| (*n).clone()).collect();
+    let mut nodes: Vec<Node> = buf.iter().map(|n| (*n).clone()).collect();
     let style = ResolvedStyle::from(nodes[0].style.clone());
+    if !prefix.is_empty() {
+        nodes.insert(
+            0,
+            Node::new(NodeKind::Text { text: prefix.to_string() }, nodes[0].style.clone(), true),
+        );
+    }
     out.push(Block::new(
         BlockKind::Paragraph {
             lines: layout_inline(&nodes, &nodes[0].style, settings, None),
@@ -656,12 +677,8 @@ fn apply_node_semantic_style(kind: &NodeKind, style: &mut TextStyle) {
     match kind {
         NodeKind::Strong { .. } => style.font_weight = "bold".to_string(),
         NodeKind::Emphasis { .. } => style.font_style = "italic".to_string(),
-        NodeKind::Delete { .. } => {
-            style.decoration = crate::ast::TextDecoration::LineThrough
-        }
-        NodeKind::Subscript { .. } => {
-            style.baseline_shift = -(style.font_size as f32 * 0.3)
-        }
+        NodeKind::Delete { .. } => style.decoration = crate::ast::TextDecoration::LineThrough,
+        NodeKind::Subscript { .. } => style.baseline_shift = -(style.font_size as f32 * 0.3),
         NodeKind::Superscript { .. } => style.baseline_shift = style.font_size as f32 * 0.3,
         _ => {}
     }
@@ -740,7 +757,8 @@ fn annotate_runs_with_urls(
     // 匹配时用 run 在 `total_text` 中的字节偏移（`run.text_offset`）精确命中，
     // 而非按字符数顺序累加——后者在「一个 run 横跨多个 segment」（如 CJK 字体
     // 优先后整行合并为一个 run）时会错位，导致链接 url 丢失。
-    let mut seg_bytes: Vec<(usize, usize, &(String, TextStyle))> = Vec::with_capacity(segments.len());
+    let mut seg_bytes: Vec<(usize, usize, &(String, TextStyle))> =
+        Vec::with_capacity(segments.len());
     let mut acc = 0usize;
     for seg in segments {
         let end = acc + seg.0.len();
@@ -797,8 +815,8 @@ fn decode_image_data_uri(src: &str) -> (Vec<u8>, String) {
         None => return (Vec::new(), format),
     };
     // base64 URL-safe 与标准两种 padding 均可解码。
-    use base64::engine::general_purpose::{STANDARD, URL_SAFE};
     use base64::Engine;
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE};
     let bytes = STANDARD
         .decode(payload)
         .or_else(|_| URL_SAFE.decode(payload))
@@ -839,7 +857,11 @@ fn resolve_image_size(
         }
         (None, Some(h)) => {
             let h = h as f64;
-            let w = if has_aspect { h * pw / ph } else { h * 4.0 / 3.0 };
+            let w = if has_aspect {
+                h * pw / ph
+            } else {
+                h * 4.0 / 3.0
+            };
             (w, h)
         }
         (None, None) => {
@@ -874,7 +896,9 @@ fn layout_inline(
     let combined: Vec<(&str, &crate::document::text::TextStyle)> =
         segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
 
-    let available_width = available_width.unwrap_or(settings.content_width() as f64).max(1.0);
+    let available_width = available_width
+        .unwrap_or(settings.content_width() as f64)
+        .max(1.0);
     let text_align = match style.text_align {
         crate::ast::TextAlign::Left => crate::ast::TextAlign::Left,
         crate::ast::TextAlign::Center => crate::ast::TextAlign::Center,
@@ -886,8 +910,13 @@ fn layout_inline(
         LAYOUT_CONTEXT.with(|layout_cx| {
             let mut fcx = font_cx.borrow_mut();
             let mut lcx = layout_cx.borrow_mut();
-            let mut layout =
-                crate::document::text::layout_text_with_contexts(&combined, Some(available_width), text_align, &mut fcx, &mut lcx);
+            let mut layout = crate::document::text::layout_text_with_contexts(
+                &combined,
+                Some(available_width),
+                text_align,
+                &mut fcx,
+                &mut lcx,
+            );
             annotate_runs_with_urls(&mut layout.lines, &total_text, &segments);
             layout.lines
         })
@@ -1036,7 +1065,9 @@ mod tests {
             false,
         );
         let root = Node::new(
-            NodeKind::Document { children: vec![img] },
+            NodeKind::Document {
+                children: vec![img],
+            },
             crate::ast::Style::default(),
             false,
         );
@@ -1114,12 +1145,16 @@ mod tests {
             false,
         );
         let para = Node::new(
-            NodeKind::Paragraph { children: vec![img] },
+            NodeKind::Paragraph {
+                children: vec![img],
+            },
             crate::ast::Style::default(),
             false,
         );
         let root = Node::new(
-            NodeKind::Document { children: vec![para] },
+            NodeKind::Document {
+                children: vec![para],
+            },
             crate::ast::Style::default(),
             false,
         );
@@ -1152,17 +1187,23 @@ mod tests {
             false,
         );
         let text = Node::new(
-            NodeKind::Text { text: "hello".to_string() },
+            NodeKind::Text {
+                text: "hello".to_string(),
+            },
             crate::ast::Style::default(),
             false,
         );
         let para = Node::new(
-            NodeKind::Paragraph { children: vec![text, img] },
+            NodeKind::Paragraph {
+                children: vec![text, img],
+            },
             crate::ast::Style::default(),
             false,
         );
         let root = Node::new(
-            NodeKind::Document { children: vec![para] },
+            NodeKind::Document {
+                children: vec![para],
+            },
             crate::ast::Style::default(),
             false,
         );
@@ -1270,9 +1311,7 @@ mod tests {
         let blocks = &document.blocks;
         assert_eq!(blocks.len(), 1);
         match &blocks[0].kind {
-            BlockKind::List {
-                ordered, start, ..
-            } => {
+            BlockKind::List { ordered, start, .. } => {
                 assert!(*ordered);
                 assert_eq!(*start, Some(1));
             }
@@ -1358,7 +1397,7 @@ mod tests {
         let document2 = ast_to_layout(&ast2, &PageSettings::default());
         match &document2.blocks[0].kind {
             BlockKind::List { children, .. } => match &children[0].kind {
-                BlockKind::ListItem { marker, .. } => assert_eq!(marker, "•"),
+                BlockKind::ListItem { marker, .. } => assert_eq!(marker, "●"),
                 _ => panic!("expected ListItem"),
             },
             _ => panic!("expected List"),
@@ -1393,10 +1432,7 @@ mod tests {
         match &document.blocks[0].kind {
             BlockKind::Paragraph { lines } => {
                 let run = &lines[0].runs[0];
-                assert!(
-                    run.background_color.is_some(),
-                    "行内代码应有灰色背景色"
-                );
+                assert!(run.background_color.is_some(), "行内代码应有灰色背景色");
             }
             _ => panic!("expected Paragraph"),
         }
@@ -1423,7 +1459,10 @@ mod tests {
         };
         let row1 = Node::new(
             NodeKind::TableRow {
-                children: vec![mk_cell("Name"), mk_cell("Supercalifragilisticexpialidocious")],
+                children: vec![
+                    mk_cell("Name"),
+                    mk_cell("Supercalifragilisticexpialidocious"),
+                ],
             },
             crate::ast::Style::default(),
             true,

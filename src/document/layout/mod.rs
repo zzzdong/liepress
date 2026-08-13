@@ -168,7 +168,7 @@ impl BlockKind {
             BlockKind::Link { url, title, .. } => title.clone().unwrap_or_else(|| url.clone()),
             BlockKind::CodeBlock { code, .. } => code.clone(),
             BlockKind::Document { children }
-            |             BlockKind::Heading { children, .. }
+            | BlockKind::Heading { children, .. }
             | BlockKind::List { children, .. }
             | BlockKind::ListItem { children, .. }
             | BlockKind::TaskListItem { children, .. }

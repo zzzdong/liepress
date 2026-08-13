@@ -7,8 +7,8 @@
 //! 样式枚举（`TextDecoration`/`TextAlign`/`WhiteSpace`/`ObjectFit` 等）以
 //! [`crate::ast`] 为唯一真源，文档层不再重复定义，直接复用。
 
-use crate::color::Color;
 use crate::ast::{ObjectFit, TextAlign, TextDecoration, WhiteSpace};
+use crate::color::Color;
 
 /// 已解析的文档样式（布局/分页使用）。
 ///
@@ -145,10 +145,15 @@ impl From<crate::ast::Style> for ResolvedStyle {
             height: s.height,
             object_fit: s.object_fit,
             background_color: s.background_color,
-            border_color: [&s.border.top, &s.border.right, &s.border.bottom, &s.border.left]
-                .into_iter()
-                .find(|side| side.is_visible())
-                .map(|side| side.color),
+            border_color: [
+                &s.border.top,
+                &s.border.right,
+                &s.border.bottom,
+                &s.border.left,
+            ]
+            .into_iter()
+            .find(|side| side.is_visible())
+            .map(|side| side.color),
             text_decoration: s.text_decoration,
             baseline_shift: s.baseline_shift,
             table_border_color: s.table_border_color,

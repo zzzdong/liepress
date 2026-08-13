@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, ValueEnum};
-use liepress::{
-    ConvertOptions, PageConfig, html_file_to_pdf, markdown_file_to_pdf,
-};
+use liepress::{ConvertOptions, PageConfig, html_file_to_pdf, markdown_file_to_pdf};
 
 #[derive(ValueEnum, Clone, Debug)]
 enum Format {

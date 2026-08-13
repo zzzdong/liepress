@@ -111,8 +111,12 @@ impl PageSettings {
 impl From<PageConfig> for PageSettings {
     fn from(config: PageConfig) -> Self {
         Self {
-            width_pt: config.width.unwrap_or(crate::document::types::PAGE_WIDTH_PT),
-            height_pt: config.height.unwrap_or(crate::document::types::PAGE_HEIGHT_PT),
+            width_pt: config
+                .width
+                .unwrap_or(crate::document::types::PAGE_WIDTH_PT),
+            height_pt: config
+                .height
+                .unwrap_or(crate::document::types::PAGE_HEIGHT_PT),
             margin_top_pt: config
                 .margin_top
                 .unwrap_or(crate::document::types::PAGE_MARGIN_TOP_PT),

@@ -55,9 +55,7 @@ fn serialize_node(node: &Node, out: &mut String) {
         } => {
             if *ordered {
                 match start {
-                    Some(s) if *s != 1 => {
-                        out.push_str(&format!("<ol start=\"{}\"{}>", s, sa))
-                    }
+                    Some(s) if *s != 1 => out.push_str(&format!("<ol start=\"{}\"{}>", s, sa)),
                     _ => out.push_str(&format!("<ol{}>", sa)),
                 }
             } else {
@@ -100,10 +98,7 @@ fn serialize_node(node: &Node, out: &mut String) {
             out.push_str("</dl>");
         }
         NodeKind::FootnoteDef { id, children } => {
-            out.push_str(&format!(
-                "<div id=\"{}\" class=\"footnote-def\"{}>",
-                id, sa
-            ));
+            out.push_str(&format!("<div id=\"{}\" class=\"footnote-def\"{}>", id, sa));
             for c in children {
                 serialize_node(c, out);
             }
@@ -122,12 +117,12 @@ fn serialize_node(node: &Node, out: &mut String) {
         }
         NodeKind::CodeBlock { code, lang } => {
             out.push_str(&format!("<pre{}><code", sa));
-            if let Some(l) = lang {
-                if !l.is_empty() {
-                    out.push_str(&format!(" class=\"language-{}\"", escape_attr(l)));
-                }
+            if let Some(l) = lang
+                && !l.is_empty()
+            {
+                out.push_str(&format!(" class=\"language-{}\"", escape_attr(l)));
             }
-            out.push_str(">");
+            out.push('>');
             out.push_str(&escape_html(code));
             out.push_str("</code></pre>");
         }
@@ -299,20 +294,36 @@ mod tests {
     fn test_node_to_html_heading() {
         let html = node_to_html(&node_of("# Title"));
         // 标签带内联 style 属性，故用宽松匹配标签名 + 内容
-        assert!(html.contains("<h1") && html.contains(">Title</h1>"), "got: {}", html);
+        assert!(
+            html.contains("<h1") && html.contains(">Title</h1>"),
+            "got: {}",
+            html
+        );
     }
 
     #[test]
     fn test_node_to_html_emphasis_strong() {
         let html = node_to_html(&node_of("*italic* and **bold**"));
-        assert!(html.contains("<em") && html.contains(">italic</em>"), "got: {}", html);
-        assert!(html.contains("<strong") && html.contains(">bold</strong>"), "got: {}", html);
+        assert!(
+            html.contains("<em") && html.contains(">italic</em>"),
+            "got: {}",
+            html
+        );
+        assert!(
+            html.contains("<strong") && html.contains(">bold</strong>"),
+            "got: {}",
+            html
+        );
     }
 
     #[test]
     fn test_node_to_html_code_block() {
         let html = node_to_html(&node_of("```rust\nfn main() {}\n```"));
-        assert!(html.contains("<pre") && html.contains("<code"), "got: {}", html);
+        assert!(
+            html.contains("<pre") && html.contains("<code"),
+            "got: {}",
+            html
+        );
         assert!(html.contains("fn main()"), "got: {}", html);
     }
 
@@ -320,6 +331,10 @@ mod tests {
     fn test_node_to_html_list() {
         let html = node_to_html(&node_of("- a\n- b"));
         assert!(html.contains("<ul"), "got: {}", html);
-        assert!(html.contains("<li>a</li>") || html.contains("<li") && html.contains(">a</li>"), "got: {}", html);
+        assert!(
+            html.contains("<li>a</li>") || html.contains("<li") && html.contains(">a</li>"),
+            "got: {}",
+            html
+        );
     }
 }

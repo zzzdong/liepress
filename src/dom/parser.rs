@@ -391,7 +391,10 @@ pub fn parse_html(html: &str) -> HtmlDocument {
 ///
 /// 与 `markdown_to_dom_with_resolver` 对称：HTML 输入路径在此完成图片内嵌，
 /// 让所有输出后端（PDF/SVG/PNG/DOCX）都能直接看到图片。
-pub fn parse_html_with_resolver(html: &str, resolver: &super::resource::ResourceResolver) -> HtmlDocument {
+pub fn parse_html_with_resolver(
+    html: &str,
+    resolver: &super::resource::ResourceResolver,
+) -> HtmlDocument {
     let mut doc = parse_html(html);
     super::resource::embed_images(&mut doc, resolver);
     doc

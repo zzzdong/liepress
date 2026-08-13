@@ -11,8 +11,8 @@ use std::fmt::Write;
 use crate::color::Color;
 use crate::document::layout::{Block, BlockKind, Document, TableCell, TableRow};
 use crate::document::text::{TextLine, TextRun};
-use crate::document::types::page::PageSettings;
 use crate::document::types::ResolvedStyle;
+use crate::document::types::page::PageSettings;
 use crate::dom::resource::base64_encode;
 
 use super::common::{
@@ -72,7 +72,11 @@ impl SvgRenderer {
     }
 
     fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, fill: &str, stroke: Option<&str>) {
-        let sw = if stroke.is_some() { " stroke=\"black\" stroke-width=\"0.5\"" } else { "" };
+        let sw = if stroke.is_some() {
+            " stroke=\"black\" stroke-width=\"0.5\""
+        } else {
+            ""
+        };
         let _ = writeln!(
             self.out,
             r#"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}"{} />"#,
@@ -137,8 +141,8 @@ impl SvgRenderer {
 
     fn draw_doc_lines(&mut self, lines: &[TextLine], x: f64, y: f64, family: &str) {
         for line in lines {
-            let line_x = x + line.bounds.x0 as f64;
-            let line_y = y + line.bounds.y0 as f64;
+            let line_x = x + line.bounds.x0;
+            let line_y = y + line.bounds.y0;
             for run in &line.runs {
                 let tx = line_x + run.baseline_x as f64;
                 let ty = line_y + run.baseline_y as f64;
@@ -217,7 +221,11 @@ impl SvgRenderer {
                     let _ = writeln!(
                         self.out,
                         r#"<image x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" href="{}" />"#,
-                        x, y, w, h, escape_attr(&href)
+                        x,
+                        y,
+                        w,
+                        h,
+                        escape_attr(&href)
                     );
                 } else if !img.alt.is_empty() {
                     let _ = writeln!(
@@ -235,7 +243,8 @@ impl SvgRenderer {
                     .map(|c| Self::color(&c))
                     .unwrap_or_else(|| "#b0b0b0".to_string());
                 let inner_x = x + BQ_BAR_WIDTH + BQ_PAD_X;
-                let text_h = super::common::blockquote_content_height(children, &self.settings, inner_x);
+                let text_h =
+                    super::common::blockquote_content_height(children, &self.settings, inner_x);
                 let content_h = text_h + 2.0 * BQ_PAD_Y;
                 self.rect(x, y, BQ_BAR_WIDTH, content_h, &bar_color, None);
                 self.draw_blocks(children, inner_x, y + BQ_PAD_Y);
@@ -243,8 +252,12 @@ impl SvgRenderer {
             BlockKind::List { children, .. } => {
                 self.draw_blocks(children, x, y);
             }
-            BlockKind::ListItem { marker, children, .. }
-            | BlockKind::TaskListItem { marker, children, .. } => {
+            BlockKind::ListItem {
+                marker, children, ..
+            }
+            | BlockKind::TaskListItem {
+                marker, children, ..
+            } => {
                 // 列表 marker（有序数字 / 无序圆点 / 任务框）画在缩进位置之前
                 let marker_text = marker.trim_end();
                 if !marker_text.is_empty() {
@@ -304,7 +317,11 @@ impl SvgRenderer {
                     let _ = writeln!(
                         self.out,
                         r#"<text x="{:.2}" y="{:.2}" font-size="{:.2}" font-family="{}" fill="black">{}</text>"#,
-                        x, y + 12.0, style.font_size_pt, escape_attr(&family), escape_text(&t)
+                        x,
+                        y + 12.0,
+                        style.font_size_pt,
+                        escape_attr(&family),
+                        escape_text(&t)
                     );
                 }
             }
@@ -356,7 +373,14 @@ impl SvgRenderer {
         }
         // 表格边框线（外框 + 列分隔竖线 + 行分隔横线），颜色/宽度取自样式。
         for seg in table_border_segments(rows, col_widths, row_heights, style, x, y) {
-            self.line(seg.x1, seg.y1, seg.x2, seg.y2, &Self::color(&seg.color), seg.width);
+            self.line(
+                seg.x1,
+                seg.y1,
+                seg.x2,
+                seg.y2,
+                &Self::color(&seg.color),
+                seg.width,
+            );
         }
     }
 }

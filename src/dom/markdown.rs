@@ -58,11 +58,11 @@ pub fn markdown_to_dom_with_resolver(
                     // `extract_code_block` 在没有 <code> 子元素时会回退到 pre 自身文本，
                     // 语言则从 pre 的 class 提取。
                     let mut pre = simple(HtmlTag::Pre);
-                    if let pulldown_cmark::CodeBlockKind::Fenced(lang) = kind {
-                        if !lang.is_empty() {
-                            pre.attrs
-                                .insert("class".to_string(), format!("language-{}", lang));
-                        }
+                    if let pulldown_cmark::CodeBlockKind::Fenced(lang) = kind
+                        && !lang.is_empty()
+                    {
+                        pre.attrs
+                            .insert("class".to_string(), format!("language-{}", lang));
                     }
                     stack.push(pre);
                     continue;
@@ -95,13 +95,12 @@ pub fn markdown_to_dom_with_resolver(
                         .get("class")
                         .map(|c| c.split_whitespace().any(|w| w == "footnote-def"))
                         .unwrap_or(false)
+                    && let Some(n) = closed.attrs.get("data-fn")
                 {
-                    if let Some(n) = closed.attrs.get("data-fn") {
-                        closed
-                            .children
-                            .insert(0, HtmlNode::Text(format!("{}. ", n)));
-                        closed.attrs.remove("data-fn");
-                    }
+                    closed
+                        .children
+                        .insert(0, HtmlNode::Text(format!("{}. ", n)));
+                    closed.attrs.remove("data-fn");
                 }
                 // 图片：把内部文本（alt 语法 `![alt]` 经 pulldown 展开为 Image 内文本）
                 // 收集为 alt 属性。
@@ -136,16 +135,15 @@ pub fn markdown_to_dom_with_resolver(
                 // 内嵌原始 HTML：用片段解析器递归成节点，回退到文本。
                 let frag = crate::dom::parse_html_fragment(&raw);
                 for node in frag {
-                    if let HtmlNode::Element(ref e) = node {
-                        if e.tag == HtmlTag::Style {
-                            if let Some(css) = e.children.first().and_then(|c| match c {
-                                HtmlNode::Text(t) => Some(t.clone()),
-                                _ => None,
-                            }) {
-                                style_sheets.push(css);
-                                continue;
-                            }
-                        }
+                    if let HtmlNode::Element(ref e) = node
+                        && e.tag == HtmlTag::Style
+                        && let Some(css) = e.children.first().and_then(|c| match c {
+                            HtmlNode::Text(t) => Some(t.clone()),
+                            _ => None,
+                        })
+                    {
+                        style_sheets.push(css);
+                        continue;
                     }
                     if let Some(parent) = stack.last_mut() {
                         parent.children.push(node);
@@ -178,11 +176,11 @@ pub fn markdown_to_dom_with_resolver(
                 let n = *footnote_index.get(&name.to_string()).unwrap_or(&n);
                 let mut el = simple(HtmlTag::Sup);
                 let mut a = simple(HtmlTag::A);
-                a.attrs.insert("href".to_string(), format!("#fn-def-{}", name));
+                a.attrs
+                    .insert("href".to_string(), format!("#fn-def-{}", name));
                 a.attrs
                     .insert("class".to_string(), "footnote-ref".to_string());
-                a.children
-                    .push(HtmlNode::Text(n.to_string()));
+                a.children.push(HtmlNode::Text(n.to_string()));
                 el.children.push(HtmlNode::Element(a));
                 attach(&mut stack, &mut root, &mut el);
             }
@@ -200,10 +198,7 @@ pub fn markdown_to_dom_with_resolver(
         root.children.push(HtmlNode::Element(el));
     }
 
-    let mut doc = HtmlDocument {
-        root,
-        style_sheets,
-    };
+    let mut doc = HtmlDocument { root, style_sheets };
     // 统一内嵌图片（本地路径 → data URI；data URI 保留；网络 URL 不处理）
     super::resource::embed_images(&mut doc, resolver);
     doc
@@ -250,7 +245,9 @@ fn element_from_start_tag(tag: &Tag) -> HtmlElement {
         Tag::Emphasis => simple(HtmlTag::Em),
         Tag::Strong => simple(HtmlTag::Strong),
         Tag::Strikethrough => simple(HtmlTag::Del),
-        Tag::Link { dest_url, title, .. } => {
+        Tag::Link {
+            dest_url, title, ..
+        } => {
             let mut el = simple(HtmlTag::A);
             el.attrs.insert("href".to_string(), dest_url.to_string());
             if !title.is_empty() {
@@ -258,7 +255,9 @@ fn element_from_start_tag(tag: &Tag) -> HtmlElement {
             }
             el
         }
-        Tag::Image { dest_url, title, .. } => {
+        Tag::Image {
+            dest_url, title, ..
+        } => {
             let mut el = simple(HtmlTag::Img);
             el.attrs.insert("src".to_string(), dest_url.to_string());
             if !title.is_empty() {

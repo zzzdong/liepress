@@ -28,8 +28,8 @@ fn test_center_inline_text_centers() {
     // pulldown-cmark 按规范不会把它们作为 center 的子节点，因此不支持这种居中写法。
     let md = "<center>居中文字</center>";
 
-    let pdf = markdown_to_pdf(md, &ConvertOptions::default())
-        .expect("PDF with center should succeed");
+    let pdf =
+        markdown_to_pdf(md, &ConvertOptions::default()).expect("PDF with center should succeed");
     let _doc = assert_valid_pdf(&pdf);
 }
 
@@ -43,7 +43,11 @@ fn test_whitespace_preserved_across_bold() {
         text
     );
     // 行首/行尾的孤立空白应被折叠丢弃
-    assert_eq!(text.trim(), text, "no leading/trailing whitespace in document");
+    assert_eq!(
+        text.trim(),
+        text,
+        "no leading/trailing whitespace in document"
+    );
 }
 
 #[test]
@@ -51,7 +55,10 @@ fn test_full_pipeline_pdf() {
     let pdf = markdown_to_pdf(samples::FULL_FEATURED, &ConvertOptions::default())
         .expect("Full PDF pipeline should succeed");
     let _doc = assert_valid_pdf(&pdf);
-    assert!(pdf_page_count(&pdf) >= 1, "PDF should have at least one page");
+    assert!(
+        pdf_page_count(&pdf) >= 1,
+        "PDF should have at least one page"
+    );
 }
 
 #[test]
@@ -176,10 +183,16 @@ fn test_pdf_outline() {
 fn test_svg_output() {
     let md = "# Title\n\nSome body text with `inline code`.\n\n- item one\n- item two";
     let svg = markdown_to_svg(md, &ConvertOptions::default()).expect("SVG should succeed");
-    assert!(svg.trim_start().starts_with("<svg"), "SVG should start with <svg");
+    assert!(
+        svg.trim_start().starts_with("<svg"),
+        "SVG should start with <svg"
+    );
     assert!(svg.contains("Title"), "SVG should contain heading text");
     assert!(svg.contains("inline code"), "SVG should contain body text");
-    assert!(svg.contains("rect"), "SVG should have rects (inline code bg)");
+    assert!(
+        svg.contains("rect"),
+        "SVG should have rects (inline code bg)"
+    );
 }
 
 #[test]
@@ -187,9 +200,15 @@ fn test_svg_background_and_list_marker() {
     let md = "# Title\n\n1. first\n2. second\n\n- bullet";
     let svg = markdown_to_svg(md, &ConvertOptions::default()).expect("SVG should succeed");
     // 白背景
-    assert!(svg.contains("fill=\"#ffffff\""), "SVG should have white background");
+    assert!(
+        svg.contains("fill=\"#ffffff\""),
+        "SVG should have white background"
+    );
     // 有序列表 marker（数字 + 点）
-    assert!(svg.contains("1.") && svg.contains("2."), "SVG should contain ordered list markers");
+    assert!(
+        svg.contains("1.") && svg.contains("2."),
+        "SVG should contain ordered list markers"
+    );
     // 无序列表 marker（圆点）
     assert!(svg.contains("•"), "SVG should contain bullet markers");
 }
@@ -226,7 +245,10 @@ fn test_svg_table_separators() {
     let md = "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |";
     let svg = markdown_to_svg(md, &ConvertOptions::default()).expect("SVG should succeed");
     // 表格列分隔竖线（<line>）
-    assert!(svg.contains("<line"), "SVG should have table column separator lines");
+    assert!(
+        svg.contains("<line"),
+        "SVG should have table column separator lines"
+    );
 }
 
 #[test]
@@ -263,10 +285,7 @@ fn test_png_with_image() {
     let img = image::load_from_memory(&png).expect("png should decode");
     let rgba = img.to_rgba8();
     // 统计偏红像素（图片是红色 1x1）；白底为 (255,255,255)。
-    let reddish = rgba
-        .pixels()
-        .filter(|p| p[0] > 200 && p[1] < 100)
-        .count();
+    let reddish = rgba.pixels().filter(|p| p[0] > 200 && p[1] < 100).count();
     assert!(
         reddish > 0,
         "PNG should contain red image pixels (not placeholder)"
@@ -306,8 +325,14 @@ fn test_docx_with_image_and_styles() {
         .expect("styles.xml")
         .read_to_string(&mut styles)
         .unwrap();
-    assert!(styles.contains("Heading1"), "styles.xml should define Heading1");
-    assert!(styles.contains("ListParagraph"), "styles.xml should define ListParagraph");
+    assert!(
+        styles.contains("Heading1"),
+        "styles.xml should define Heading1"
+    );
+    assert!(
+        styles.contains("ListParagraph"),
+        "styles.xml should define ListParagraph"
+    );
     // 正文含标题样式引用与图片绘制
     let mut document = String::new();
     archive
@@ -315,8 +340,14 @@ fn test_docx_with_image_and_styles() {
         .expect("document.xml")
         .read_to_string(&mut document)
         .unwrap();
-    assert!(document.contains("Heading1"), "document.xml should reference Heading1");
-    assert!(document.contains("<w:drawing"), "document.xml should embed an image");
+    assert!(
+        document.contains("Heading1"),
+        "document.xml should reference Heading1"
+    );
+    assert!(
+        document.contains("<w:drawing"),
+        "document.xml should embed an image"
+    );
 }
 
 #[test]
@@ -335,10 +366,7 @@ fn test_png_local_image() {
     let decoded = image::load_from_memory(&png).expect("png decode");
     // 图片区域应出现大量红色像素（100x80 红色图放大到 ~1016x813 px）
     let rgba = decoded.to_rgba8();
-    let reddish = rgba
-        .pixels()
-        .filter(|p| p[0] > 150 && p[1] < 100)
-        .count();
+    let reddish = rgba.pixels().filter(|p| p[0] > 150 && p[1] < 100).count();
     assert!(
         reddish > 10000,
         "PNG should contain the red image pixels (got {} reddish)",
@@ -349,15 +377,15 @@ fn test_png_local_image() {
 #[test]
 fn test_docx_image_scaled_to_fit_width() {
     // DOCX 图片应按「适合页宽」缩放：大图宽度 ≤ 内容宽（默认 451pt = 5727700 EMU）。
-    use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
     // 生成 1000x800 的 PNG（远超内容宽，应被缩到 ~451pt 宽）
     let img = image::RgbaImage::from_fn(1000, 800, |_, _| image::Rgba([100, 150, 200, 255]));
     let mut buf = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageRgba8(img)
         .write_to(&mut buf, image::ImageFormat::Png)
         .expect("encode png");
-    let b64 = STANDARD.encode(&buf.into_inner());
+    let b64 = STANDARD.encode(buf.into_inner());
     let md = format!("![big](data:image/png;base64,{})", b64);
 
     let docx = markdown_to_docx(&md, &ConvertOptions::default()).expect("DOCX should succeed");
@@ -463,7 +491,7 @@ fn test_table() {
 
 A paragraph after the table."#;
 
-    let pdf = markdown_to_pdf(md, &ConvertOptions::default())
-        .expect("PDF with table should succeed");
+    let pdf =
+        markdown_to_pdf(md, &ConvertOptions::default()).expect("PDF with table should succeed");
     let _doc = assert_valid_pdf(&pdf);
 }

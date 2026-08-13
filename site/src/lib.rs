@@ -4,8 +4,11 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub fn register_font_bytes(family_name: &str, bytes: &[u8]) -> Result<(), JsValue> {
-    document::text::register_font(document::text::FontSource::Memory(bytes.to_vec()), Some(family_name))
-        .map_err(|e| JsValue::from_str(&e.to_string()))
+    document::text::register_font(
+        document::text::FontSource::Memory(bytes.to_vec()),
+        Some(family_name),
+    )
+    .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 fn into_options(font_family: &str, css: &str) -> ConvertOptions {

@@ -17,12 +17,11 @@ pub fn embed_images(doc: &mut HtmlDocument, resolver: &ResourceResolver) {
 }
 
 fn embed_in_element(el: &mut HtmlElement, resolver: &ResourceResolver) {
-    if el.tag == HtmlTag::Img {
-        if let Some(src) = el.attrs.get("src") {
-            if let super::resource::ResolvedResource::DataUri(data_uri) = resolver.resolve_image(src) {
-                el.attrs.insert("src".to_string(), data_uri);
-            }
-        }
+    if el.tag == HtmlTag::Img
+        && let Some(src) = el.attrs.get("src")
+        && let super::resource::ResolvedResource::DataUri(data_uri) = resolver.resolve_image(src)
+    {
+        el.attrs.insert("src".to_string(), data_uri);
     }
     for child in &mut el.children {
         if let HtmlNode::Element(c) = child {
@@ -107,7 +106,7 @@ pub fn mime_for_path(path: &Path) -> &'static str {
 
 /// 标准 base64 编码。
 pub fn base64_encode(bytes: &[u8]) -> String {
-    use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
     STANDARD.encode(bytes)
 }

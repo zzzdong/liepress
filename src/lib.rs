@@ -14,11 +14,9 @@ pub use ast::PageConfig;
 pub use document::from_ast::ast_to_layout;
 pub use document::layout::Document;
 pub use document::types::page::PageSettings;
+pub use dom::md_converter::{embed_local_images, markdown_to_html, markdown_to_html_document};
 pub use dom::parse_html;
 pub use output::html::node_to_html;
-pub use dom::md_converter::{
-    embed_local_images, markdown_to_html, markdown_to_html_document,
-};
 pub use output::pdf::PdfDocumentGenerator;
 
 /// Markdown 转换配置
@@ -500,7 +498,11 @@ pub fn markdown_to_pdf(markdown: &str, options: &ConvertOptions) -> crate::error
     let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
@@ -518,7 +520,11 @@ pub fn markdown_file_to_pdf(
     let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
@@ -537,7 +543,11 @@ pub fn html_to_pdf(html: &str, options: &ConvertOptions) -> crate::error::Result
     let doc = dom::parse_html_with_resolver(html, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
@@ -553,7 +563,11 @@ pub fn html_file_to_pdf(path: &Path, options: &ConvertOptions) -> crate::error::
     let user_css = resolve_user_css(options, None)?;
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
@@ -569,11 +583,18 @@ pub fn markdown_to_svg(markdown: &str, options: &ConvertOptions) -> crate::error
     let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
-    Ok(output::svg::document_to_svg(&document, &page_settings_from(options)))
+    Ok(output::svg::document_to_svg(
+        &document,
+        &page_settings_from(options),
+    ))
 }
 
 /// HTML → SVG（不分页长图）
@@ -583,11 +604,18 @@ pub fn html_to_svg(html: &str, options: &ConvertOptions) -> crate::error::Result
     let doc = dom::parse_html_with_resolver(html, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
-    Ok(output::svg::document_to_svg(&document, &page_settings_from(options)))
+    Ok(output::svg::document_to_svg(
+        &document,
+        &page_settings_from(options),
+    ))
 }
 
 /// Markdown 文件 → SVG（自动内联本地图片）。
@@ -598,11 +626,18 @@ pub fn markdown_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::err
     let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
-    Ok(output::svg::document_to_svg(&document, &page_settings_from(options)))
+    Ok(output::svg::document_to_svg(
+        &document,
+        &page_settings_from(options),
+    ))
 }
 
 /// HTML 文件 → SVG（自动内联本地图片）。
@@ -613,11 +648,18 @@ pub fn html_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::error::
     let user_css = resolve_user_css(options, None)?;
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
-    Ok(output::svg::document_to_svg(&document, &page_settings_from(options)))
+    Ok(output::svg::document_to_svg(
+        &document,
+        &page_settings_from(options),
+    ))
 }
 
 // ─── PNG 输出 ──────────────────────────────────────────────────
@@ -638,7 +680,11 @@ pub fn markdown_to_png_dpi(
     let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
@@ -652,7 +698,11 @@ pub fn html_to_png(html: &str, options: &ConvertOptions) -> crate::error::Result
     let doc = dom::parse_html_with_resolver(html, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
@@ -660,7 +710,10 @@ pub fn html_to_png(html: &str, options: &ConvertOptions) -> crate::error::Result
 }
 
 /// Markdown 文件 → PNG（自动内联本地图片，默认 150 DPI）。
-pub fn markdown_file_to_png(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+pub fn markdown_file_to_png(
+    path: &Path,
+    options: &ConvertOptions,
+) -> crate::error::Result<Vec<u8>> {
     markdown_file_to_png_dpi(path, options, 150.0)
 }
 
@@ -676,7 +729,11 @@ pub fn markdown_file_to_png_dpi(
     let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
@@ -691,7 +748,11 @@ pub fn html_file_to_png(path: &Path, options: &ConvertOptions) -> crate::error::
     let user_css = resolve_user_css(options, None)?;
     let document = html_to_layout(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
@@ -710,21 +771,32 @@ pub fn markdown_to_docx(markdown: &str, options: &ConvertOptions) -> crate::erro
     let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
     let node = html_to_styled_node(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
     )?;
     output::docx::node_to_docx(&node)
 }
 
 /// Markdown 文件 → DOCX（自动将本地图片嵌入为 base64）。
-pub fn markdown_file_to_docx(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+pub fn markdown_file_to_docx(
+    path: &Path,
+    options: &ConvertOptions,
+) -> crate::error::Result<Vec<u8>> {
     let (markdown, base_dir) = read_markdown_file(path)?;
     let user_css = resolve_user_css(options, Some(&markdown))?;
     let resolver = dom::ResourceResolver::new(base_dir);
     let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
     let node = html_to_styled_node(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
     )?;
     output::docx::node_to_docx(&node)
@@ -740,7 +812,11 @@ pub fn html_to_docx(html: &str, options: &ConvertOptions) -> crate::error::Resul
     let doc = dom::parse_html_with_resolver(html, &resolver);
     let node = html_to_styled_node(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
     )?;
     output::docx::node_to_docx(&node)
@@ -755,7 +831,11 @@ pub fn html_file_to_docx(path: &Path, options: &ConvertOptions) -> crate::error:
     let user_css = resolve_user_css(options, None)?;
     let node = html_to_styled_node(
         &doc,
-        if user_css.is_empty() { None } else { Some(&user_css) },
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
     )?;
     output::docx::node_to_docx(&node)
@@ -774,8 +854,8 @@ fn html_to_styled_node(
     strict: bool,
 ) -> crate::error::Result<crate::ast::Node> {
     let builtin_css = ast::presets::DEFAULT_CSS;
-    let mut engine = css::engine::CssEngine::new(builtin_css)
-        .map_err(crate::error::Error::CssParseError)?;
+    let mut engine =
+        css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
     for sheet in &doc.style_sheets {
         engine = engine
             .with_user_css(sheet)
@@ -810,8 +890,8 @@ fn html_to_layout(
 ) -> crate::error::Result<Document> {
     // 1. 合并 CSS：内置样式 + <style> 标签 + 用户 CSS
     let builtin_css = ast::presets::DEFAULT_CSS;
-    let mut engine = css::engine::CssEngine::new(builtin_css)
-        .map_err(crate::error::Error::CssParseError)?;
+    let mut engine =
+        css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
 
     for sheet in &doc.style_sheets {
         engine = engine
@@ -834,12 +914,10 @@ fn html_to_layout(
     engine.set_root_font_size(root_style.font_size_pt);
 
     // 3. HtmlDocument → Styled Node Tree
-    let styled_node = dom::to_ast::html_to_styled_nodes(&doc, &engine);
+    let styled_node = dom::to_ast::html_to_styled_nodes(doc, &engine);
 
     // 4. Styled Node → Document（源 IR，不分页）
-    let page_settings = page_config
-        .map(PageSettings::from)
-        .unwrap_or_default();
+    let page_settings = page_config.map(PageSettings::from).unwrap_or_default();
 
     Ok(ast_to_layout(&styled_node, &page_settings))
 }
@@ -853,9 +931,14 @@ mod pipeline_tests {
     }
 
     #[test]
-    fn test_pdf_generation() {        let opts = ConvertOptions::default();
+    fn test_pdf_generation() {
+        let opts = ConvertOptions::default();
         let result = markdown_to_pdf(sample_markdown(), &opts);
-        assert!(result.is_ok(), "PDF generation should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "PDF generation should succeed: {:?}",
+            result.err()
+        );
         let pdf = result.unwrap();
         assert!(!pdf.is_empty(), "PDF bytes should not be empty");
         assert!(pdf.starts_with(b"%PDF"), "Should be valid PDF");

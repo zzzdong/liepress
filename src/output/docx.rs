@@ -7,7 +7,9 @@
 
 use crate::ast::{FontStyle, FontWeight, Node, NodeKind};
 use crate::color::Color;
-use docx_rs::{Docx, Document, Paragraph, Pic, Run, Style, Styles, StyleType, Table, TableCell, TableRow};
+use docx_rs::{
+    Document, Docx, Paragraph, Pic, Run, Style, StyleType, Styles, Table, TableCell, TableRow,
+};
 
 /// 把带样式的 AST 根节点转换为 DOCX 字节（完整 .docx zip 包）。
 pub fn node_to_docx(root: &Node) -> crate::error::Result<Vec<u8>> {
@@ -16,8 +18,7 @@ pub fn node_to_docx(root: &Node) -> crate::error::Result<Vec<u8>> {
     // 用 Cursor<Vec<u8>> 提供 Write + Seek（zip 打包需要）
     let mut buf = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut buf);
-    docx
-        .pack(&mut cursor)
+    docx.pack(&mut cursor)
         .map_err(|e| crate::error::Error::RenderError(format!("docx pack: {}", e)))?;
     Ok(buf)
 }
@@ -47,7 +48,12 @@ fn build_styles() -> Styles {
     styles = styles.add_style(
         Style::new("ListParagraph", StyleType::Paragraph)
             .name("List Paragraph")
-            .indent(Some(720), Some(docx_rs::SpecialIndentType::Hanging(360)), Some(0), None),
+            .indent(
+                Some(720),
+                Some(docx_rs::SpecialIndentType::Hanging(360)),
+                Some(0),
+                None,
+            ),
     );
     styles
 }
@@ -60,7 +66,11 @@ fn color_hex(c: &Color) -> String {
 /// 从 `ast::Style` 构造一个 Run（应用字体族/字号/颜色/字重/字形）。
 fn run_from_style(text: &str, style: &crate::ast::Style) -> Run {
     let mut run = Run::new();
-    let family = style.font_family.first().cloned().unwrap_or_else(|| "sans-serif".to_string());
+    let family = style
+        .font_family
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "sans-serif".to_string());
     run = run
         .add_text(text.to_string())
         .fonts(docx_rs::RunFonts::new().ascii(&family).east_asia(&family));
@@ -119,9 +129,7 @@ fn emit_node(doc: Document, n: &Node) -> Document {
                 };
                 // 列表段落套用 ListParagraph 样式（左侧缩进）
                 let marker_run = run_from_style(&marker, &item.style);
-                let mut p = Paragraph::new()
-                    .style("ListParagraph")
-                    .add_run(marker_run);
+                let mut p = Paragraph::new().style("ListParagraph").add_run(marker_run);
                 p = emit_list_item(p, item);
                 doc = doc.add_paragraph(p);
             }
@@ -130,20 +138,25 @@ fn emit_node(doc: Document, n: &Node) -> Document {
         NodeKind::ListItem { children } => {
             let marker = "•  ".to_string();
             let marker_run = run_from_style(&marker, &n.style);
-            let mut p = Paragraph::new()
-                .style("ListParagraph")
-                .add_run(marker_run);
+            let mut p = Paragraph::new().style("ListParagraph").add_run(marker_run);
             p = emit_inline_children(p, children);
             doc.add_paragraph(p)
         }
         NodeKind::TaskListItem { checked, children } => {
             let prefix = if *checked { "[x] " } else { "[ ] " };
-            let p = emit_inline_children(Paragraph::new().add_run(Run::new().add_text(prefix)), children);
+            let p = emit_inline_children(
+                Paragraph::new().add_run(Run::new().add_text(prefix)),
+                children,
+            );
             doc.add_paragraph(p)
         }
         NodeKind::Blockquote { children } => emit_children(doc, children),
         NodeKind::CodeBlock { code, .. } => {
-            let mono = || docx_rs::RunFonts::new().ascii("Consolas").east_asia("Consolas");
+            let mono = || {
+                docx_rs::RunFonts::new()
+                    .ascii("Consolas")
+                    .east_asia("Consolas")
+            };
             let mut p = Paragraph::new();
             for (i, line) in code.lines().enumerate() {
                 if i > 0 {
@@ -223,8 +236,11 @@ fn emit_inline_runs(p: Paragraph, n: &Node) -> Paragraph {
         NodeKind::Strong { children } => emit_inline_bold(p, children),
         NodeKind::Emphasis { children } => emit_inline_italic(p, children),
         NodeKind::InlineCode { code } => p.add_run(
-            run_from_style(code, &n.style)
-                .fonts(docx_rs::RunFonts::new().ascii("Consolas").east_asia("Consolas")),
+            run_from_style(code, &n.style).fonts(
+                docx_rs::RunFonts::new()
+                    .ascii("Consolas")
+                    .east_asia("Consolas"),
+            ),
         ),
         NodeKind::Link { children, .. } => emit_inline_children(p, children),
         NodeKind::Delete { children }
@@ -297,8 +313,8 @@ fn decode_data_uri(src: &str) -> Vec<u8> {
         return Vec::new();
     };
     let payload = &src[idx + b64marker.len()..];
-    use base64::engine::general_purpose::{STANDARD, URL_SAFE};
     use base64::Engine;
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE};
     STANDARD
         .decode(payload)
         .or_else(|_| URL_SAFE.decode(payload))
@@ -336,9 +352,7 @@ fn emit_inline_bold_italic(p: Paragraph, nodes: &[Node]) -> Paragraph {
     let mut p = p;
     for n in nodes {
         p = match &n.kind {
-            NodeKind::Text { text } => {
-                p.add_run(run_from_style(text, &n.style).bold().italic())
-            }
+            NodeKind::Text { text } => p.add_run(run_from_style(text, &n.style).bold().italic()),
             _ => emit_inline_runs(p, n),
         };
     }

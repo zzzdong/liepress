@@ -107,11 +107,7 @@ pub fn extract_outline_titles(doc: &Document) -> Vec<String> {
             if guard > 10000 {
                 break;
             }
-            let dict: Dictionary = match doc
-                .get_object(oid)
-                .ok()
-                .and_then(|o| o.as_dict().ok())
-            {
+            let dict: Dictionary = match doc.get_object(oid).ok().and_then(|o| o.as_dict().ok()) {
                 Some(d) => d.clone(),
                 None => break,
             };
@@ -132,12 +128,11 @@ pub fn extract_outline_titles(doc: &Document) -> Vec<String> {
     }
 
     // 从 /Outlines 根的 /First 开始遍历
-    if let Ok(dict) = doc.get_object(outlines_id) {
-        if let Ok(d) = dict.as_dict() {
-            if let Ok(first) = d.get(b"First").and_then(|o| o.as_reference()) {
-                collect_children(doc, first, &mut titles);
-            }
-        }
+    if let Ok(dict) = doc.get_object(outlines_id)
+        && let Ok(d) = dict.as_dict()
+        && let Ok(first) = d.get(b"First").and_then(|o| o.as_reference())
+    {
+        collect_children(doc, first, &mut titles);
     }
     titles
 }

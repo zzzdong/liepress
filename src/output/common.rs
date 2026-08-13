@@ -3,11 +3,11 @@
 //! 从 `pdf.rs` 提取，供 PDF / SVG / PNG 等后端复用，避免重复实现
 //! 块高度计算、样式映射等逻辑。
 
+use crate::color::Color;
 use crate::document::layout::{Block, BlockKind, TableRow};
 use crate::document::text::{TextDecoration, TextLine, TextStyle};
-use crate::document::types::{ResolvedStyle, TextAlign as LayoutAlign};
 use crate::document::types::page::PageSettings;
-use crate::color::Color;
+use crate::document::types::{ResolvedStyle, TextAlign as LayoutAlign};
 
 /// 引用块左侧竖条宽度（pt）。
 pub const BQ_BAR_WIDTH: f64 = 2.0;
@@ -43,14 +43,14 @@ pub fn block_height(block: &Block, settings: &PageSettings, x: f64) -> f64 {
         BlockKind::List { children, .. } => {
             children.iter().map(|c| block_height(c, settings, x)).sum()
         }
-        BlockKind::ListItem { children, .. } => children
+        BlockKind::ListItem { marker, children } => children
             .iter()
-            .map(|c| block_height(c, settings, x + 18.0))
+            .map(|c| block_height(c, settings, x + list_item_indent(marker, style)))
             .sum::<f64>()
             .max(style.line_height_pt as f64),
-        BlockKind::TaskListItem { children, .. } => children
+        BlockKind::TaskListItem { marker, children, .. } => children
             .iter()
-            .map(|c| block_height(c, settings, x + 18.0))
+            .map(|c| block_height(c, settings, x + list_item_indent(marker, style)))
             .sum::<f64>()
             .max(style.line_height_pt as f64),
         BlockKind::Container { children, .. } => {
@@ -175,17 +175,52 @@ pub fn table_border_segments(
     let bottom = y + total_h;
 
     // 外框四边
-    segs.push(TableBorderSegment { x1: x, y1: top, x2: x + content_w, y2: top, color: border, width: border_w });
-    segs.push(TableBorderSegment { x1: x, y1: bottom, x2: x + content_w, y2: bottom, color: border, width: border_w });
-    segs.push(TableBorderSegment { x1: x, y1: top, x2: x, y2: bottom, color: border, width: border_w });
-    segs.push(TableBorderSegment { x1: x + content_w, y1: top, x2: x + content_w, y2: bottom, color: border, width: border_w });
+    segs.push(TableBorderSegment {
+        x1: x,
+        y1: top,
+        x2: x + content_w,
+        y2: top,
+        color: border,
+        width: border_w,
+    });
+    segs.push(TableBorderSegment {
+        x1: x,
+        y1: bottom,
+        x2: x + content_w,
+        y2: bottom,
+        color: border,
+        width: border_w,
+    });
+    segs.push(TableBorderSegment {
+        x1: x,
+        y1: top,
+        x2: x,
+        y2: bottom,
+        color: border,
+        width: border_w,
+    });
+    segs.push(TableBorderSegment {
+        x1: x + content_w,
+        y1: top,
+        x2: x + content_w,
+        y2: bottom,
+        color: border,
+        width: border_w,
+    });
 
     // 列分隔竖线（每列交界处，贯穿整表高度）
     let mut sep = x;
     for (ci, cw) in col_widths.iter().enumerate() {
         sep += cw;
         if ci + 1 < ncols {
-            segs.push(TableBorderSegment { x1: sep, y1: top, x2: sep, y2: bottom, color: border, width: border_w });
+            segs.push(TableBorderSegment {
+                x1: sep,
+                y1: top,
+                x2: sep,
+                y2: bottom,
+                color: border,
+                width: border_w,
+            });
         }
     }
 
@@ -195,7 +230,14 @@ pub fn table_border_segments(
         ry += row_h_at(ri);
         if ri + 1 < rows.len() {
             // 表头底边（ri==0）与 body 行分隔统一处理
-            segs.push(TableBorderSegment { x1: x, y1: ry, x2: x + content_w, y2: ry, color: border, width: border_w });
+            segs.push(TableBorderSegment {
+                x1: x,
+                y1: ry,
+                x2: x + content_w,
+                y2: ry,
+                color: border,
+                width: border_w,
+            });
         }
     }
 
@@ -288,4 +330,26 @@ pub fn apply_heading_style(lines: &[TextLine], size: f32, color: Color) -> Vec<T
             nl
         })
         .collect()
+}
+
+/// 列表项内容区相对 marker 的缩进宽度：测量 marker 文本排版宽度 + 固定间距。
+///
+/// marker 已在 Document 阶段前置到列表项内容首行（见 `from_ast`），此处仅用
+/// 其宽度确定后续内容（含嵌套列表）的统一缩进槽，使多级列表自然递增缩进。
+pub fn list_item_indent(marker: &str, style: &ResolvedStyle) -> f64 {
+    if marker.is_empty() {
+        return 0.0;
+    }
+    let ts = text_style_from_resolved(style);
+    let layout = crate::document::text::layout_text(
+        &[(marker, &ts)],
+        None,
+        crate::ast::TextAlign::Left,
+    );
+    let w = layout
+        .lines
+        .first()
+        .map(|l| l.bounds.x1 - l.bounds.x0)
+        .unwrap_or(0.0);
+    w + 6.0
 }

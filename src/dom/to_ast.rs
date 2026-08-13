@@ -13,8 +13,8 @@
 use crate::ast::style::{Display, Style, TextAlign, TextDecoration};
 use crate::ast::{DefinitionItem, Node, NodeKind};
 use crate::css::engine::CssEngine;
-use crate::dom::*;
 use crate::dom::style_resolver::StyleResolver;
+use crate::dom::*;
 
 /// 将 HtmlDocument 转换为带样式的 Node 树
 pub fn html_to_styled_nodes(doc: &HtmlDocument, engine: &CssEngine) -> Node {
@@ -299,7 +299,8 @@ fn convert_tag_block(elem: &HtmlElement, style: &Style, resolver: &mut StyleReso
                                     definition: Vec::new(),
                                 });
                             }
-                            current_term = Some(convert_inline_children(&e.children, resolver, style));
+                            current_term =
+                                Some(convert_inline_children(&e.children, resolver, style));
                         }
                         HtmlTag::Dd => {
                             let definition = convert_children(&e.children, resolver, style);
@@ -380,11 +381,7 @@ fn convert_tag_block(elem: &HtmlElement, style: &Style, resolver: &mut StyleReso
                 .map(|c| c.split_whitespace().any(|w| w == "footnote-def"))
                 .unwrap_or(false);
             if is_footnote_def {
-                let id = elem
-                    .attrs
-                    .get("id")
-                    .cloned()
-                    .unwrap_or_default();
+                let id = elem.attrs.get("id").cloned().unwrap_or_default();
                 let mut f_style = style.clone();
                 f_style.font_size_pt = (style.font_size_pt * 0.85).max(7.0);
                 let children = convert_children(&elem.children, resolver, &f_style);
@@ -613,19 +610,19 @@ fn heading_level(tag: HtmlTag) -> u8 {
 /// 若 `<a>` 缺失，回退为 (children 文本, 空 url)。
 fn footnote_ref_content(elem: &HtmlElement) -> (String, Option<String>) {
     for child in &elem.children {
-        if let HtmlNode::Element(e) = child {
-            if e.tag == HtmlTag::A {
-                let num: String = e
-                    .children
-                    .iter()
-                    .filter_map(|n| match n {
-                        HtmlNode::Text(t) => Some(t.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                let href = e.attrs.get("href").cloned();
-                return (num, href);
-            }
+        if let HtmlNode::Element(e) = child
+            && e.tag == HtmlTag::A
+        {
+            let num: String = e
+                .children
+                .iter()
+                .filter_map(|n| match n {
+                    HtmlNode::Text(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .collect();
+            let href = e.attrs.get("href").cloned();
+            return (num, href);
         }
     }
     // 无 <a>：退化为纯文本数字，无链接
@@ -1026,8 +1023,14 @@ mod tests {
             NodeKind::Text { text } => text.as_str(),
             _ => panic!("last child should be text"),
         };
-        assert_eq!(first, "This is a ", "leading text trailing space must survive");
-        assert_eq!(last, " document.", "trailing text leading space must survive");
+        assert_eq!(
+            first, "This is a ",
+            "leading text trailing space must survive"
+        );
+        assert_eq!(
+            last, " document.",
+            "trailing text leading space must survive"
+        );
     }
 
     #[test]

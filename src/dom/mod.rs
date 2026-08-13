@@ -988,7 +988,10 @@ mod tests {
         assert_eq!(collapse_whitespace("trailing  "), "trailing ");
         assert_eq!(collapse_whitespace("hello\nworld"), "hello world");
         // &nbsp; (U+00A0) 不被折叠/删除
-        assert_eq!(collapse_whitespace("a\u{00A0}\u{00A0}b"), "a\u{00A0}\u{00A0}b");
+        assert_eq!(
+            collapse_whitespace("a\u{00A0}\u{00A0}b"),
+            "a\u{00A0}\u{00A0}b"
+        );
     }
 
     #[test]
@@ -1114,17 +1117,15 @@ mod tests {
 // ─── 子模块 ─────────────────────────────────────────────
 // 输入侧：Markdown/HTML → HtmlDocument（管线 Layer 1）
 pub mod markdown; // pulldown-cmark 事件流直连 HTML AST
-pub mod parser; // 纯 HTML 字符串 → HtmlDocument（html5ever）
-pub mod style_resolver; // 从 HtmlDocument 解析/合并样式表
-pub mod to_ast; // HtmlDocument + CSS → 语义树 ast::Node（套样式）
 pub mod md_converter; // Markdown 源 → HTML 文档（含 pulldown 降级入口）
-pub mod resource; // 资源解析器（图片内嵌：本地路径 + base64 data URI）
+pub mod parser; // 纯 HTML 字符串 → HtmlDocument（html5ever）
+pub mod resource;
+pub mod style_resolver; // 从 HtmlDocument 解析/合并样式表
+pub mod to_ast; // HtmlDocument + CSS → 语义树 ast::Node（套样式） // 资源解析器（图片内嵌：本地路径 + base64 data URI）
 
-pub use markdown::{inline_local_images, markdown_to_dom, markdown_to_dom_with_resolver};
-pub use resource::ResourceResolver;
-pub use parser::{parse_html, parse_html_document, parse_html_fragment, parse_html_with_resolver};
 pub use crate::css::CssEngine;
+pub use markdown::{inline_local_images, markdown_to_dom, markdown_to_dom_with_resolver};
+pub use md_converter::{embed_local_images, markdown_to_html, markdown_to_html_document};
+pub use parser::{parse_html, parse_html_document, parse_html_fragment, parse_html_with_resolver};
+pub use resource::ResourceResolver;
 pub use to_ast::html_to_styled_nodes;
-pub use md_converter::{
-    embed_local_images, markdown_to_html, markdown_to_html_document,
-};

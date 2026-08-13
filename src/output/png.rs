@@ -7,8 +7,8 @@
 use crate::color::Color;
 use crate::document::layout::{Block, BlockKind, Document, TableCell, TableRow};
 use crate::document::text::{TextLine, TextRun};
-use crate::document::types::page::PageSettings;
 use crate::document::types::ResolvedStyle;
+use crate::document::types::page::PageSettings;
 use crate::error::Result;
 
 use super::common::{
@@ -52,97 +52,18 @@ pub fn document_to_png(document: &Document, settings: &PageSettings, dpi: f32) -
         content_w,
         scale: scale as f64,
         settings: settings.clone(),
-        images: Vec::new(),
     };
+    // 先铺白色全页底色（不透明），再绘制其它元素。vello 默认画布透明，
+    // 由这条全页矩形提供背景，避免渲染后全局后处理铺白的语义问题。
+    r.fill_rect(0.0, 0.0, page_w, total_h, &Color::new(255, 255, 255));
     r.draw_blocks(&document.blocks, margin_left, margin_top);
 
     let mut pixmap = vello_cpu::Pixmap::new(pw16, ph16);
     r.ctx.render(&mut pixmap, &mut r.resources);
-    // 白色背景：vello 输出默认透明，这里把完全透明像素铺为白色（premultiplied）。
-    fill_transparent_white(&mut pixmap);
-    // 合成嵌入图片（vello_cpu 0.2 的 Image paint 有缺陷，改为 image crate 后合成）
-    composite_images(&mut pixmap, &r.images, scale as f64);
     let png = pixmap
         .into_png()
         .map_err(|e| crate::error::Error::RenderError(format!("{}", e)))?;
     Ok(png)
-}
-
-/// 把 pixmap 中完全透明（alpha=0）的像素填充为白色。
-fn fill_transparent_white(pixmap: &mut vello_cpu::Pixmap) {
-    let data = pixmap.data_mut();
-    for px in data.iter_mut() {
-        if px.a == 0 {
-            px.r = 255;
-            px.g = 255;
-            px.b = 255;
-            px.a = 255;
-        }
-    }
-}
-
-/// 将嵌入图片合成到 pixmap 的目标区域（vello_cpu 0.2 的 Image paint 有缺陷，
-/// 改用 `image` crate 解码 + 缩放 + 直接写像素）。
-///
-/// 需要先调用 [`fill_transparent_white`] 铺白背景，图片按其自身 alpha 覆盖。
-fn composite_images(
-    pixmap: &mut vello_cpu::Pixmap,
-    images: &[PendingImage],
-    scale: f64,
-) {
-    if images.is_empty() {
-        return;
-    }
-    let (pix_w, pix_h) = (pixmap.width() as usize, pixmap.height() as usize);
-    let data = pixmap.data_mut();
-    for img in images {
-        let Ok(dyn_img) = image::load_from_memory(&img.data) else {
-            continue;
-        };
-        let target_w = ((img.w * scale).ceil() as u32).max(1);
-        let target_h = ((img.h * scale).ceil() as u32).max(1);
-        let scaled = dyn_img.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle);
-        let rgba = scaled.to_rgba8();
-        let raw = rgba.as_raw();
-        let dx = (img.x * scale).round() as i64;
-        let dy = (img.y * scale).round() as i64;
-        for py in 0..target_h as i64 {
-            let yy = dy + py;
-            if yy < 0 || yy >= pix_h as i64 {
-                continue;
-            }
-            for px in 0..target_w as i64 {
-                let xx = dx + px;
-                if xx < 0 || xx >= pix_w as i64 {
-                    continue;
-                }
-                let idx = yy as usize * pix_w + xx as usize;
-                if idx >= data.len() {
-                    continue;
-                }
-                let si = (py as usize * target_w as usize + px as usize) * 4;
-                let a = raw[si + 3];
-                if a == 0 {
-                    continue;
-                }
-                // 预乘 alpha
-                let premul = |c: u8| ((a as u16 * c as u16) / 255) as u8;
-                data[idx].r = premul(raw[si]);
-                data[idx].g = premul(raw[si + 1]);
-                data[idx].b = premul(raw[si + 2]);
-                data[idx].a = a;
-            }
-        }
-    }
-}
-
-/// 待合成的嵌入图片：原始字节 + 目标区域（pt 坐标）。
-struct PendingImage {
-    data: Vec<u8>,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
 }
 
 struct PngRenderer {
@@ -151,8 +72,6 @@ struct PngRenderer {
     content_w: f64,
     scale: f64,
     settings: PageSettings,
-    /// 待合成的嵌入图片（vello_cpu 0.2 的 Image paint 有缺陷，改用后处理合成）
-    images: Vec<PendingImage>,
 }
 
 impl PngRenderer {
@@ -175,14 +94,15 @@ impl PngRenderer {
         path.move_to(Point::new(self.px(x1), self.px(y1)));
         path.line_to(Point::new(self.px(x2), self.px(y2)));
         self.ctx.set_paint(Self::color(color));
-        self.ctx.set_stroke(vello_cpu::kurbo::Stroke::new(self.px(width)));
+        self.ctx
+            .set_stroke(vello_cpu::kurbo::Stroke::new(self.px(width)));
         self.ctx.stroke_path(&path);
     }
 
     fn draw_doc_lines(&mut self, lines: &[TextLine], x: f64, y: f64) {
         for line in lines {
-            let line_x = x + line.bounds.x0 as f64;
-            let line_y = y + line.bounds.y0 as f64;
+            let line_x = x + line.bounds.x0;
+            let line_y = y + line.bounds.y0;
             for run in &line.runs {
                 self.draw_text_run(run, Point::new(line_x, line_y));
             }
@@ -216,8 +136,7 @@ impl PngRenderer {
         self.ctx.set_paint(Self::color(&run.color));
         // Arc<Vec<u8>> → FontData（linebender Blob）
         let blob: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = run.font_data.clone();
-        let font_data =
-            vello_cpu::peniko::FontData::new(vello_cpu::peniko::Blob::new(blob), 0);
+        let font_data = vello_cpu::peniko::FontData::new(vello_cpu::peniko::Blob::new(blob), 0);
         let font_size_px = self.px(run.font_size as f64) as f32;
         self.ctx
             .glyph_run(&mut self.resources, &font_data)
@@ -264,15 +183,26 @@ impl PngRenderer {
                 let mono = super::common::text_style_from_resolved(style);
                 for raw in code.lines() {
                     let segments = [(raw, &mono)];
-                    let layout = crate::document::text::layout_text(&segments, None, crate::ast::TextAlign::Left);
+                    let layout = crate::document::text::layout_text(
+                        &segments,
+                        None,
+                        crate::ast::TextAlign::Left,
+                    );
                     if let Some(tl) = layout.lines.last() {
-                        self.draw_doc_lines(&[tl.clone()], x + 4.0, cy);
+                        self.draw_doc_lines(std::slice::from_ref(tl), x + 4.0, cy);
                     }
                     cy += lh;
                 }
             }
             BlockKind::ThematicBreak => {
-                self.stroke_line(x, y + 2.0, x + self.content_w, y + 2.0, &Color::new(0, 0, 0), 0.75);
+                self.stroke_line(
+                    x,
+                    y + 2.0,
+                    x + self.content_w,
+                    y + 2.0,
+                    &Color::new(0, 0, 0),
+                    0.75,
+                );
             }
             BlockKind::Image(img) => {
                 let (w, h) = (img.size.0, img.size.1);
@@ -296,8 +226,17 @@ impl PngRenderer {
             BlockKind::List { children, .. } => {
                 self.draw_blocks(children, x, y);
             }
-            BlockKind::ListItem { children, .. } | BlockKind::TaskListItem { children, .. } => {
-                self.draw_blocks(children, x + 18.0, y);
+            BlockKind::ListItem { marker, children }
+            | BlockKind::TaskListItem {
+                marker,
+                children,
+                ..
+            } => {
+                // marker（"1." / "●" / "☐" 等）已在 Document 阶段前置到 children
+                // 首行文本（见 from_ast），这里仅按测量宽度缩进绘制内容，
+                // 嵌套列表会自然随缩进槽递增。
+                let indent = super::common::list_item_indent(marker, style);
+                self.draw_blocks(children, x + indent, y);
             }
             BlockKind::Container { children, .. } => {
                 self.draw_blocks(children, x, y);
@@ -392,18 +331,64 @@ impl PngRenderer {
         }
     }
 
-    /// 记录嵌入图片（vello_cpu 0.2 的 Image paint 有缺陷，渲染后由
-    /// [`composite_images`] 用 `image` crate 合成到 pixmap）。
+    /// 绘制嵌入图片：用 `image` crate 解码并按目标像素尺寸缩放，构造
+    /// `vello_cpu::Pixmap` 后通过 `Resources::register_image` 注册并用
+    /// `ImageSource::OpaqueId` 作为 `Image` paint，由 vello 在绘制阶段直接合成
+    /// （src-over 到已有的白底之上）。
+    ///
+    /// 使用 `OpaqueId` + `register_image` 路径（而非 `ImageSource::Pixmap` 内嵌），
+    /// 因为后者在 vello_cpu 0.2 的光栅化中对 `Image` paint 存在缺陷，图片无法
+    /// 正常绘制；`OpaqueId` 路径在 `RenderContext::set_paint` 文档中明确受支持。
     fn draw_image(&mut self, data: &[u8], x: f64, y: f64, w: f64, h: f64) {
         if data.is_empty() {
             return;
         }
-        self.images.push(PendingImage {
-            data: data.to_vec(),
-            x,
-            y,
-            w,
-            h,
-        });
+        let dyn_img = match image::load_from_memory(data) {
+            Ok(img) => img,
+            Err(e) => {
+                eprintln!(
+                    "[liepress] draw_image: image decode failed ({} bytes): {}",
+                    data.len(),
+                    e
+                );
+                // 解码失败：回退为灰色占位块。
+                self.fill_rect(x, y, w, h, &Color::new(200, 200, 200));
+                return;
+            }
+        };
+        // 按目标像素尺寸缩放，避免超大原图并提升合成质量。
+        let target_w = ((w * self.scale).ceil() as u32).max(1).min(u16::MAX as u32);
+        let target_h = ((h * self.scale).ceil() as u32).max(1).min(u16::MAX as u32);
+        let scaled =
+            dyn_img.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle);
+        let rgba = scaled.to_rgba8();
+        let pixels: Vec<vello_cpu::color::PremulRgba8> = rgba
+            .as_raw()
+            .chunks_exact(4)
+            .map(|p| {
+                let [r, g, b, a] = [p[0], p[1], p[2], p[3]];
+                vello_cpu::color::PremulRgba8 {
+                    r: ((a as u32 * r as u32) / 255) as u8,
+                    g: ((a as u32 * g as u32) / 255) as u8,
+                    b: ((a as u32 * b as u32) / 255) as u8,
+                    a,
+                }
+            })
+            .collect();
+        let pixmap = vello_cpu::Pixmap::from_parts(pixels, target_w as u16, target_h as u16);
+        let brush = vello_cpu::Image {
+            image: vello_cpu::ImageSource::Pixmap(std::sync::Arc::new(pixmap)),
+            sampler: vello_cpu::peniko::ImageSampler::default(),
+        };
+        self.ctx.set_paint(brush);
+        // `Image` paint 按 pixmap 的像素坐标 (0,0) 起始绘制，必须用 paint transform
+        // 把它平移（必要时缩放）到目标矩形区域；否则图片只会被画在画布原点附近，
+        // fill_rect 仅定义允许 paint 显示的裁剪形状，导致图片几乎不可见。
+        // 参考 vello_cpu 官方 `paints.rs` 的 pattern 示例（set_paint_transform）。
+        let rect = Rect::new(self.px(x), self.px(y), self.px(x + w), self.px(y + h));
+        self.ctx
+            .set_paint_transform(vello_cpu::kurbo::Affine::translate((rect.x0, rect.y0)));
+        self.ctx.fill_rect(&rect);
+        self.ctx.reset_paint_transform();
     }
 }

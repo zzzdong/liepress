@@ -467,7 +467,7 @@ fn extract_lines_from_parley(
                 text: run_text,
                 font_data: font_data.clone(),
                 font_size: *font_size,
-                text_offset: text_start as usize,
+                text_offset: text_start,
                 font_weight_bold,
                 font_style_italic,
                 color: *color,
