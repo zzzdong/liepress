@@ -1,19 +1,22 @@
 //! PDF 渲染器 - 使用 krilla。
 //!
-//! 本模块是 PDF 输出后端，**直接消费 [`crate::document::skeleton::DocumentSkeleton`]**
-//! （方案 §5.1：后端直接消费 DocumentSkeleton，不经 VisualElement 投影）。
+//! 本模块是 PDF 输出后端，**直接消费 [`crate::document::layout::Document`]**
+//! （方案 §5.1：后端直接消费 `Document`，不经 VisualElement 投影）。
 //!
-//! 分页（切页、跨页表格 MultiSpill）在 [`paginate_skeleton`] 内完成，符合方案
+//! 分页（切页、跨页表格 MultiSpill）在 [`paginate_layout`] 内完成，符合方案
 //! §1.1/§1.3.1/§4.1「Document 不知道页，分页是各输出后端职责」。
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use krilla::action::{Action, LinkAction};
 use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::color::rgb::Color as RgbColor;
-use krilla::document::Document;
-use krilla::geom::{PathBuilder, Point as KrillaPoint, Rect as KrillaRect, Size, Transform as KrillaTransform};
+use krilla::destination::{Destination, XyzDestination};
+use krilla::document::Document as KrillaDocument;
+use krilla::outline::{Outline, OutlineNode};
+use krilla::geom::{
+    PathBuilder, Point as KrillaPoint, Rect as KrillaRect, Size, Transform as KrillaTransform,
+};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings as KrillaPageSettings;
 use krilla::paint::{Fill, FillRule, LineCap, LineJoin, Paint, Stroke as KrillaStroke};
@@ -22,11 +25,18 @@ use krilla::text::Font;
 use vello_cpu::kurbo::Point;
 
 use crate::color::Color;
-use crate::document::skeleton::{BlockKind, DocumentSkeleton, SkeletonBlock, TableRow};
+use crate::document::layout::{Block, BlockKind, Document, TableRow};
+use crate::document::text::{
+    TextAlign as LayoutAlign, TextDecoration, TextLine, TextRun, layout_text,
+};
 use crate::document::types::page::PageSettings;
-use crate::document::types::{DocColor, DocTextLine, DocTextRun, ResolvedStyle, TextAlign};
+use crate::document::types::{ResolvedStyle, TextAlign};
 use crate::error::{Error, Result};
-use crate::text::{Glyph, TextAlign as LayoutAlign, TextDecoration, TextRun, TextStyle, layout_text};
+
+use super::common::{
+    BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, apply_heading_style, block_height,
+    blockquote_content_height, heading_font_size, text_style, text_style_from_resolved,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct FontCacheKey {
@@ -36,12 +46,11 @@ struct FontCacheKey {
 }
 
 impl FontCacheKey {
-    fn from_font_data(font_data: &parley::FontData) -> Self {
-        let data = font_data.data.as_ref();
+    fn from_font_data(font_data: &[u8]) -> Self {
         Self {
-            data_ptr: data.as_ptr(),
-            data_len: data.len(),
-            index: font_data.index,
+            data_ptr: font_data.as_ptr(),
+            data_len: font_data.len(),
+            index: 0,
         }
     }
 }
@@ -58,7 +67,7 @@ struct PdfPage {
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 struct PositionedBlock {
-    block: SkeletonBlock,
+    block: Block,
     /// 内容区左上角为原点的绝对坐标（pt）
     x: f64,
     y: f64,
@@ -68,7 +77,7 @@ struct PositionedBlock {
 }
 
 impl PositionedBlock {
-    fn new(block: SkeletonBlock, x: f64, y: f64, height: f64) -> Self {
+    fn new(block: Block, x: f64, y: f64, height: f64) -> Self {
         Self {
             block,
             x,
@@ -79,27 +88,61 @@ impl PositionedBlock {
     }
 }
 
-/// PDF 文档生成器：消费 [`DocumentSkeleton`]，内部分页并渲染为 PDF 字节。
+/// PDF 文档生成器：消费 [`Document`]，内部分页并渲染为 PDF 字节。
 pub struct PdfDocumentGenerator {
-    skeleton: DocumentSkeleton,
+    document: Document,
     settings: PageSettings,
 }
 
 impl PdfDocumentGenerator {
-    /// 从源 IR（不分页的 [`DocumentSkeleton`]）构造生成器。
-    pub fn from_skeleton(skeleton: DocumentSkeleton, settings: PageSettings) -> Self {
-        Self { skeleton, settings }
+    /// 从源 IR（不分页的 [`Document`]）构造生成器。
+    pub fn from_layout(document: Document, settings: PageSettings) -> Self {
+        Self { document, settings }
     }
 
     /// 生成 PDF 字节数据。
     pub fn generate(&self) -> Result<Vec<u8>> {
-        let pages = paginate_skeleton(&self.skeleton, &self.settings);
+        let pages = paginate_layout(&self.document, &self.settings);
 
-        let mut krilla_doc = Document::new();
+        // 收集脚注定义位置：id → (页索引, x, y)，供正文引用生成内部跳转。
+        // 坐标原点为内容区左上角；XyzDestination 的 point 同样以内容区左上角为原点，
+        // 由 krilla 自动转换为 PDF 底部原点。
+        let footnote_targets: HashMap<String, (usize, f64, f64)> = {
+            let mut m = HashMap::new();
+            for (idx, page) in pages.iter().enumerate() {
+                for pb in &page.blocks {
+                    if let BlockKind::FootnoteDef { id, .. } = &pb.block.kind {
+                        m.insert(id.clone(), (idx, pb.x, pb.y));
+                    }
+                }
+            }
+            m
+        };
+
+        // 收集目录条目：标题（Heading）块 → (层级, 文本, 页索引, y)，用于生成 PDF outline。
+        let mut outline_entries: Vec<OutlineEntry> = Vec::new();
+        for (idx, page) in pages.iter().enumerate() {
+            for pb in &page.blocks {
+                if let BlockKind::Heading { level, .. } = &pb.block.kind {
+                    let title = pb.block.text_content().trim().to_string();
+                    if !title.is_empty() {
+                        outline_entries.push(OutlineEntry {
+                            level: *level,
+                            title,
+                            page_index: idx,
+                            y: pb.y,
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut krilla_doc = KrillaDocument::new();
         for (idx, page) in pages.iter().enumerate() {
             let width = self.settings.width_pt;
             let height = self.settings.height_pt;
-            let size = Size::from_wh(width, height).ok_or_else(|| Error::RenderError("invalid page size".into()))?;
+            let size = Size::from_wh(width, height)
+                .ok_or_else(|| Error::RenderError("invalid page size".into()))?;
             let mut krilla_page = krilla_doc.start_page_with(KrillaPageSettings::new(size));
             let mut surface = krilla_page.surface();
 
@@ -115,7 +158,7 @@ impl PdfDocumentGenerator {
                         (self.settings.margin_top_pt - 6.0).max(2.0) as f64,
                         9.0,
                         LayoutAlign::Center,
-                        width as f64,
+                        content_w as f64,
                     );
                 }
                 if let Some(f) = &page.footer {
@@ -128,7 +171,7 @@ impl PdfDocumentGenerator {
                         (height - self.settings.margin_bottom_pt + 4.0) as f64,
                         9.0,
                         LayoutAlign::Center,
-                        width as f64,
+                        content_w as f64,
                     );
                 }
                 for pb in &page.blocks {
@@ -141,13 +184,36 @@ impl PdfDocumentGenerator {
 
             for (lx, ly, lw, lh, url) in links {
                 if let Some(rect) = KrillaRect::from_xywh(lx, ly, lw, lh) {
-                    let action = Action::from(LinkAction::new(url.clone()));
-                    let link_annotation = LinkAnnotation::new(rect, Target::Action(action));
+                    // 内部锚点（#fn-def-<id>）→ 目标 destination；否则视为外部 URL 动作。
+                    let target = if let Some(internal) = url.strip_prefix('#') {
+                        match footnote_targets.get(internal) {
+                            Some((page_idx, tx, ty)) => Target::Destination(Destination::Xyz(
+                                XyzDestination::new(
+                                    *page_idx,
+                                    KrillaPoint::from_xy(*tx as f32, *ty as f32),
+                                ),
+                            )),
+                            None => {
+                                let action = Action::from(LinkAction::new(url.clone()));
+                                Target::Action(action)
+                            }
+                        }
+                    } else {
+                        let action = Action::from(LinkAction::new(url.clone()));
+                        Target::Action(action)
+                    };
+                    let link_annotation = LinkAnnotation::new(rect, target);
                     krilla_page.add_annotation(Annotation::new_link(link_annotation, None));
                 }
             }
 
             krilla_page.finish();
+        }
+
+        // 按层级把标题条目组织为嵌套 outline，并挂到文档。
+        if !outline_entries.is_empty() {
+            let outline = build_krilla_outline(&outline_entries);
+            krilla_doc.set_outline(outline);
         }
 
         krilla_doc
@@ -174,7 +240,7 @@ impl PdfDocumentGenerator {
     }
 }
 
-/// PDF 绘制器：在单个 krilla Surface 上绘制 SkeletonBlock。
+/// PDF 绘制器：在单个 krilla Surface 上绘制 `Block`。
 struct PdfRenderer<'a, 's> {
     surface: &'s mut Surface<'a>,
     font_cache: HashMap<FontCacheKey, Font>,
@@ -200,7 +266,15 @@ impl<'a, 's> PdfRenderer<'a, 's> {
 
     // ─── 基础绘制原语 ──────────────────────────────────────
 
-    fn draw_rect(&mut self, x: f64, y: f64, w: f64, h: f64, fill: Option<DocColor>, stroke: Option<(DocColor, f64)>) {
+    fn draw_rect(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        fill: Option<Color>,
+        stroke: Option<(Color, f64)>,
+    ) {
         let mut pb = PathBuilder::new();
         pb.move_to(x as f32, y as f32);
         pb.line_to((x + w) as f32, y as f32);
@@ -236,7 +310,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         }
     }
 
-    fn draw_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, color: DocColor, width: f64) {
+    fn draw_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, color: Color, width: f64) {
         let mut pb = PathBuilder::new();
         pb.move_to(x1 as f32, y1 as f32);
         pb.line_to(x2 as f32, y2 as f32);
@@ -257,11 +331,25 @@ impl<'a, 's> PdfRenderer<'a, 's> {
     }
 
     /// 绘制单行纯文本（用于页眉/页脚等），居中于 [x, x+width]。
-    fn draw_text(&mut self, text: &str, x: f64, y: f64, font_size: f64, align: LayoutAlign, width: f64) {
+    fn draw_text(
+        &mut self,
+        text: &str,
+        x: f64,
+        y: f64,
+        font_size: f64,
+        align: LayoutAlign,
+        width: f64,
+    ) {
         if text.is_empty() {
             return;
         }
-        let style = text_style(Color::new(120, 120, 120), "serif", font_size as f32, "normal", "normal");
+        let style = text_style(
+            Color::new(120, 120, 120),
+            "serif",
+            font_size as f32,
+            "normal",
+            "normal",
+        );
         let segments = [(text, &style)];
         let layout = layout_text(&segments, None, align);
         let line = match layout.lines.last() {
@@ -278,7 +366,50 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         }
     }
 
-    fn draw_image(&mut self, data: &[u8], format: &str, position: Point, size: (f64, f64)) {
+    /// 按 `object_fit` 计算图片在 box `(w, h)` 内的实际绘制区域（x, y, w, h）。
+    ///
+    /// - `Fill`/`None`：拉伸铺满整个 box（默认行为）。
+    /// - `Contain`：保持宽高比缩放，完整放入 box 内并居中。
+    /// - `Cover`：保持宽高比缩放，铺满 box（超出部分被裁剪）。
+    fn image_draw_rect(
+        &self,
+        img: &crate::document::types::DocImage,
+        (w, h): (f64, f64),
+    ) -> (f64, f64, f64, f64) {
+        let (pw, ph) = (img.pixel_size.0 as f64, img.pixel_size.1 as f64);
+        if pw <= 0.0
+            || ph <= 0.0
+            || img.object_fit == crate::ast::ObjectFit::Fill
+            || img.object_fit == crate::ast::ObjectFit::None
+        {
+            return (0.0, 0.0, w, h);
+        }
+        let box_aspect = w / h;
+        let img_aspect = pw / ph;
+        let (dw, dh) = match img.object_fit {
+            crate::ast::ObjectFit::Contain => {
+                if img_aspect > box_aspect {
+                    (w, w / img_aspect)
+                } else {
+                    (h * img_aspect, h)
+                }
+            }
+            crate::ast::ObjectFit::Cover => {
+                if img_aspect > box_aspect {
+                    (h * img_aspect, h)
+                } else {
+                    (w, w / img_aspect)
+                }
+            }
+            _ => (w, h),
+        };
+        // 居中
+        let dx = (w - dw) / 2.0;
+        let dy = (h - dh) / 2.0;
+        (dx, dy, dw, dh)
+    }
+
+    fn draw_image(&mut self, data: &[u8], format: &str, (x, y, w, h): (f64, f64, f64, f64)) {
         use krilla::image::Image;
 
         let image = match format.to_lowercase().as_str() {
@@ -295,9 +426,9 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         };
 
         self.surface
-            .push_transform(&KrillaTransform::from_translate(position.x as f32, position.y as f32));
+            .push_transform(&KrillaTransform::from_translate(x as f32, y as f32));
 
-        let Some(image_size) = Size::from_wh(size.0 as f32, size.1 as f32) else {
+        let Some(image_size) = Size::from_wh(w as f32, h as f32) else {
             self.surface.pop();
             return;
         };
@@ -305,7 +436,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         self.surface.pop();
     }
 
-    /// 绘制 parley 文本 run（接受 [`TextRun`]，由 `DocTextRun` 重建而来）。
+    /// 绘制文本 run（接受 [`TextRun`]，自闭环类型，可直接消费）。
     fn draw_text_run(&mut self, run: &TextRun, position: Point) {
         use krilla::text::GlyphId;
 
@@ -336,10 +467,9 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             }
         }
 
-        let font_key = FontCacheKey::from_font_data(&run.font_data);
+        let font_key = FontCacheKey::from_font_data(run.font_data.as_slice());
         if let std::collections::hash_map::Entry::Vacant(e) = self.font_cache.entry(font_key) {
-            let data = run.font_data.data.as_ref();
-            if let Some(font) = Font::new(krilla::Data::from(data.to_vec()), run.font_data.index) {
+            if let Some(font) = Font::new(krilla::Data::from(run.font_data.as_ref().to_vec()), 0) {
                 e.insert(font);
             } else {
                 return;
@@ -360,12 +490,29 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             let link_y = position.y as f32;
             let link_w = run.advance;
             let link_h = run.font_size * 1.4;
-            self.links.push((link_x, link_y, link_w, link_h, url.clone()));
+            self.links
+                .push((link_x, link_y, link_w, link_h, url.clone()));
         }
 
         let mut krilla_glyphs = Vec::new();
-        for g in &run.glyphs {
+        let run_len = run.text.len();
+        // glyph 的 cluster 在 text 层提取时已被归一化为相对本 run 切片后 `run.text` 的
+        // **局部**偏移（自闭环），因此这里可直接用作 `run.text` 的索引，无需任何
+        // 外部信息（不再依赖 text_range / 所属 Line / 原始 full_text）。
+        for (i, g) in run.glyphs.iter().enumerate() {
             if g.id == 0 {
+                continue;
+            }
+            // 相邻字形的 cluster 单调递增，范围取 [glyph.cluster, next_glyph.cluster)，
+            // 末字形到 run.text 末尾。
+            let start = g.cluster as usize;
+            let end = if i + 1 < run.glyphs.len() {
+                run.glyphs[i + 1].cluster as usize
+            } else {
+                run_len
+            };
+            let range = start.min(run_len)..end.min(run_len);
+            if range.is_empty() {
                 continue;
             }
             krilla_glyphs.push(krilla::text::KrillaGlyph::new(
@@ -374,7 +521,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 (g.x - run.baseline_x) / run.font_size,
                 (g.y - run.baseline_y) / run.font_size,
                 0.0,
-                run.text_range.clone(),
+                range,
                 None,
             ));
         }
@@ -434,57 +581,24 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         }
     }
 
-    // ─── DocTextRun → TextRun 重建 ─────────────────────────
+    // ─── Block 绘制 ─────────────────────────────────────────
 
-    /// 把文档层投影的 [`DocTextRun`] 还原为 parley 的 [`TextRun`]，供 `draw_text_run` 使用。
+    /// 绘制已排版的文档文本行（[`TextLine`]）。
     ///
-    /// `DocTextRun` 是 `TextRun` 的精确投影（含 `font_data` 原始字节与字形），
-    /// 直接重建即可正确嵌入子字体与绘制，符合方案 §5.1（PDF 直接消费 Skeleton）。
-    fn doc_run_to_text_run(&self, dr: &DocTextRun) -> TextRun {
-        TextRun {
-            text: dr.text.clone(),
-            text_range: dr.text_range.clone(),
-            font_data: parley::FontData::new(parley::fontique::Blob::new(Arc::new(dr.font_data.clone())), 0),
-            font_size: dr.font_size,
-            color: Color::from(dr.color),
-            advance: dr.advance,
-            glyphs: dr
-                .glyphs
-                .iter()
-                .map(|g| Glyph {
-                    id: g.id,
-                    x: g.x,
-                    y: g.y,
-                    advance: g.advance,
-                    cluster: g.cluster,
-                })
-                .collect(),
-            is_rtl: false,
-            baseline_x: dr.baseline_x,
-            baseline_y: dr.baseline_y,
-            url: dr.url.clone(),
-            decoration: crate::text::TextDecoration::from(dr.decoration),
-            baseline_shift: dr.baseline_shift,
-            background_color: dr.background_color.map(Color::from),
-        }
-    }
-
-    // ─── SkeletonBlock 绘制 ─────────────────────────────────
-
-    /// 绘制已排版的文档文本行（DocTextLine）。
-    fn draw_doc_lines(&mut self, lines: &[DocTextLine], x: f64, y: f64) {
+    /// `TextLine`/`TextRun` 已自闭环（字体以 `Vec<u8>` 内嵌、glyph.cluster 为相对
+    /// `text` 的局部偏移），可直接消费，无需任何重建或还原。
+    fn draw_doc_lines(&mut self, lines: &[TextLine], x: f64, y: f64) {
         for line in lines {
-            let line_x = x + line.bounds.0;
-            let line_y = y + line.bounds.1;
+            let line_x = x + line.bounds.x0 as f64;
+            let line_y = y + line.bounds.y0 as f64;
             for run in &line.runs {
-                let tr = self.doc_run_to_text_run(run);
-                self.draw_text_run(&tr, Point::new(line_x, line_y));
+                self.draw_text_run(run, Point::new(line_x, line_y));
             }
         }
     }
 
-    /// 绘制单个 SkeletonBlock（递归）。`x`/`y` 为内容区绝对坐标（pt）。
-    fn draw_block(&mut self, block: &SkeletonBlock, x: f64, y: f64, repeat_table_header: bool) {
+    /// 绘制单个 `Block`（递归）。`x`/`y` 为内容区绝对坐标（pt）。
+    fn draw_block(&mut self, block: &Block, x: f64, y: f64, repeat_table_header: bool) {
         let style = &block.style;
         match &block.kind {
             BlockKind::Heading { level, children } => {
@@ -501,29 +615,18 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 self.draw_doc_lines(lines, x, y);
             }
             BlockKind::CodeBlock { code, .. } => {
-                let lh = 18.0;
+                // 样式全部来自 document 层投影的 ResolvedStyle（源自 CSS 的 pre 规则），
+                // 不再自行定义颜色/字号，仅对 CSS 未声明时保留最小兜底默认值。
+                let bg = style.background_color.unwrap_or(Color::new(245, 245, 245));
+                let lh = if style.line_height_pt > 0.0 {
+                    style.line_height_pt as f64
+                } else {
+                    18.0
+                };
                 let n = code.lines().count().max(1);
                 let h = n as f64 * lh + 8.0;
-                self.draw_rect(
-                    x,
-                    y,
-                    self.content_w,
-                    h,
-                    Some(DocColor {
-                        r: 245,
-                        g: 245,
-                        b: 245,
-                        a: 255,
-                    }),
-                    None,
-                );
-                let mono = text_style(
-                    Color::new(30, 30, 30),
-                    "monospace",
-                    13.0,
-                    "normal",
-                    "normal",
-                );
+                self.draw_rect(x, y, self.content_w, h, Some(bg), None);
+                let mono = text_style_from_resolved(style);
                 let mut cy = y + 4.0;
                 for raw in code.lines() {
                     let segments = [(raw, &mono)];
@@ -537,19 +640,15 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 }
             }
             BlockKind::ThematicBreak => {
-                self.draw_line(
-                    x,
-                    y + 1.0,
-                    x + self.content_w,
-                    y + 1.0,
-                    DocColor {
-                        r: 180,
-                        g: 180,
-                        b: 180,
-                        a: 255,
-                    },
-                    0.8,
-                );
+                // 横线颜色来自 CSS 的 hr 规则（border-top + border-color），
+                // 投影到 ResolvedStyle.border_color；无声明时兜底为灰。
+                let color = style.border_color.unwrap_or(Color::new(180, 180, 180));
+                let w = if style.border_width_top > 0.0 {
+                    style.border_width_top as f64
+                } else {
+                    0.8
+                };
+                self.draw_line(x, y + w / 2.0, x + self.content_w, y + w / 2.0, color, w);
             }
             BlockKind::Image(img) => {
                 let (w, h) = if img.size.0 > 0.0 && img.size.1 > 0.0 {
@@ -558,15 +657,19 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     (self.content_w, 120.0)
                 };
                 if !img.data.is_empty() {
-                    self.draw_image(&img.data, &img.format, Point::new(x, y), (w, h));
+                    // 按 text_align 水平居中：图片块默认随内容区左边缘 `x` 定位；
+                    // 居中时把图片整体右移 (content_w - w)/2（若图片比内容窄）。
+                    let align_x = match style.text_align {
+                        LayoutAlign::Center => x + ((self.content_w - w) / 2.0).max(0.0),
+                        LayoutAlign::Right => x + (self.content_w - w).max(0.0),
+                        _ => x,
+                    };
+                    // 按 object_fit 计算图片在 box 内的实际绘制区域（避免强制尺寸时拉伸变形）。
+                    let (dx, dy, dw, dh) = self.image_draw_rect(img, (w, h));
+                    self.draw_image(&img.data, &img.format, (align_x + dx, y + dy, dw, dh));
                 } else if !img.alt.is_empty() {
-                    let style = text_style(
-                        Color::new(120, 120, 120),
-                        "serif",
-                        11.0,
-                        "normal",
-                        "normal",
-                    );
+                    let style =
+                        text_style(Color::new(120, 120, 120), "serif", 11.0, "normal", "normal");
                     let segments = [(img.alt.as_str(), &style)];
                     let layout = layout_text(&segments, None, LayoutAlign::Left);
                     if let Some(tl) = layout.lines.last() {
@@ -577,27 +680,16 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 }
             }
             BlockKind::Blockquote { children } => {
-                let pad = 8.0;
-                let inner_x = x + pad + 4.0;
-                // 内容高度 = 子块高度之和 + 底部内边距
-                let content_h = measure_block_recursive(children, &self.settings, inner_x) + 4.0;
-                // 该块在父级中分配的总高度（含引用块自身的上下 margin）
-                let total_h = block_height(block, &self.settings, x);
-                // 左侧竖条跨越整个块（含 margin 区），内容在块内垂直居中
-                self.draw_rect(
-                    x,
-                    y,
-                    2.0,
-                    total_h,
-                    Some(DocColor {
-                        r: 200,
-                        g: 200,
-                        b: 200,
-                        a: 255,
-                    }),
-                    None,
-                );
-                let offset = ((total_h - content_h) / 2.0).max(0.0);
+                let inner_x = x + BQ_BAR_WIDTH + BQ_PAD_X;
+                // 先量文本 box（已扣子块 margin），引用块高度由文本 box 决定：文本高 + 上下对称内边距。
+                let text_h = blockquote_content_height(children, &self.settings, inner_x);
+                let content_h = text_h + 2.0 * BQ_PAD_Y;
+                // 左侧竖条颜色来自 CSS 的 blockquote 规则（border-left + border-color），
+                // 投影到 ResolvedStyle.border_color；无声明时兜底为灰。
+                let bar_color = style.border_color.unwrap_or(Color::new(200, 200, 200));
+                self.draw_rect(x, y, BQ_BAR_WIDTH, content_h, Some(bar_color), None);
+                // 文本在引用块内真正垂直居中：上下均分剩余空间。
+                let offset = ((content_h - text_h) / 2.0).max(0.0);
                 let mut cy = y + offset;
                 for child in children {
                     self.draw_block(child, inner_x, cy, false);
@@ -611,13 +703,27 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     cy += block_height(child, &self.settings, x);
                 }
             }
-            BlockKind::ListItem { marker, children, .. } => {
+            BlockKind::ListItem {
+                marker, children, ..
+            } => {
                 let mstyle = text_style(
                     Color::from(style.color),
-                    style.font_family.first().map(|s| s.as_str()).unwrap_or("serif"),
+                    style
+                        .font_family
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("serif"),
                     style.font_size_pt,
-                    if style.font_style_italic { "italic" } else { "normal" },
-                    if style.font_weight_bold { "bold" } else { "normal" },
+                    if style.font_style_italic {
+                        "italic"
+                    } else {
+                        "normal"
+                    },
+                    if style.font_weight_bold {
+                        "bold"
+                    } else {
+                        "normal"
+                    },
                 );
                 let mseg = [(marker.as_str(), &mstyle)];
                 let mlayout = layout_text(&mseg, None, LayoutAlign::Left);
@@ -632,16 +738,18 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     cy += block_height(child, &self.settings, x + 18.0);
                 }
             }
-            BlockKind::TaskListItem { checked, children, .. } => {
+            BlockKind::TaskListItem {
+                checked, children, ..
+            } => {
                 let box_color = if *checked {
-                    DocColor {
+                    Color {
                         r: 40,
                         g: 120,
                         b: 220,
                         a: 255,
                     }
                 } else {
-                    DocColor {
+                    Color {
                         r: 150,
                         g: 150,
                         b: 150,
@@ -662,8 +770,35 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     cy += block_height(child, &self.settings, x);
                 }
             }
-            BlockKind::Table { rows, .. } => {
-                self.draw_table(rows, x, y, repeat_table_header);
+            BlockKind::DefinitionList { items } => {
+                // 术语（dt）正常绘制；定义（dd）整体缩进，与列表项视觉一致。
+                const DD_INDENT: f64 = 18.0;
+                let mut cy = y;
+                for item in items {
+                    for child in &item.term {
+                        self.draw_block(child, x, cy, false);
+                        cy += block_height(child, &self.settings, x);
+                    }
+                    for child in &item.definition {
+                        self.draw_block(child, x + DD_INDENT, cy, false);
+                        cy += block_height(child, &self.settings, x + DD_INDENT);
+                    }
+                }
+            }
+            BlockKind::FootnoteDef { children, .. } => {
+                let mut cy = y;
+                for child in children {
+                    self.draw_block(child, x, cy, false);
+                    cy += block_height(child, &self.settings, x);
+                }
+            }
+            BlockKind::Table {
+                rows,
+                col_widths,
+                row_heights,
+                ..
+            } => {
+                self.draw_table(rows, col_widths, row_heights, style, x, y, repeat_table_header);
             }
             BlockKind::Document { children, .. } => {
                 let mut cy = y;
@@ -684,74 +819,96 @@ impl<'a, 's> PdfRenderer<'a, 's> {
     }
 
     /// 绘制表格（含跨页续页重复表头）。
-    fn draw_table(&mut self, rows: &[TableRow], x: f64, y: f64, repeat_header: bool) {
+    ///
+    /// 列宽与行高来自 `compute_table_layout` 的预计算值（真实度量）：
+    /// - `col_widths`：每列真实宽度（pt）。
+    /// - `row_heights`：每行真实高度（pt，按列宽折行后）。
+    fn draw_table(
+        &mut self,
+        rows: &[TableRow],
+        col_widths: &[f64],
+        row_heights: &[f64],
+        style: &ResolvedStyle,
+        x: f64,
+        y: f64,
+        repeat_header: bool,
+    ) {
         if rows.is_empty() {
             return;
         }
-        let content_w = self.content_w;
-        let ncols = rows.iter().map(|r| r.cells.len()).max().unwrap_or(0).max(1);
-        let col_w = content_w / ncols as f64;
+        let ncols = col_widths.len().max(1);
+        let content_w: f64 = col_widths.iter().sum();
+
+        // 行高：优先用预计算值；缺省退回行高。
+        let row_height_at = |idx: usize| -> f64 {
+            row_heights
+                .get(idx)
+                .copied()
+                .unwrap_or((style.line_height_pt as f64).max(8.0))
+                .max(8.0)
+        };
 
         let header = rows.first();
-        let body: &[TableRow] = if repeat_header { rows } else { &rows[1.min(rows.len())..] };
-
-        let row_h = 18.0;
-        let border = DocColor {
-            r: 200,
-            g: 200,
-            b: 200,
-            a: 255,
+        let body: &[TableRow] = if repeat_header {
+            rows
+        } else {
+            &rows[1.min(rows.len())..]
         };
-        let draw_row = |r: &mut PdfRenderer<'_, '_>, row: &TableRow, cy: f64, is_header: bool| {
-            r.draw_rect(
-                x,
-                cy,
-                content_w,
-                row_h,
-                Some(if is_header {
-                    DocColor {
-                        r: 230,
-                        g: 230,
-                        b: 230,
-                        a: 255,
-                    }
-                } else {
-                    DocColor {
-                        r: 255,
-                        g: 255,
-                        b: 255,
-                        a: 255,
-                    }
-                }),
-                Some((border, 0.5)),
-            );
+
+        let border = style.table_border_color;
+        let border_w = style.table_border_width_pt as f64;
+        let pad_h = style.table_cell_padding_h_pt;
+        let pad_v = style.table_cell_padding_v_pt;
+        let header_bg = style.table_header_bg.unwrap_or(Color::new(230, 230, 230));
+        let alt_row_bg = style.table_alt_row_bg;
+        // `row_idx` 为该行在整表中的索引（用于取行高）。
+        let draw_row = |r: &mut PdfRenderer<'_, '_>,
+                        row: &TableRow,
+                        cy: f64,
+                        row_h: f64,
+                        is_header: bool,
+                        alt: bool| {
+            let bg = if is_header {
+                header_bg
+            } else if alt {
+                alt_row_bg.unwrap_or(Color::new(255, 255, 255))
+            } else {
+                Color::new(255, 255, 255)
+            };
+            r.draw_rect(x, cy, content_w, row_h, Some(bg), Some((border, border_w)));
             // 列间分隔竖线：在每列交界处画一条垂直边框线。
-            for col in 1..ncols {
-                let sep_x = x + col as f64 * col_w;
-                r.draw_line(sep_x, cy, sep_x, cy + row_h, border, 0.5);
+            let mut sep = x;
+            for (ci, cw) in col_widths.iter().enumerate() {
+                sep += cw;
+                if ci + 1 < ncols {
+                    r.draw_line(sep, cy, sep, cy + row_h, border, border_w);
+                }
             }
             let mut cx = x;
-            for cell in row.cells.iter() {
-                let cell_x = cx + 3.0;
-                let mut ccy = cy + 3.0;
+            for (ci, cell) in row.cells.iter().enumerate() {
+                let cell_w = col_widths.get(ci).copied().unwrap_or(0.0);
+                let cell_x = cx + pad_h as f64;
+                let mut ccy = cy + pad_v as f64;
                 for child in &cell.children {
                     r.draw_block(child, cell_x, ccy, false);
                     ccy += block_height(child, &r.settings, cell_x) + 2.0;
                 }
-                cx += col_w;
+                cx += cell_w;
             }
         };
 
         if let Some(h) = header {
-            draw_row(self, h, y, true);
-            let _ = row_h;
+            draw_row(self, h, y, row_height_at(0), true, false);
         }
         let mut cy = y;
         if header.is_some() {
-            cy += row_h;
+            cy += row_height_at(0);
         }
-        for row in body {
-            draw_row(self, row, cy, false);
+        let body_start = if repeat_header { 0 } else { 1 };
+        for (i, row) in body.iter().enumerate() {
+            let row_idx = body_start + i;
+            let row_h = row_height_at(row_idx);
+            draw_row(self, row, cy, row_h, false, i % 2 == 1);
             cy += row_h;
         }
     }
@@ -759,8 +916,63 @@ impl<'a, 's> PdfRenderer<'a, 's> {
 
 // ─── 分页（PDF 后端职责）───────────────────────────────────
 
-/// 把不分页的 [`DocumentSkeleton`] 切分为多页绝对定位块（PDF 后端内部分页）。
-fn paginate_skeleton(skeleton: &DocumentSkeleton, settings: &PageSettings) -> Vec<PdfPage> {
+/// 目录条目：一个标题块的位置与层级。
+struct OutlineEntry {
+    /// 标题层级（1..=6）
+    level: u8,
+    /// 标题文本
+    title: String,
+    /// 所在页索引（0 起）
+    page_index: usize,
+    /// 页内 y 坐标（内容区左上角为原点，pt）
+    y: f64,
+}
+
+/// 将扁平标题条目列表组织为层级 krilla `Outline`。
+///
+/// 条目已按文档顺序排列，层级递增即嵌套；`XyzDestination` 会自动将坐标从
+/// 「顶部原点」转换为 PDF 的「底部原点」，故直接传 `y` 即可。
+fn build_krilla_outline(entries: &[OutlineEntry]) -> Outline {
+    fn push_children(
+        node: &mut OutlineNode,
+        entries: &[OutlineEntry],
+        i: &mut usize,
+        parent_level: u8,
+    ) {
+        while *i < entries.len() {
+            let e = &entries[*i];
+            if e.level <= parent_level {
+                break;
+            }
+            let dest = XyzDestination::new(
+                e.page_index,
+                KrillaPoint::from_xy(0.0, e.y as f32),
+            );
+            let mut child = OutlineNode::new(e.title.clone(), dest);
+            *i += 1;
+            push_children(&mut child, entries, i, e.level);
+            node.push_child(child);
+        }
+    }
+
+    let mut outline = Outline::new();
+    let mut i = 0usize;
+    while i < entries.len() {
+        let e = &entries[i];
+        let dest = XyzDestination::new(
+            e.page_index,
+            KrillaPoint::from_xy(0.0, e.y as f32),
+        );
+        let mut node = OutlineNode::new(e.title.clone(), dest);
+        i += 1;
+        push_children(&mut node, entries, &mut i, e.level);
+        outline.push_child(node);
+    }
+    outline
+}
+
+/// 把不分页的 [`Document`] 切分为多页绝对定位块（PDF 后端内部分页）。
+fn paginate_layout(document: &Document, settings: &PageSettings) -> Vec<PdfPage> {
     let content_x = settings.content_x() as f64;
     let content_y = settings.content_y() as f64;
     let content_h = settings.content_height() as f64;
@@ -772,12 +984,21 @@ fn paginate_skeleton(skeleton: &DocumentSkeleton, settings: &PageSettings) -> Ve
     let header = settings.header.clone();
     let footer = settings.footer.clone();
 
-    for block in &skeleton.blocks {
+    for block in &document.blocks {
         let h = block_height(block, settings, content_x);
-        if let BlockKind::Table { rows, column_align } = &block.kind {
+        if let BlockKind::Table {
+            rows,
+            column_align,
+            col_widths,
+            row_heights,
+        } = &block.kind
+        {
             paginate_table(
                 rows,
                 column_align,
+                col_widths,
+                row_heights,
+                &block.style,
                 &mut PaginateCtx {
                     pages: &mut pages,
                     cur: &mut cur,
@@ -787,6 +1008,11 @@ fn paginate_skeleton(skeleton: &DocumentSkeleton, settings: &PageSettings) -> Ve
                 content_y,
                 content_h,
             );
+            // 表格后有自身下边距（与下一个块形成垂直间距）。
+            // 注意：表格与其上方块的间距由上一个块的 margin_bottom 提供
+            // （本布局系统采用"相邻块间距 = 上一块 margin_bottom"约定），
+            // 故此处不再额外加表格的 margin_top，否则会与上方间距叠加导致过大。
+            used += block.style.margin_bottom as f64;
             continue;
         }
         if used + h > content_h && used > 0.0 {
@@ -795,7 +1021,12 @@ fn paginate_skeleton(skeleton: &DocumentSkeleton, settings: &PageSettings) -> Ve
             pages.push(std::mem::take(&mut cur));
             used = 0.0;
         }
-        cur.blocks.push(PositionedBlock::new(block.clone(), content_x, content_y + used, h));
+        cur.blocks.push(PositionedBlock::new(
+            block.clone(),
+            content_x,
+            content_y + used,
+            h,
+        ));
         used += h;
     }
     cur.header = header;
@@ -812,16 +1043,22 @@ struct PaginateCtx<'a> {
 }
 
 /// 表格分页：按整行切分，续页重复表头。
+///
+/// 行高取自 `compute_table_layout` 预计算的 `row_heights`（真实度量，非固定值）；
+/// 续页片段透传原表格列宽与对应行的行高，避免续页表格配色/内边距退回默认值。
 fn paginate_table(
     rows: &[TableRow],
     column_align: &[TextAlign],
+    col_widths: &[f64],
+    row_heights: &[f64],
+    style: &ResolvedStyle,
     ctx: &mut PaginateCtx,
     content_x: f64,
     content_y: f64,
     content_h: f64,
 ) {
-    let row_h = 18.0_f64;
-    let header_h = row_h;
+    // 表头行高 = 第一行行高（若无预计算值则退回行高）。
+    let header_h = row_heights.first().copied().unwrap_or(18.0);
     let n = rows.len();
     let mut i = 0usize;
 
@@ -833,7 +1070,16 @@ fn paginate_table(
             0.0
         };
         while i + fit < n {
-            let add = if i + fit == 0 { header_h } else { row_h };
+            // 首行当作表头，续页首行作为表头重复（仍需 header_h 高度）。
+            let add = if i + fit == 0 {
+                header_h
+            } else {
+                row_heights
+                    .get(i + fit)
+                    .copied()
+                    .unwrap_or(header_h)
+                    .max(8.0)
+            };
             if need + add <= content_h - *ctx.used {
                 need += add;
                 fit += 1;
@@ -852,19 +1098,23 @@ fn paginate_table(
         }
 
         let page_rows: Vec<TableRow> = rows[i..i + fit].to_vec();
+        let page_row_heights: Vec<f64> = row_heights[i..i + fit].to_vec();
         let is_continuation = i > 0;
+        let page_h: f64 = page_row_heights.iter().sum();
         let mut pb = PositionedBlock::new(
-            SkeletonBlock::new(
+            Block::new(
                 BlockKind::Table {
                     rows: page_rows,
                     column_align: column_align.to_vec(),
+                    col_widths: col_widths.to_vec(),
+                    row_heights: page_row_heights,
                 },
-                ResolvedStyle::default(),
+                style.clone(),
                 false,
             ),
             content_x,
             content_y + *ctx.used,
-            fit as f64 * row_h,
+            page_h,
         );
         pb.repeat_table_header = is_continuation;
         ctx.cur.blocks.push(pb);
@@ -879,105 +1129,4 @@ fn paginate_table(
     }
 }
 
-/// 测量单个块高度（递归）。
-///
-/// 返回的块高**包含该块的上下 margin**（`style.margin_top` + `margin_bottom`），
-/// 使不同元素之间产生垂直间距。容器块（List/Blockquote/Document 等）先累加
-/// 子块高度（子块已含自身 margin），再加上容器自身的 margin。
-fn block_height(block: &SkeletonBlock, settings: &PageSettings, x: f64) -> f64 {
-    let style = &block.style;
-    let base = match &block.kind {
-        BlockKind::Heading { children, .. } => children.iter().map(|c| block_height(c, settings, x)).sum(),
-        BlockKind::Paragraph { lines } => (lines.len().max(1) as f64) * style.line_height_pt as f64,
-        BlockKind::CodeBlock { code, .. } => (code.lines().count().max(1) as f64) * 18.0 + 8.0,
-        BlockKind::ThematicBreak => 4.0,
-        BlockKind::Image(img) => {
-            if img.size.1 > 0.0 {
-                img.size.1
-            } else {
-                120.0
-            }
-        }
-        BlockKind::Blockquote { children } => {
-            children.iter().map(|c| block_height(c, settings, x + 12.0)).sum::<f64>() + 4.0
-        }
-        BlockKind::List { children, .. } => children.iter().map(|c| block_height(c, settings, x)).sum(),
-        BlockKind::ListItem { children, .. } => children
-            .iter()
-            .map(|c| block_height(c, settings, x + 18.0))
-            .sum::<f64>()
-            .max(style.line_height_pt as f64),
-        BlockKind::TaskListItem { children, .. } => children
-            .iter()
-            .map(|c| block_height(c, settings, x + 18.0))
-            .sum::<f64>()
-            .max(style.line_height_pt as f64),
-        BlockKind::Container { children, .. } => children.iter().map(|c| block_height(c, settings, x)).sum(),
-        BlockKind::Table { rows, .. } => (rows.len().max(1) as f64) * 18.0,
-        BlockKind::TableRow { cells } => {
-            cells.iter().map(|c| measure_block_recursive(&c.children, settings, x)).sum::<f64>().max(18.0)
-        }
-        BlockKind::TableCell { children } => children.iter().map(|c| block_height(c, settings, x)).sum(),
-        BlockKind::Text { .. } => style.line_height_pt as f64,
-        BlockKind::InlineCode { .. } => style.line_height_pt as f64,
-        BlockKind::Link { children, .. } => {
-            if children.is_empty() {
-                style.line_height_pt as f64
-            } else {
-                children.iter().map(|c| block_height(c, settings, x)).sum()
-            }
-        }
-        BlockKind::LineBreak => style.line_height_pt as f64 / 2.0,
-        BlockKind::Document { children, .. } => children.iter().map(|c| block_height(c, settings, x)).sum(),
-    };
-    base + style.margin_top as f64 + style.margin_bottom as f64
-}
-
-/// 递归测量子块总高度（供 Blockquote 绘制背景用）。
-fn measure_block_recursive(children: &[SkeletonBlock], settings: &PageSettings, x: f64) -> f64 {
-    children.iter().map(|c| block_height(c, settings, x)).sum()
-}
-
-// ─── 辅助 ────────────────────────────────────────────────
-
-fn heading_font_size(level: u8) -> f32 {
-    match level {
-        1 => 22.0,
-        2 => 18.0,
-        3 => 15.0,
-        4 => 13.0,
-        5 => 12.0,
-        _ => 11.0,
-    }
-}
-
-/// 构造 [`crate::text::TextStyle`](用于 layout_text)。
-fn text_style(color: Color, family: &str, size: f32, weight: &str, style: &str) -> TextStyle {
-    TextStyle {
-        color,
-        font_family: vec![family.to_string()],
-        font_size: size as f64,
-        font_weight: weight.to_string(),
-        font_style: style.to_string(),
-        align: LayoutAlign::Left,
-        url: None,
-        decoration: TextDecoration::None,
-        baseline_shift: 0.0,
-        background_color: None,
-    }
-}
-
-/// 把标题文本行套用标题字号/颜色（from_ast 产出的 Paragraph 行是正文样式）。
-fn apply_heading_style(lines: &[DocTextLine], size: f32, color: DocColor) -> Vec<DocTextLine> {
-    lines
-        .iter()
-        .map(|line| {
-            let mut nl = line.clone();
-            for r in nl.runs.iter_mut() {
-                r.font_size = size;
-                r.color = color;
-            }
-            nl
-        })
-        .collect()
-}
+// ─── 辅助（见 common.rs）────────────────────────────────

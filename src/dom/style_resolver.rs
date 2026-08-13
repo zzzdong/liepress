@@ -5,7 +5,7 @@
 
 use crate::ast::style::Style;
 use crate::css::engine::{AncestorInfo, CssEngine};
-use crate::html::ast::HtmlElement;
+use crate::dom::HtmlElement;
 
 /// HTML 上下文感知的样式解析器
 ///

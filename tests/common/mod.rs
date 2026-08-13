@@ -77,6 +77,71 @@ pub fn assert_valid_pdf(data: &[u8]) -> Document {
     doc
 }
 
+/// 提取 PDF 目录（outline）所有标题文本。
+///
+/// 返回按文档顺序的标题列表；无目录时返回空 Vec。
+pub fn extract_outline_titles(doc: &Document) -> Vec<String> {
+    use lopdf::{Dictionary, ObjectId};
+    let mut titles = Vec::new();
+
+    // 从 trailer 的 /Root 取 /Outlines 根对象 id。
+    let outlines_id: ObjectId = match doc
+        .trailer
+        .get(b"Root")
+        .ok()
+        .and_then(|o| o.as_reference().ok())
+        .and_then(|root_id| doc.get_object(root_id).ok())
+        .and_then(|root| root.as_dict().ok())
+        .and_then(|d| d.get(b"Outlines").ok())
+        .and_then(|o| o.as_reference().ok())
+    {
+        Some(rid) => rid,
+        None => return titles,
+    };
+
+    fn collect_children(doc: &Document, id: ObjectId, out: &mut Vec<String>) {
+        let mut cur = Some(id);
+        let mut guard = 0usize;
+        while let Some(oid) = cur {
+            guard += 1;
+            if guard > 10000 {
+                break;
+            }
+            let dict: Dictionary = match doc
+                .get_object(oid)
+                .ok()
+                .and_then(|o| o.as_dict().ok())
+            {
+                Some(d) => d.clone(),
+                None => break,
+            };
+            // 标题文本：/Title 条目（字节串 → UTF-8）
+            if let Ok(title_bytes) = dict.get(b"Title").and_then(|o| o.as_str()) {
+                out.push(String::from_utf8_lossy(title_bytes).to_string());
+            }
+            // 子项：/First（递归）
+            if let Ok(first) = dict.get(b"First").and_then(|o| o.as_reference()) {
+                collect_children(doc, first, out);
+            }
+            // 兄弟项：/Next
+            match dict.get(b"Next").and_then(|o| o.as_reference()) {
+                Ok(next) => cur = Some(next),
+                Err(_) => break,
+            }
+        }
+    }
+
+    // 从 /Outlines 根的 /First 开始遍历
+    if let Ok(dict) = doc.get_object(outlines_id) {
+        if let Ok(d) = dict.as_dict() {
+            if let Ok(first) = d.get(b"First").and_then(|o| o.as_reference()) {
+                collect_children(doc, first, &mut titles);
+            }
+        }
+    }
+    titles
+}
+
 /// 从注解字典中提取 URL
 fn url_from_annot_dict(doc: &Document, annot_dict: &lopdf::Dictionary) -> String {
     annot_dict

@@ -1,15 +1,16 @@
 //! 样式系统模块
 //!
-//! 三层 AST 架构的 Layer 2：Styled AST
-//! - HTML (Layer 1) → Node (Layer 2) → Layout AST (Layer 3)
-//! - 每个 Node 附带 Style，布局引擎不再关心样式来源
+//! 管线 Layer 2：Styled AST
+//! - HTML (Layer 1, `dom`) → Node (Layer 2, 语义真源) → 双路线
+//!   （精确布局走 `document::Document`，流式输出直接消费 `Node`）
+//! - 每个 Node 附带 Style，输出后端不再关心样式来源
 //!
 //! # 样式系统
 //!
 //! 样式解析统一由 `crate::css::engine::CssEngine`（基于 Lightning CSS）处理：
 //! - 内置默认 CSS 样式表（由 presets::DEFAULT_CSS 定义）
 //! - 可选的用户 CSS 覆盖
-//! - HTML→Styled Node 的转换统一在 `crate::html::styled` 中完成
+//! - HTML→Styled Node 的转换统一在 `crate::dom::to_ast` 中完成
 
 pub mod node;
 pub mod presets;
@@ -46,11 +47,8 @@ fn build_engine_and_parse(
     user_css: &str,
     strict_mode: bool,
 ) -> Result<(Node, PageConfig), String> {
-    // Step 1: Markdown → HTML
-    let html = crate::html::md_converter::markdown_to_html(markdown);
-
-    // Step 2: HTML → HtmlDocument（含 <style> 标签 CSS 提取）
-    let doc = crate::html::parser::parse_html(&html);
+    // Step 1-2: Markdown → HtmlDocument（直连，不经过中间 HTML 字符串）
+    let doc = crate::dom::markdown::markdown_to_dom(markdown);
 
     // Step 3: 合并 CSS（内置 + 用户 + 内联 <style>）
     let inline_css = doc.style_sheets.join("\n");
@@ -69,7 +67,7 @@ fn build_engine_and_parse(
     }
 
     // Step 5: 从 HtmlDocument 构建 Node AST（使用新管线 html/styled）
-    let mut node = crate::html::styled::html_to_styled_nodes(&doc, &engine);
+    let mut node = crate::dom::to_ast::html_to_styled_nodes(&doc, &engine);
     // 保证根节点一定是 Document（兼容测试和下游消费者）
     if !matches!(node.kind, NodeKind::Document { .. }) {
         node = Node::new(
@@ -148,9 +146,8 @@ pub fn parse_markdown_with_css_strict(
 /// 注意：此函数不提取 Markdown 内的 `<style>` 标签。
 /// 如果需要内联样式支持，请使用 `parse_markdown_with_css`。
 pub fn parse_markdown_with_resolver(markdown: &str, engine: &CssEngine) -> Node {
-    let html = crate::html::md_converter::markdown_to_html(markdown);
-    let doc = crate::html::parser::parse_html(&html);
-    let mut node = crate::html::styled::html_to_styled_nodes(&doc, engine);
+    let doc = crate::dom::markdown::markdown_to_dom(markdown);
+    let mut node = crate::dom::to_ast::html_to_styled_nodes(&doc, engine);
     // 保证根节点一定是 Document
     if !matches!(node.kind, NodeKind::Document { .. }) {
         node = Node::new(

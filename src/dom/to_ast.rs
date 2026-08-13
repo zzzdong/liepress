@@ -1,9 +1,9 @@
 //! Styled HTML 转换器
 //!
 //! 将 HTML AST + CSS 引擎转换为带样式的 Node 树，
-//! 供 generator 模块消费。
+//! 供文档层（`crate::document::from_ast`）与流式输出（HTML）消费。
 //!
-//! 管线：Markdown → HTML → HtmlDocument → Styled Node Tree → Layout
+//! 管线：Markdown → HTML → HtmlDocument → Styled Node Tree → Document
 //!
 //! 架构：
 //! - `StyleResolver` 负责 CSS 解析和祖先管理
@@ -11,10 +11,10 @@
 //! - 结构映射与样式解析分离，独立可测
 
 use crate::ast::style::{Display, Style, TextAlign, TextDecoration};
-use crate::ast::{Node, NodeKind};
+use crate::ast::{DefinitionItem, Node, NodeKind};
 use crate::css::engine::CssEngine;
-use crate::html::ast::*;
-use crate::html::style_resolver::StyleResolver;
+use crate::dom::*;
+use crate::dom::style_resolver::StyleResolver;
 
 /// 将 HtmlDocument 转换为带样式的 Node 树
 pub fn html_to_styled_nodes(doc: &HtmlDocument, engine: &CssEngine) -> Node {
@@ -185,8 +185,38 @@ fn convert_tag_inline(elem: &HtmlElement, style: &Style, resolver: &mut StyleRes
         }
 
         HtmlTag::Sub | HtmlTag::Sup => {
+            // 脚注引用：<sup class="footnote-ref"><a href="#fn-def-<id>">N</a></sup>
+            // → 带内部锚点链接的上标数字（PDF 端据此生成可点击的内部跳转）。
+            let is_footnote_ref = elem
+                .attrs
+                .get("class")
+                .map(|c| c.split_whitespace().any(|w| w == "footnote-ref"))
+                .unwrap_or(false);
+            if is_footnote_ref {
+                let (num, href) = footnote_ref_content(elem);
+                let sup = Node::new(
+                    NodeKind::Superscript {
+                        children: vec![Node::new(
+                            NodeKind::Text { text: num },
+                            crate::ast::Style::default(),
+                            false,
+                        )],
+                    },
+                    style.clone(),
+                    false,
+                );
+                return NodeKind::Link {
+                    url: href.unwrap_or_default(),
+                    title: None,
+                    children: vec![sup],
+                };
+            }
             let children = convert_inline_children(&elem.children, resolver, style);
-            NodeKind::Span { children }
+            if elem.tag == HtmlTag::Sup {
+                NodeKind::Superscript { children }
+            } else {
+                NodeKind::Subscript { children }
+            }
         }
 
         HtmlTag::A => {
@@ -255,6 +285,51 @@ fn convert_tag_block(elem: &HtmlElement, style: &Style, resolver: &mut StyleReso
             }
         }
 
+        // 定义列表（<dl>）：配对 <dt> 术语与 <dd> 定义
+        HtmlTag::Dl => {
+            let mut items: Vec<DefinitionItem> = Vec::new();
+            let mut current_term: Option<Vec<Node>> = None;
+            for child in &elem.children {
+                if let HtmlNode::Element(e) = child {
+                    match e.tag {
+                        HtmlTag::Dt => {
+                            if let Some(term) = current_term.take() {
+                                items.push(DefinitionItem {
+                                    term,
+                                    definition: Vec::new(),
+                                });
+                            }
+                            current_term = Some(convert_inline_children(&e.children, resolver, style));
+                        }
+                        HtmlTag::Dd => {
+                            let definition = convert_children(&e.children, resolver, style);
+                            match current_term.take() {
+                                Some(term) => {
+                                    items.push(DefinitionItem { term, definition });
+                                }
+                                None => {
+                                    // 孤儿 <dd>（前面无 <dt>）：作为空术语项
+                                    items.push(DefinitionItem {
+                                        term: Vec::new(),
+                                        definition,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // 末尾残留 <dt>（无对应 <dd>）
+            if let Some(term) = current_term.take() {
+                items.push(DefinitionItem {
+                    term,
+                    definition: Vec::new(),
+                });
+            }
+            NodeKind::DefinitionList { items }
+        }
+
         // 代码块
         HtmlTag::Pre => {
             let (code, lang) = extract_code_block(elem);
@@ -298,6 +373,23 @@ fn convert_tag_block(elem: &HtmlElement, style: &Style, resolver: &mut StyleReso
 
         // 通用块级容器
         HtmlTag::Div => {
+            // 脚注定义区：<div id="fn-def-<id>" class="footnote-def"> → 小号脚注定义块（末尾聚合）。
+            let is_footnote_def = elem
+                .attrs
+                .get("class")
+                .map(|c| c.split_whitespace().any(|w| w == "footnote-def"))
+                .unwrap_or(false);
+            if is_footnote_def {
+                let id = elem
+                    .attrs
+                    .get("id")
+                    .cloned()
+                    .unwrap_or_default();
+                let mut f_style = style.clone();
+                f_style.font_size_pt = (style.font_size_pt * 0.85).max(7.0);
+                let children = convert_children(&elem.children, resolver, &f_style);
+                return NodeKind::FootnoteDef { id, children };
+            }
             let children = convert_children(&elem.children, resolver, style);
             NodeKind::Paragraph { children }
         }
@@ -515,6 +607,39 @@ fn heading_level(tag: HtmlTag) -> u8 {
 
 /// 从 <li> 的子节点中提取 checkbox 信息
 ///
+/// 从脚注引用元素中提取（数字, 内部锚点 url）。
+///
+/// 结构：`<sup class="footnote-ref"><a href="#fn-def-<id>">N</a></sup>`。
+/// 若 `<a>` 缺失，回退为 (children 文本, 空 url)。
+fn footnote_ref_content(elem: &HtmlElement) -> (String, Option<String>) {
+    for child in &elem.children {
+        if let HtmlNode::Element(e) = child {
+            if e.tag == HtmlTag::A {
+                let num: String = e
+                    .children
+                    .iter()
+                    .filter_map(|n| match n {
+                        HtmlNode::Text(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let href = e.attrs.get("href").cloned();
+                return (num, href);
+            }
+        }
+    }
+    // 无 <a>：退化为纯文本数字，无链接
+    let num: String = elem
+        .children
+        .iter()
+        .filter_map(|n| match n {
+            HtmlNode::Text(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    (num, None)
+}
+
 /// 返回 (checked, remaining_children)：
 /// - 如果第一个子元素是 `<input type="checkbox">`，返回 `(Some(checked), 剩余子节点)`
 /// - 否则返回 `(None, 原始子节点)`
@@ -552,7 +677,7 @@ fn extract_checkbox(children: &[HtmlNode]) -> (Option<bool>, Vec<HtmlNode>) {
 
 /// 从 <pre> 元素中提取代码块内容
 fn extract_code_block(elem: &HtmlElement) -> (String, Option<String>) {
-    // 查找 <code> 子元素
+    // 优先查找 <code> 子元素
     for child in &elem.children {
         if let HtmlNode::Element(code_elem) = child
             && code_elem.tag == HtmlTag::Code
@@ -565,7 +690,12 @@ fn extract_code_block(elem: &HtmlElement) -> (String, Option<String>) {
             return (code, lang);
         }
     }
-    (elem.text_content(), None)
+    // 回退：代码文本直接在 <pre> 自身（无 <code> 子元素），语言从 pre 的 class 提取。
+    let lang = elem
+        .attrs
+        .get("class")
+        .and_then(|c| c.strip_prefix("language-").map(|s| s.to_string()));
+    (elem.text_content(), lang)
 }
 
 /// 从表格元素中提取列对齐方式
@@ -687,7 +817,7 @@ pub fn apply_underline_style(style: &mut Style) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::html::parser::parse_html;
+    use crate::dom::parser::parse_html;
 
     /// 辅助：从 HTML 字符串构建完整的 Styled Node 树
     fn html_to_styled(html: &str) -> Node {

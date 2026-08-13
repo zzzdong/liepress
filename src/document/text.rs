@@ -8,17 +8,24 @@ use parley::{Alignment, AlignmentOptions, FontContext, LayoutContext};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use vello_cpu::kurbo::Rect;
 
-// 重新导出 TextDecoration 供 renderer 使用
+/// 跨段落共享的字体字节缓存：key 为 parley `Blob` 的稳定 `id()`（每种字体唯一）。
+/// 避免每个段落/每个 Run 都 `to_vec` 整份字体文件（可能数十 MB）导致内存随文本规模爆炸。
+/// 每种唯一字体在整个进程生命周期内只复制一次字节，其余 Run 通过 `Arc` 共享。
+static FONT_BYTE_CACHE: OnceLock<Mutex<HashMap<u64, Arc<Vec<u8>>>>> = OnceLock::new();
+
+// 重新导出 TextDecoration / TextAlign 供 renderer 与文档层使用。
+// 二者以 ast 为唯一真源，排版模块直接复用，不再重复定义。
+pub use crate::ast::TextAlign;
 pub use crate::ast::TextDecoration;
 
 /// 文本布局 - 包含排版后的行集合
 ///
 /// 由 [`layout_text`] / [`layout_text_with_contexts`] 生成。
 /// TextLayout 中的坐标全部相对 layout 原点（段落左上角），
-/// 分页和绝对定位由 generator 模块负责。
+/// 分页和绝对定位由输出后端（如 `crate::output::pdf`）负责。
 #[derive(Clone, Debug)]
 pub struct TextLayout {
     /// 排版后的所有行
@@ -47,17 +54,28 @@ pub struct Glyph {
 /// 文本 Run - 与 parley 的 GlyphRun 一一对应
 ///
 /// 一个 Run 是一段具有相同样式（字体、字号、颜色）的连续字形序列。
-/// 它是文本渲染的最小单元。
+/// 它是文本渲染的最小单元。Run 自闭环：`text` 为相对原始 `full_text`
+/// 的局部切片，`glyphs[].cluster` 在提取阶段已归一化为相对 `text` 的
+/// 局部偏移，因此脱离所属 Line 与原始字符串即可独立绘制。字体以
+/// `Vec<u8>` 自包含，不依赖 parley 生命周期。
 #[derive(Clone, Debug)]
 pub struct TextRun {
-    /// 该 Run 的文本内容
+    /// 该 Run 的文本内容（自包含，相对原始 full_text 的局部切片）
     pub text: String,
-    /// 该 Run 在段落中的文本范围
-    pub text_range: std::ops::Range<usize>,
-    /// 字体数据（指向 parley FontData 的引用）
-    pub font_data: parley::FontData,
+    /// 字体原始字节（解析自 parley FontData 的 blob，自包含）。
+    /// 使用 `Arc` 共享：同一段落内多个同字体 Run 复用同一份字节，
+    /// 避免每个 Run 都克隆整个字体文件（可能数十 MB）导致内存爆炸。
+    pub font_data: Arc<Vec<u8>>,
     /// 字体大小
     pub font_size: f32,
+    /// 该 Run 在原始全文（`total_text`）中的起始字节偏移。
+    /// 用于下游把样式（如链接 url）按字节区间精确标注到 run，避免因
+    /// parley 的 run 拆分（如 CJK 优先后整行合并）导致错位。
+    pub text_offset: usize,
+    /// 字体粗细是否为粗体（SVG 等后端用系统字体渲染时据此输出 font-weight）
+    pub font_weight_bold: bool,
+    /// 字体是否为斜体（SVG 等后端据此输出 font-style）
+    pub font_style_italic: bool,
     /// 文本颜色
     pub color: Color,
     /// 总前进宽度
@@ -132,15 +150,7 @@ pub fn with_text_contexts<R, F: FnOnce(&mut FontContext, &mut LayoutContext<Colo
     })
 }
 
-/// 文本对齐方式
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum TextAlign {
-    #[default]
-    Left,
-    Center,
-    Right,
-}
-
+/// 排版样式（parley 排版引擎消费）。`align` 使用 [`crate::ast::TextAlign`] 真源。
 #[derive(Debug, Clone)]
 pub struct TextStyle {
     pub color: Color,
@@ -243,7 +253,7 @@ pub fn register_font(
         })
     };
 
-    crate::text::with_font_context(|font_cx| {
+    crate::document::text::with_font_context(|font_cx| {
         let registered = font_cx.collection.register_fonts(data, override_info);
 
         // 如果是通用字体族，将注册的字体族关联到对应的 GenericFamily
@@ -291,6 +301,8 @@ fn extract_lines_from_parley(
 ) -> Vec<TextLine> {
     let mut lines = Vec::new();
     let mut row_top_rel = 0.0_f32;
+    // 字体字节去重缓存（进程级，跨段落共享）：同一字体只 `to_vec` 一次。
+    let font_cache = FONT_BYTE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
     for line in layout.lines() {
         let metrics = line.metrics();
@@ -300,7 +312,7 @@ fn extract_lines_from_parley(
         let mut glyph_data: Vec<(GlyphRaw, usize)> = Vec::new();
         let mut run_infos: Vec<(
             Color,
-            parley::FontData,
+            Arc<Vec<u8>>,
             f32,
             parley::layout::Run<'_, Color>,
             f32,
@@ -311,7 +323,20 @@ fn extract_lines_from_parley(
             if let parley::layout::PositionedLayoutItem::GlyphRun(glyph_run) = item {
                 let run = glyph_run.run();
                 let color = glyph_run.style().brush;
-                let font_data = run.font().clone();
+                // 字体字节：parley::FontData.data 是 `Blob<u8>`，其内部用 Arc 共享，
+                // 且每个唯一字体有稳定的 `id()`。不同 Run 使用同一字体时，
+                // `run.font().data.id()` 相同，因此我们按 id 去重——每种字体只
+                // `to_vec` 一次存入 `Arc`，其余 Run 共享该 Arc，避免每个 Run 都
+                // 复制整个字体文件（可能数十 MB）导致内存随 Run 数爆炸。
+                let blob = &run.font().data;
+                let font_id = blob.id();
+                let font_arc = {
+                    let mut cache = font_cache.lock().expect("font cache lock poisoned");
+                    cache
+                        .entry(font_id)
+                        .or_insert_with(|| Arc::new(blob.data().to_vec()))
+                        .clone()
+                };
                 let font_size = run.font_size();
 
                 let first_glyph_x = glyph_run
@@ -320,7 +345,7 @@ fn extract_lines_from_parley(
                     .map(|g| g.x)
                     .unwrap_or(0.0);
 
-                run_infos.push((color, font_data, font_size, *run, first_glyph_x));
+                run_infos.push((color, font_arc, font_size, *run, first_glyph_x));
 
                 // 收集已定位字形（含坐标），再用 cluster 的 text_range 提供字节簇偏移
                 let positioned: Vec<_> = glyph_run.positioned_glyphs().collect();
@@ -397,6 +422,10 @@ fn extract_lines_from_parley(
                 .map(str::to_string)
                 .unwrap_or_default();
 
+            // 把 cluster 从 parley 的「相对整段 full_text」全局偏移，
+            // 归一化为「相对本 run 切片后 `run_text`」的局部偏移。
+            // 这样 Run 成为自闭环的最小单位：脱离所属的 Line 与原始 full_text
+            // 也能正确绘制，下游无需再 subtract `text_range.start`。
             let relative_glyphs: Vec<Glyph> = glyph_data[*start_idx..*end_idx]
                 .iter()
                 .map(|(g, _)| Glyph {
@@ -404,7 +433,7 @@ fn extract_lines_from_parley(
                     x: g.x - min_x,
                     y: g.y - row_top_rel,
                     advance: g.advance,
-                    cluster: g.cluster,
+                    cluster: g.cluster.saturating_sub(text_start as u32),
                 })
                 .collect();
 
@@ -428,11 +457,19 @@ fn extract_lines_from_parley(
 
             let advance = adjusted_glyphs.iter().map(|g| g.advance).sum();
 
+            // 从 parley run 提取字体粗细 / 斜体，供 SVG 等用系统字体渲染的后端
+            // 输出 `font-weight`/`font-style`（PDF 用字形轮廓无需此信息）。
+            let font_attrs = run.font_attrs();
+            let font_weight_bold = font_attrs.weight >= parley::fontique::FontWeight::BOLD;
+            let font_style_italic = font_attrs.style != parley::fontique::FontStyle::Normal;
+
             runs.push(TextRun {
                 text: run_text,
-                text_range: text_range.clone(),
                 font_data: font_data.clone(),
                 font_size: *font_size,
+                text_offset: text_start as usize,
+                font_weight_bold,
+                font_style_italic,
                 color: *color,
                 advance,
                 glyphs: adjusted_glyphs,
@@ -625,6 +662,7 @@ pub fn layout_text_with_contexts(
         TextAlign::Left => Alignment::Start,
         TextAlign::Center => Alignment::Center,
         TextAlign::Right => Alignment::End,
+        TextAlign::Justify => Alignment::Start, // 暂不支持两端对齐，回退到左对齐
     };
     layout.align(paragraph_align, AlignmentOptions::default());
 

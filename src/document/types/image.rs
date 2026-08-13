@@ -1,6 +1,7 @@
 //! 文档图片类型（自包含二进制，不依赖渲染层）。
 
-use crate::document::types::{DocColor, ObjectFit};
+use crate::color::Color;
+use crate::document::types::ObjectFit;
 
 /// 文档图片（自包含二进制）。
 ///
@@ -22,5 +23,5 @@ pub struct DocImage {
     /// 适应方式
     pub object_fit: ObjectFit,
     /// 可选背景色（占位/边框用）
-    pub background: Option<DocColor>,
+    pub background: Option<Color>,
 }

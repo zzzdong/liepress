@@ -214,19 +214,7 @@ pub struct ConvertOptions {
 
 ## center 居中容器
 
-<center>
-
-# liepress
-
-### 用 Markdown 生成文档
-
-| 特性 | 说明 |
-|:----:|:----:|
-| 轻量 | 无需浏览器或 JS 运行时 |
-| 快速 | Rust 编译，毫秒级渲染 |
-| 可定制 | CSS 控制一切样式 |
-
-</center>
+<center>liepress</center>
 
 ---
 

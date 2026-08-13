@@ -14,7 +14,7 @@ use html5ever::tree_builder::TreeBuilderOpts;
 use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::{Attribute, ExpandedName, LocalName, QualName, parse_document, parse_fragment};
 
-use super::ast::*;
+use crate::dom::*;
 
 // ─── Custom DOM TreeSink ───────────────────────────────────
 
@@ -385,6 +385,16 @@ pub fn parse_html(html: &str) -> HtmlDocument {
         .from_utf8()
         .read_from(&mut html.as_bytes())
         .expect("html5ever parse failed")
+}
+
+/// 将 HTML 字符串解析为 HtmlDocument，并在解析后**统一内嵌图片**。
+///
+/// 与 `markdown_to_dom_with_resolver` 对称：HTML 输入路径在此完成图片内嵌，
+/// 让所有输出后端（PDF/SVG/PNG/DOCX）都能直接看到图片。
+pub fn parse_html_with_resolver(html: &str, resolver: &super::resource::ResourceResolver) -> HtmlDocument {
+    let mut doc = parse_html(html);
+    super::resource::embed_images(&mut doc, resolver);
+    doc
 }
 
 /// 将 HTML 字符串解析为 HtmlDocument（明确文档语义的别名）

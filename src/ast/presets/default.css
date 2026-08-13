@@ -29,6 +29,7 @@ pre {
     font-size: 9pt;
     line-height: 1.5;
     color: #333;
+    background-color: #f6f8fa;
     margin-top: 0;
     margin-bottom: 12pt;
     display: block;
@@ -78,11 +79,32 @@ li {
     margin-bottom: 4pt;
 }
 
+/* 定义列表 */
+dl {
+    margin-top: 0;
+    margin-bottom: 12pt;
+    display: block;
+}
+dt {
+    display: block;
+    font-weight: bold;
+    margin-top: 0;
+    margin-bottom: 2pt;
+}
+dd {
+    display: block;
+    margin-top: 0;
+    margin-bottom: 8pt;
+    list-indent: 2em;
+}
+
 /* 引用块 */
 blockquote {
     margin-top: 12pt;
     margin-bottom: 12pt;
     display: block;
+    border-left: 3pt;
+    border-color: #b0b0b0;
 }
 
 /* 分隔线 */
@@ -90,6 +112,8 @@ hr {
     margin-top: 18pt;
     margin-bottom: 18pt;
     display: block;
+    border-top: 1pt;
+    border-color: #b4b4b4;
 }
 
 /* 通用容器 (div, section, article) */

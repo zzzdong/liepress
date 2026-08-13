@@ -3,38 +3,12 @@
 //! 文档层使用"已解析"的样式（所有单位已落定为 pt），与布局引擎消费的
 //! [`crate::ast::Style`] 保持一致。此处取出布局/分页所需的稳定子集，
 //! 避免文档层依赖 ast 内部的全部字段。
+//!
+//! 样式枚举（`TextDecoration`/`TextAlign`/`WhiteSpace`/`ObjectFit` 等）以
+//! [`crate::ast`] 为唯一真源，文档层不再重复定义，直接复用。
 
-use crate::document::types::DocColor;
-
-/// 文本装饰（投影自 [`crate::ast::TextDecoration`]，与
-/// [`crate::text::TextDecoration`] 同源）。
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum TextDecoration {
-    #[default]
-    None,
-    Underline,
-    LineThrough,
-}
-
-impl From<crate::ast::TextDecoration> for TextDecoration {
-    fn from(d: crate::ast::TextDecoration) -> Self {
-        match d {
-            crate::ast::TextDecoration::None => TextDecoration::None,
-            crate::ast::TextDecoration::Underline => TextDecoration::Underline,
-            crate::ast::TextDecoration::LineThrough => TextDecoration::LineThrough,
-        }
-    }
-}
-
-impl From<TextDecoration> for crate::ast::TextDecoration {
-    fn from(d: TextDecoration) -> Self {
-        match d {
-            TextDecoration::None => crate::ast::TextDecoration::None,
-            TextDecoration::Underline => crate::ast::TextDecoration::Underline,
-            TextDecoration::LineThrough => crate::ast::TextDecoration::LineThrough,
-        }
-    }
-}
+use crate::color::Color;
+use crate::ast::{ObjectFit, TextAlign, TextDecoration, WhiteSpace};
 
 /// 已解析的文档样式（布局/分页使用）。
 ///
@@ -47,7 +21,7 @@ pub struct ResolvedStyle {
     pub font_size_pt: f32,
     pub font_weight_bold: bool,
     pub font_style_italic: bool,
-    pub color: DocColor,
+    pub color: Color,
 
     // 布局
     pub line_height_pt: f32,
@@ -76,105 +50,23 @@ pub struct ResolvedStyle {
     pub object_fit: ObjectFit,
 
     // 装饰
-    pub background_color: Option<DocColor>,
+    pub background_color: Option<Color>,
+    /// 边框颜色：从 ast 的 border 四边中取第一个可见边的颜色；无可见边则为 None。
+    pub border_color: Option<Color>,
 
     // 文本修饰
     pub text_decoration: TextDecoration,
 
     // 基线偏移（pt，正数=上标上移，负数=下标下移）
     pub baseline_shift: f32,
-}
 
-/// 文本对齐（投影自 [`crate::ast::TextAlign`]）。
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum TextAlign {
-    #[default]
-    Left,
-    Center,
-    Right,
-    Justify,
-}
-
-impl From<crate::ast::TextAlign> for TextAlign {
-    fn from(a: crate::ast::TextAlign) -> Self {
-        match a {
-            crate::ast::TextAlign::Left => TextAlign::Left,
-            crate::ast::TextAlign::Center => TextAlign::Center,
-            crate::ast::TextAlign::Right => TextAlign::Right,
-            crate::ast::TextAlign::Justify => TextAlign::Justify,
-        }
-    }
-}
-
-impl From<TextAlign> for crate::ast::TextAlign {
-    fn from(a: TextAlign) -> Self {
-        match a {
-            TextAlign::Left => crate::ast::TextAlign::Left,
-            TextAlign::Center => crate::ast::TextAlign::Center,
-            TextAlign::Right => crate::ast::TextAlign::Right,
-            TextAlign::Justify => crate::ast::TextAlign::Justify,
-        }
-    }
-}
-
-/// 空白处理（投影自 [`crate::ast::WhiteSpace`]）。
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum WhiteSpace {
-    #[default]
-    Normal,
-    Pre,
-    NoWrap,
-}
-
-impl From<crate::ast::WhiteSpace> for WhiteSpace {
-    fn from(w: crate::ast::WhiteSpace) -> Self {
-        match w {
-            crate::ast::WhiteSpace::Normal => WhiteSpace::Normal,
-            crate::ast::WhiteSpace::Pre => WhiteSpace::Pre,
-            crate::ast::WhiteSpace::NoWrap => WhiteSpace::NoWrap,
-        }
-    }
-}
-
-impl From<WhiteSpace> for crate::ast::WhiteSpace {
-    fn from(w: WhiteSpace) -> Self {
-        match w {
-            WhiteSpace::Normal => crate::ast::WhiteSpace::Normal,
-            WhiteSpace::Pre => crate::ast::WhiteSpace::Pre,
-            WhiteSpace::NoWrap => crate::ast::WhiteSpace::NoWrap,
-        }
-    }
-}
-
-/// 图片适应方式（投影自 [`crate::ast::ObjectFit`]）。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ObjectFit {
-    Contain,
-    Cover,
-    Fill,
-    None,
-}
-
-impl From<crate::ast::ObjectFit> for ObjectFit {
-    fn from(o: crate::ast::ObjectFit) -> Self {
-        match o {
-            crate::ast::ObjectFit::Contain => ObjectFit::Contain,
-            crate::ast::ObjectFit::Cover => ObjectFit::Cover,
-            crate::ast::ObjectFit::Fill => ObjectFit::Fill,
-            crate::ast::ObjectFit::None => ObjectFit::None,
-        }
-    }
-}
-
-impl From<ObjectFit> for crate::ast::ObjectFit {
-    fn from(o: ObjectFit) -> Self {
-        match o {
-            ObjectFit::Contain => crate::ast::ObjectFit::Contain,
-            ObjectFit::Cover => crate::ast::ObjectFit::Cover,
-            ObjectFit::Fill => crate::ast::ObjectFit::Fill,
-            ObjectFit::None => crate::ast::ObjectFit::None,
-        }
-    }
+    // 表格（投影自 ast::Style 的 table_* 字段）
+    pub table_border_color: Color,
+    pub table_border_width_pt: f32,
+    pub table_cell_padding_h_pt: f32,
+    pub table_cell_padding_v_pt: f32,
+    pub table_header_bg: Option<Color>,
+    pub table_alt_row_bg: Option<Color>,
 }
 
 impl Default for ResolvedStyle {
@@ -184,7 +76,7 @@ impl Default for ResolvedStyle {
             font_size_pt: 10.5,
             font_weight_bold: false,
             font_style_italic: false,
-            color: DocColor::BLACK,
+            color: Color::BLACK,
             line_height_pt: 15.0,
             letter_spacing: 0.0,
             text_indent_em: 0.0,
@@ -206,8 +98,15 @@ impl Default for ResolvedStyle {
             height: None,
             object_fit: ObjectFit::Contain,
             background_color: None,
+            border_color: None,
             text_decoration: TextDecoration::None,
             baseline_shift: 0.0,
+            table_border_color: Color::new(180, 180, 180),
+            table_border_width_pt: 0.5,
+            table_cell_padding_h_pt: 4.0,
+            table_cell_padding_v_pt: 2.0,
+            table_header_bg: None,
+            table_alt_row_bg: None,
         }
     }
 }
@@ -224,12 +123,12 @@ impl From<crate::ast::Style> for ResolvedStyle {
             font_size_pt: s.font_size_pt,
             font_weight_bold: s.font_weight == FontWeight::Bold,
             font_style_italic: s.font_style == FontStyle::Italic,
-            color: DocColor::from(s.color),
+            color: s.color,
             line_height_pt: s.line_height_pt,
             letter_spacing: s.letter_spacing,
             text_indent_em: s.text_indent_em,
-            text_align: TextAlign::from(s.text_align),
-            white_space: WhiteSpace::from(s.white_space),
+            text_align: s.text_align,
+            white_space: s.white_space,
             margin_top: s.margin.top,
             margin_bottom: s.margin.bottom,
             margin_left: s.margin.left,
@@ -244,10 +143,20 @@ impl From<crate::ast::Style> for ResolvedStyle {
             border_width_right: s.border.right.width,
             width: s.width,
             height: s.height,
-            object_fit: ObjectFit::from(s.object_fit),
-            background_color: s.background_color.map(DocColor::from),
-            text_decoration: TextDecoration::from(s.text_decoration),
+            object_fit: s.object_fit,
+            background_color: s.background_color,
+            border_color: [&s.border.top, &s.border.right, &s.border.bottom, &s.border.left]
+                .into_iter()
+                .find(|side| side.is_visible())
+                .map(|side| side.color),
+            text_decoration: s.text_decoration,
             baseline_shift: s.baseline_shift,
+            table_border_color: s.table_border_color,
+            table_border_width_pt: s.table_border_width_pt,
+            table_cell_padding_h_pt: s.table_cell_padding_h_pt,
+            table_cell_padding_v_pt: s.table_cell_padding_v_pt,
+            table_header_bg: s.table_header_bg,
+            table_alt_row_bg: s.table_alt_row_bg,
         }
     }
 }

@@ -1,12 +1,12 @@
 [package]
 name = "liepress"
 version = "0.1.4"
-description = "A Markdown to PDF/SVG/PNG converter with CSS styling support"
+description = "A Markdown/HTML to PDF converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/zzzdong/liepress"
 homepage = "https://github.com/zzzdong/liepress"
-keywords = ["markdown", "pdf", "svg", "png", "document"]
+keywords = ["markdown", "html", "pdf", "document"]
 categories = ["command-line-utilities", "rendering", "text-processing"]
 edition = "2024"
 
@@ -17,13 +17,14 @@ path = "src/bin/liepress.rs"
 [dependencies]
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
+docx-rs = "0.4"
 html5ever = "0.39.0"
-pulldown-cmark = "0.13.4"
-lightningcss = "1.0.0-alpha.71"
+lightningcss = { version = "1.0.0-alpha.71", default-features = false }
 image = { version = "0.25" }
 kamadak-exif = "0.6"
 krilla = "0.8"
 parley = "0.11.0"
+pulldown-cmark = "0.13.4"
 thiserror = "2.0"
 vello_cpu = "0.2.0"
 
@@ -32,14 +33,12 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 lopdf = "0.44"
+zip = "8"
 
 [profile.release]
-lto = "fat"
-codegen-units = 1
+lto = "thin"
+codegen-units = 16
 strip = "symbols"
 
 [workspace]
 members = ["site"]
-
-[lib]
-crate-type = ["rlib", "cdylib"]

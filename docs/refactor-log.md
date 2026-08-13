@@ -53,10 +53,10 @@
 ## 2026-08-12 — S1 AST → Skeleton 转换
 
 ### 新增文件
-- `src/document/from_ast.rs`：实现 `ast_to_skeleton(root: &Node, settings: &PageSettings) -> DocumentSkeleton`。
+- `src/document/from_ast.rs`：实现 `ast_to_layout(root: &Node, settings: &PageSettings) -> DocumentSkeleton`。
   - 递归 `convert_node`：遍历 `ast::Node` 树，映射为 `SkeletonBlock` / `BlockKind`。
   - `layout_inline(children, style, settings) -> Vec<DocTextLine>`：**复用** `generator::text::collect_inline_segments`、`text::layout_text_with_contexts`（在 `FONT_CONTEXT`/`LAYOUT_CONTEXT` 中）、`generator::text::annotate_runs_with_urls`，将内联排版结果投影为 `DocTextLine`。
-  - 单元测试：`test_ast_to_skeleton_structure`（Document>Heading/Paragraph/CodeBlock 结构 + text_content）、`test_ast_to_skeleton_nested_list`（List>ListItem>Paragraph）。
+  - 单元测试：`test_ast_to_layout_structure`（Document>Heading/Paragraph/CodeBlock 结构 + text_content）、`test_ast_to_layout_nested_list`（List>ListItem>Paragraph）。
 
 ### 修改文件
 - `src/document/mod.rs`：新增 `pub mod from_ast;`。
@@ -68,7 +68,7 @@
 4. **块级 `Image` 不加载字节**：`DocImage` 的 `data` 为空、`pixel_size=(0,0)`、`format="png"` 占位，仅从 `style.width/height` 取显示尺寸。实际字节加载推迟到 S3 投影阶段（仍需外部加载器，可能新增 `image_loader` 依赖或复用现有加载逻辑）。
 5. **可用宽度取整页内容宽度**：`layout_inline` 用 `settings.content_width()`。该值已扣除 `margin_left_pt + margin_right_pt`（`generator::types::PageSettings::content_width` 定义），即为纯文本可排版宽度，与方案"collect 阶段只依赖内容宽度断行"一致。S2 仅按 `content_height()`（页面高度）切页，**不重新排版**，故此处无返工风险。块级 padding/border 在 S2 计入占用时不改变文本区宽度（已在 content_width 之外）。
 6. **`align=Justify` 降级为 `Left`**：与旧管线 `layout_paragraph` 一致（vello parley 不支持两端对齐），在 `layout_inline` 内映射。
-7. **根 Document 直接展平到单页**：`ast_to_skeleton` 把根 `Document` 的 children 直接放入 `SkeletonPage.blocks`，`SkeletonPage` 的 `header`/`footer` 留 `None`，分页与页眉页脚在 S2 处理。
+7. **根 Document 直接展平到单页**：`ast_to_layout` 把根 `Document` 的 children 直接放入 `SkeletonPage.blocks`，`SkeletonPage` 的 `header`/`footer` 留 `None`，分页与页眉页脚在 S2 处理。
 8. **`SkeletonBlock.anchor` 暂置 `None`**：S2 目录/交叉引用阶段按 heading 等填充。
 9. **`convert_node` 对内联节点顶层出现兜底**：内联节点（含 `TableRow`）若作为块级顶层出现（理论上不应），包裹成 `Paragraph`。`TableRow` 仅作为 `Table` 子节点在 `filter_map` 中处理，不会走到此分支（仅满足 match 完备性）。
 
@@ -84,7 +84,7 @@
 > **S0/S1 设计修正（在 S2 实施时对齐方案）**：S0 最初把 `DocumentSkeleton { pages: Vec<SkeletonPage> }` 定义为"已分页"形态、S1 也直接把根 children 塞进单页 `SkeletonPage`。这与方案 §4.1「Document 不知道页、分页在消费侧」冲突。S2 时将其修正为：
 > - 源 IR：`DocumentSkeleton { blocks: Vec<SkeletonBlock> }`（不分页）。
 > - 分页产物：新增 `PaginatedDocument { pages: Vec<PositionedPage> }`、`PositionedPage { blocks: Vec<PositionedBlock>, header, footer }`、`PositionedBlock { block, x, y, height }`。
-> - 原 `SkeletonPage` 类型重命名为 `PositionedPage` 复用。S1 的 `ast_to_skeleton` 同步改为返回 `{ blocks }`。相关测试已更新。
+> - 原 `SkeletonPage` 类型重命名为 `PositionedPage` 复用。S1 的 `ast_to_layout` 同步改为返回 `{ blocks }`。相关测试已更新。
 
 ---
 
@@ -101,7 +101,7 @@
 
 ### 修改文件
 - `src/document/skeleton/mod.rs`：`DocumentSkeleton` 由 `{ pages }` 改为 `{ blocks }`（不分页源 IR）；`SkeletonPage` 重命名为 `PositionedPage`（分页产物），新增 `PositionedBlock`、`PaginatedDocument`；注释更新为「源 IR 不分页」语义。
-- `src/document/from_ast.rs`：`ast_to_skeleton` 返回 `DocumentSkeleton { blocks: root children }`（不再造 `pages`）。测试断言 `pages[0].blocks` 改为 `blocks`。
+- `src/document/from_ast.rs`：`ast_to_layout` 返回 `DocumentSkeleton { blocks: root children }`（不再造 `pages`）。测试断言 `pages[0].blocks` 改为 `blocks`。
 - `src/document/mod.rs`：新增 `pub mod paginate;`。
 
 ### 与方案不一致 / 临时调整（重要）
@@ -197,7 +197,7 @@
   - `List` 分支在转换 children 时按 `ordered/start` 注入 marker：有序 `"N."`（`start` 默认 1，逐项 +1），无序 `"•"`；嵌套列表由内层 List 节点递归重新计数。
   - 新增 `convert_list_item(node, marker, settings)` 辅助：仅对 `ListItem`/`TaskListItem` 填充给定 marker，其余类型透传 `convert_node`（保证嵌套段落/内联节点行为不变）。
   - 顶部模块注释更正：列表 marker 已在 S1 注入（原注释误写「S2 补全」）；图片字节说明改为「AST 仅含 `src` 路径，真实字节由渲染后端加载（方案 §3.5.1）」。
-  - 新增测试 `test_ast_to_skeleton_list_marker`：验证有序 `1.`/`2.` 与无序 `•` 注入正确。
+  - 新增测试 `test_ast_to_layout_list_marker`：验证有序 `1.`/`2.` 与无序 `•` 注入正确。
 
 ### 与方案不一致 / 偏离
 1. **marker 生成位置**：方案 §3.6 仅说明 IR 含 `marker`，未指定由 `from_ast` 还是渲染端生成。
@@ -257,7 +257,7 @@
   `From<&text::Glyph>` 保留 cluster。
 - `src/document/from_ast.rs`：去除分页残留（无 `anchor`、无 `TableFragment`）；
   内联 `collect_inline_segments` + `annotate_runs_with_urls`（原来自 `generator::text`）；
-  `ast_to_skeleton(root, settings)` 返回不分页 `{ blocks }`。`column_align` 经 `DocTextAlign::from` 投影。
+  `ast_to_layout(root, settings)` 返回不分页 `{ blocks }`。`column_align` 经 `DocTextAlign::from` 投影。
 - `src/text.rs`：
   - `Glyph` 增加 `cluster: u32`（相对 run_text 的字节簇）。
   - 字形采集改用 `glyph_run.run().visual_clusters()` 配对 `Cluster::text_range().start` 获取簇字节偏移，
@@ -277,8 +277,8 @@
   - `PositionedBlock` 保留 `height` 字段（`#[allow(dead_code)]`，供调试/后续）。
 - `src/render/mod.rs`：仅 `pub mod pdf; pub use pdf::PdfDocumentGenerator;`（SVG/PNG 后端已删）。
 - `src/bin/liepress.rs`：移除 `Format::Svg`/`Png` 及对应分支，仅保留 `Pdf`/`Html`（旧像素链路删除）。
-- `src/lib.rs`：`pub use render::PdfDocumentGenerator`；`html_to_document` → `html_to_skeleton`；
-  重写 pipeline（`markdown_to_pdf` 等）走 `html_to_skeleton → from_ast::ast_to_skeleton → render_pdf`；
+- `src/lib.rs`：`pub use render::PdfDocumentGenerator`；`html_to_document` → `html_to_layout`；
+  重写 pipeline（`markdown_to_pdf` 等）走 `html_to_layout → from_ast::ast_to_layout → render_pdf`；
   移除所有 svg/png API 入口。新增 `HtmlError`/`RenderError` 到 `error.rs`。
 
 ### 测试
@@ -304,3 +304,174 @@
 ### 下一步（用户决策）
 - 是否启动 DOCX 后端（S4）：需新增 `zip` + OOXML/quick-xml 依赖，消费 `DocumentSkeleton` 自管分页与原生结构。
 - 可选增强（不影响 PDF 链路）：列表 marker 缩进绘制、表格列宽真实度量（parley）、单元格内断行、图片字节加载。
+
+---
+
+## 2026-08-13 — 管线重组：按 pipeline 阶段拆分模块 + Markdown 直连 HTML AST
+
+> **背景 / 计划 vs 实际**：此前架构已确立 `Document` 层只做源 IR、分页在输出后端（见 2026-08-12 续）。
+> 但上游「输入→HTML AST→语义树」这一段仍堆在 `src/html`（含 `ast.rs` 解析、`parser.rs` 解析、
+> `styled.rs` 语义树、`style_resolver.rs` 样式、`md_converter.rs` 转换、**职责过多**），用户指出
+> `src/html` 让人困惑，应按 **pipeline 阶段** 重组；并进一步评估「Markdown 应**直接**到 HTML AST，
+> 而不是先序列化成 HTML 字符串再二次解析」。本次**一步到位**执行了目录重组 + 直连 DOM 两条改动。
+
+### 模块重组（src/html → src/dom + src/output）
+- 删除 `src/html/`（整目录）：`mod.rs` `ast.rs` `parser.rs` `style_resolver.rs` `styled.rs` `md_converter.rs`。
+- 新增 `src/dom/`（管线 Layer 1：HTML AST 层）：
+  - `mod.rs`：原 `src/html/ast.rs` 重命名为 `src/dom/mod.rs`，`HtmlDocument`/`HtmlElement`/`HtmlNode`/`HtmlTag` 定义与操作方法全部迁入。
+  - `parser.rs`：原 `src/html/parser.rs`（html5ever 纯字符串 → `HtmlDocument`）。
+  - `style_resolver.rs`：原 `src/html/style_resolver.rs`。
+  - `to_ast.rs`：原 `src/html/styled.rs`（`HtmlDocument + CssEngine → ast::Node` 语义树）。
+  - `markdown.rs`（**新增**）：pulldown-cmark 事件流**直接**构建 `HtmlDocument`，不经过中间 HTML 字符串。
+- 新增 `src/output/`（管线输出侧）：
+  - `mod.rs`：声明 `html` / `md_converter` / `pdf`。
+  - `html.rs`：原 `src/html/node_to_html.rs`（`ast::Node` → 自包含内联样式 HTML）。
+  - `md_converter.rs`：原 `src/html/md_converter.rs`，但逻辑已改为走 styled AST（见下）。
+  - `pdf.rs`：原 `src/render/pdf.rs` 迁移（消费 `DocumentSkeleton`，内部自管分页）。
+- 删除 `src/render/`：仅含 `pdf.rs`/`mod.rs`，已整体并入 `src/output/`。
+- `src/lib.rs`：模块声明改为 `pub mod dom; pub mod output;`（移除 `html`/`render`）；相应 re-export 路径更新。
+
+### Markdown 直连 HTML AST（消除字符串往返）
+- 新增 `src/dom/markdown.rs::markdown_to_dom(md) -> HtmlDocument`：
+  - pulldown-cmark `Event` 流直接映射为 `HtmlElement`/`HtmlNode`（栈式写入），仅遍历一次。
+  - 等价于 `parse_html(&markdown_to_html(md))` 但无序列化/反序列化开销、文本保真度更高。
+  - `inline_local_images(doc, base_dir)`：就地把本地图片内嵌为 base64 data URI（供 PDF 字节自包含）。
+- `src/ast/mod.rs`：`build_engine_and_parse` 与 `parse_markdown_with_resolver` 改为先 `dom::markdown_to_dom` 再 `dom::to_ast::html_to_styled_nodes`，**不再** `markdown_to_html` → `parse_html` 往返。
+- `src/lib.rs` 入口：`markdown_to_pdf`/`markdown_file_to_pdf` 走 `markdown_to_dom` + `inline_local_images`；
+  `html_to_pdf`/`html_file_to_pdf` 走 `parse_html` 后再 `html_to_layout`（输入二选一，汇合到同一 `HtmlDocument`）。
+
+### 统一 HTML 输出路径（含方案偏离）
+- `markdown_to_html_document` 改为：先 `parse_markdown_with_css`（得到 styled `ast::Node`）→ `node_to_html`（由 `Style::to_inline_css` 写出 `style="..."`），导出**自包含、带样式**的 HTML。
+- `src/ast/style.rs` 新增 `Style::to_inline_css(&self) -> String`（序列化 computed style 为内联 CSS，跳过默认值）。
+- `src/output/html.rs` 的 `node_to_html` 每个元素节点均带 `style` 属性（样式真源与 PDF 路径共享同一棵 styled AST）。
+- `markdown_to_html`（纯 pulldown → 字符串）降级为 fallback，仅在 `parse_markdown_with_css` 失败时使用。
+- `src/color.rs` 新增 `Color::to_hex()` → `#rrggbb`，供内联样式输出。
+
+### 与方案 / 原计划不一致（重要）
+1. **`src/html` 被彻底拆散，未保留该名**：原计划讨论"按 pipeline 阶段拆"时曾设想保留 `html` 作为
+   某一阶段名，实际落地为新建 `dom`（Layer 1 HTML AST）+ `output`（输出），`html` 概念被 `dom::parser`
+   （纯字符串解析）+ `output::html`（ast→HTML 序列化）两个端点瓜分。这是比"单纯拆分"更进一步的重组。
+2. **Markdown 直连 DOM 超出原 S0–S4 范围**：原方案 §4 的管线是 `markdown → html string → HtmlDocument`，
+   本次**主动消除字符串往返**（用户评估认可）。副作用：`markdown_to_dom` 需自行处理 pulldown 的
+   `Tag`/`Event` 语义（CodeBlock 语言丢失问题、Image alt 提取等），这些在 `src/html/styled.rs` 里
+   原本由二次 `parse_html` 兜底，现在需在 `dom::markdown` 直接处理（见下 #4）。
+3. **`render/pdf.rs` 改名为 `output/pdf.rs` 但**行为未变**：PDF 后端仍消费 `DocumentSkeleton` + 内部分页，
+   仅物理位置变化；本次**未**改动其分页/绘制逻辑，也未启动 S4 DOCX。
+4. **CodeBlock 语言与 Image alt 的直连实现细节**：
+   - 代码块不再嵌套 `<code>`（旧 `to_ast` 假设有 `<code>` 子），改为 `<pre class="language-X">` 单节点；
+     `to_ast::extract_code_block` 已加回退：无 `<code>` 时读 `pre` 自身 `class` 取语言 + `pre.children` 文本。
+   - Image `alt` 不再用 `title` 充数，改为在 `End(Tag::Image)` 时从 inner text 提取 alt。
+   这两处是直连 DOM 带来的额外兼容修复，非原方案要求。
+5. **`src/text.rs` 重命名为 `src/document/text.rs`**（git 标记为 R）：文本/字形投影类型已归入 document 层，
+   与 S0 `document/types/text.rs` 的 `DocTextRun` 等并存，未合并（物理移动，逻辑未重构）。
+
+### 验证
+- `cargo build`：通过。
+- `cargo test`：全量 **149** 测试通过（lib + 集成 + 单元测试 + doctest，无回归）。
+- e2e PDF 渲染：`liepress --input sample.md --output out.pdf` 生成合法 PDF（21KB），富文本/代码块/表格/引用正常。
+- `cargo clippy`：无新增警告。
+
+### 下一步（待定）
+- **S4 DOCX / PNG / SVG 后端**：按方案应新增 `output/docx.rs`/`output/png.rs` 等，复用 `DocumentSkeleton`；
+  当前 `output/` 仅含 `pdf`/`html`/`md_converter`，DOCX 仍未启动。
+- **`ResolvedStyle` 表格样式投影**：`pdf.rs::draw_table` 仍硬编码边框/底色（`ResolvedStyle` 尚无 `table_*` 字段）；
+  属样式系统补全，独立于本次管线重组。
+- 可选：将 `dom::markdown` 的 pulldown 解析与 `dom::parser`（html5ever）做语义对齐回归测试，防止直连 DOM 偏离。
+
+### 双路线设计原则（HTML 与 PDF 不共用同一中间表示）
+
+经讨论确认并固化为设计原则：**HTML 输出与 PDF 输出走两条独立路线，不共用 `DocumentSkeleton`**。
+两条路线在**已套 CSS 的 `ast::Node`（语义树）**这一层汇合、共享样式真源，但在其下游分流。
+
+| 路线 | 管线 | 消费的中间表示 |
+|---|---|---|
+| **PDF（精确布局）** | `ast::Node → DocumentSkeleton → paginate → Vec<PdfPage>` | `DocumentSkeleton`（含断行/坐标/layout）|
+| **HTML（流式）** | `ast::Node → node_to_html` | `ast::Node`（**不做**断行/layout）|
+
+**关键理由：`DocumentSkeleton` 不适合 HTML 流式输出。**
+`from_ast.rs::layout_inline` 在生成 `DocumentSkeleton` 时，已调用 `layout_text_with_contexts`
+按固定页面内容宽度（A4 ~460pt）做**文本折行**，产出的 `TextLine` 是**已断行、带 x 坐标**的物理布局结果。
+若 HTML 也走 `DocumentSkeleton`，会把这套固定宽度断行**固化**进 HTML：
+- 丢失浏览器响应式重排能力（宽屏变窄行、窄屏换行点不一致）；
+- 宽度假设（A4）被写死，换容器无法自适应。
+HTML 作为流式/响应式媒介，文本断行应交给浏览器，因此必须**跳过 `DocumentSkeleton`**，
+直接消费尚未断行的 `ast::Node`（文本仍以原始 segments 存在），由 `node_to_html` 输出整段
+`<p>…</p>` 让浏览器自行排版。
+
+**结论**：PDF 要 `DocumentSkeleton` 的 layout 信息（精确坐标），HTML 不要（要流式）；
+两者共享 `ast::Node` 这层真源，而非 `DocumentSkeleton`。这是有意的双路线对称设计，
+非方案文档 §5.3「HTML 从 Document 生成」原始设想的偏离式妥协，而是对流式本质的正确适配。
+
+---
+
+
+## 2026-08-13（续）— `<center>` 居中失效排查：确认不合法用法，不做 hack
+
+> **现象**：`tests/test.md`（217–229 行）用 `<center>` 包裹 markdown 块级内容（`# 标题`、`| 表格 |`），
+> 生成 PDF 后内容并未居中。
+>
+> **排查结论**：这是**非法的 CommonMark 用法**，工具行为正确，无需修复。
+> - `<center>` 在 pulldown-cmark 中被当作**块级 HTML 标签**；按 CommonMark 规范，块级 HTML 标签内部
+>   不会再去解析 markdown 块级语法，其内容（标题/表格）会被**提升到 `<center>` 之外**成为独立块级节点。
+> - 实际 DOM 验证：`<center>` 解析为**空容器**（children=0），标题/表格均为其兄弟节点，左对齐。
+>   （即便改成合法的纯 HTML 写法 `<center><h1>…</h1></center>`，pulldown-cmark 同样把块级 `<h1>` 提到外面——
+>   这是解析器固有行为，非 liepress bug。）
+> - 因此"居中"作用在一个空块上，肉眼表现为"失效"。
+
+### 尝试过并已还原的改动（用户确认"不合法就不支持"）
+1. `src/document/from_ast.rs`：曾让 `NodeKind::Center` 分支把 `text-align: center` 继承给子节点。
+   因 center 实际无子块（children=0），该逻辑无意义，已还原为原 `Center|Container|Span` 合并分支。
+2. `src/dom/markdown.rs`：曾试图把 `<center>`/`<center>` 作为"容器压栈/弹栈"吸收后续 markdown 块级内容。
+   破坏 pulldown 事件流 Start/End 配对（`<center>` 被包在段落 inline HTML 内，段落 End 会误弹 center），已还原。
+
+### 保留的合法行为
+- `src/ast/presets/default.css` 的 `center { text-align: center; }` 规则**保留**：它对 `<center>` 内**行内文本**
+  （如 `<center>居中文字</center>`）合法且生效——行内文本段落会继承 `text-align: center` 并正确居中。
+- `from_ast` 中 `<center>`/`div`/`span` 统一映射 `BlockKind::Container` 的现状不变（见 S1 日志 #2）。
+
+### 修改文件
+- `tests/e2e/pipeline.rs`：将原先针对"center 包裹块级"的测试替换为
+  `test_center_inline_text_centers`（验证 `<center>居中文字</center>` 合法行内用法能正常生成 PDF）。
+
+### 验证
+- `cargo test --test e2e_tests`：**23 passed，0 failed**（含 `test_center_inline_text_centers`，无回归）。
+- `src/document/from_ast.rs`、`src/dom/markdown.rs` 已彻底还原，无 hack 残留、无调试 eprintln。
+
+### 结论 / 给用户的建议
+- 用 HTML 块级标签（`<center>`）包裹 markdown 块级语法（标题/表格）**不是合法 CommonMark**，不被支持。
+- 若确实需要把整个标题/表格居中，应使用合法机制：例如给内容套带对齐样式的容器（div + class），
+  或在 CSS 中直接对标题/表格设 `text-align: center`，而非依赖已废弃的 `<center>` 标签去包 markdown。
+- 如需，可后续新增"块级居中方框语法"（如 `::: center` 围栏容器）作为正式支持——需用户确认。
+
+---
+
+## 2026-08-13（续2）— 任务5：`draw_table` 硬编码颜色 → ResolvedStyle 投影 table_* 字段并接入
+
+> **背景**：`src/output/pdf.rs::draw_table` 把表格边框色、表头底色、斑马纹底色、边框宽度、单元格内边距
+> 全部硬编码（灰 200 边框 / 0.5 宽 / 230 灰表头 / 255 白底 / 3.0 内边距）。这些本应由 CSS `table_*`
+> 计算样式驱动，以便通过 `default.css` 或用户样式定制表格外观。
+> `ast::Style` 早已定义 `table_border_color` / `table_border_width_pt` / `table_cell_padding_h_pt` /
+> `table_cell_padding_v_pt` / `table_header_bg` / `table_alt_row_bg` 六个字段，但 `ResolvedStyle`
+> 未投影它们，`draw_table` 也无从读取。
+
+### 改动
+1. `src/document/types/style.rs`：
+   - `ResolvedStyle` 新增表格字段：`table_border_color`、`table_border_width_pt`、
+     `table_cell_padding_h_pt`、`table_cell_padding_v_pt`、`table_header_bg`(Option)、`table_alt_row_bg`(Option)。
+   - `Default` 实现给上述字段赋与 `ast::Style::default()` 一致的值（边框灰 180 / 0.5pt / 内边距 4×2 / 表头&斑马纹 None）。
+   - `From<ast::Style>` 投影补充这六个字段，使 CSS 计算后的表格样式能落到文档层。
+2. `src/output/pdf.rs`：
+   - `draw_table` 新增 `style: &ResolvedStyle` 参数（调用点 `BlockKind::Table` 传入块样式）。
+   - 边框色/边框宽/单元格内边距改用 `style.table_border_color` / `table_border_width_pt`(as f64) /
+     `table_cell_padding_h_pt` / `table_cell_padding_v_pt`。
+   - 表头底色改用 `style.table_header_bg.unwrap_or(230 灰)`；原代码无斑马纹，现接入
+     `table_alt_row_bg`：仅当该字段为 `Some` 时，body 奇数行（i%2==1）使用交替底色，默认仍为白底，行为向后兼容。
+
+### 修改文件
+- `src/document/types/style.rs`（ResolvedStyle 增字段 + 投影）
+- `src/output/pdf.rs`（draw_table 接入 style）
+
+### 验证
+- `cargo build` 通过（仅既有 warning，与本次无关）。
+- `cargo test --test e2e_tests`：**23 passed，0 failed**（含 `test_table`、`test_pdf_table_structure`，无回归）。
+- 默认渲染外观不变（table_* 默认值与旧硬编码一致）；后续可通过 CSS 覆盖 `table_*` 来定制表格配色。

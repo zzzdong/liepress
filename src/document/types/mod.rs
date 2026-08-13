@@ -2,22 +2,20 @@
 //!
 //! 这些类型是对既有渲染/样式类型的**逻辑投影**，目的是让文档层拥有
 //! 与渲染后端（parley/vello）无关的稳定数据结构。运行期通过
-//! `From<源类型>` 实现从 [`crate::ast`]、[`crate::text`]、[`crate::visual`]
-//! 的转换（见 S1+ 的 `from_ast`）。
+//! `From<源类型>` 实现从 [`crate::ast`]、[`crate::text`] 的转换
+//! （见 `from_ast`）。
 //!
-//! S0 阶段只定义类型与 `From` 转换。
+//! 旧像素层 `visual` 已删除；`style`/`image`/`color` 等在此重新投影，
+//! 供 `Document` 与 PDF 输出后端共用。
 
-mod color;
 mod style;
-mod text;
 mod image;
 pub mod page;
 
-pub use color::DocColor;
+pub use crate::ast::{ObjectFit, TextAlign, TextDecoration, WhiteSpace};
 pub use image::DocImage;
 pub use page::PageSettings;
-pub use style::{ResolvedStyle, TextDecoration, TextAlign, WhiteSpace, ObjectFit};
-pub use text::{DocTextLine, DocTextRun, DocGlyph};
+pub use style::ResolvedStyle;
 
 // ─── 页面尺寸常量（A4，pt）────────────────────────────────
 // 原位于 generator::constants，迁移到此供 document 层（排版宽度）与

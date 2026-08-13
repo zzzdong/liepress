@@ -9,6 +9,9 @@ use liepress::{
 enum Format {
     Pdf,
     Html,
+    Svg,
+    Png,
+    Docx,
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +30,9 @@ fn infer_format_from_ext(path: &Path) -> Option<Format> {
     {
         Some("pdf") => Some(Format::Pdf),
         Some("html") | Some("htm") => Some(Format::Html),
+        Some("svg") => Some(Format::Svg),
+        Some("png") => Some(Format::Png),
+        Some("docx") => Some(Format::Docx),
         _ => None,
     }
 }
@@ -54,7 +60,7 @@ struct Args {
     #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
-    /// Output file path (format inferred from extension: .pdf, .svg, .png, .html)
+    /// Output file path (format inferred from extension: .pdf, .html, .svg, .png, .docx)
     #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
@@ -296,7 +302,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 推断输出格式
     let format = args.format.clone().or_else(|| infer_format_from_ext(&args.output))
         .ok_or_else(|| format!(
-            "Cannot determine output format from extension '{}'. Use -f/--format or a supported extension (.pdf, .svg, .png, .html).",
+            "Cannot determine output format from extension '{}'. Use -f/--format or a supported extension (.pdf, .html, .svg, .png, .docx).",
             args.output.extension().and_then(|e| e.to_str()).unwrap_or("(none)")
         ))?;
 
@@ -359,6 +365,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let html_content = std::fs::read_to_string(&args.input)?;
             std::fs::write(&args.output, html_content)?;
             println!("HTML saved to: {}", args.output.display());
+        }
+
+        // Markdown → SVG / PNG / DOCX
+        (InputFormat::Markdown, Format::Svg) => {
+            // 文件入口以解析相对路径本地图片
+            let svg = liepress::markdown_file_to_svg(&args.input, &opts)?;
+            std::fs::write(&args.output, svg)?;
+            println!("SVG saved to: {}", args.output.display());
+        }
+        (InputFormat::Markdown, Format::Png) => {
+            // 文件入口以解析相对路径本地图片
+            let png = liepress::markdown_file_to_png(&args.input, &opts)?;
+            std::fs::write(&args.output, png)?;
+            println!("PNG saved to: {}", args.output.display());
+        }
+        (InputFormat::Markdown, Format::Docx) => {
+            // 用文件版本以解析相对路径的本地图片（自动内联为 base64）
+            let docx = liepress::markdown_file_to_docx(&args.input, &opts)?;
+            std::fs::write(&args.output, docx)?;
+            println!("DOCX saved to: {}", args.output.display());
+        }
+
+        // HTML → SVG / PNG / DOCX
+        (InputFormat::Html, Format::Svg) => {
+            // 文件入口以解析相对路径本地图片
+            let svg = liepress::html_file_to_svg(&args.input, &opts)?;
+            std::fs::write(&args.output, svg)?;
+            println!("SVG saved to: {}", args.output.display());
+        }
+        (InputFormat::Html, Format::Png) => {
+            // 文件入口以解析相对路径本地图片
+            let png = liepress::html_file_to_png(&args.input, &opts)?;
+            std::fs::write(&args.output, png)?;
+            println!("PNG saved to: {}", args.output.display());
+        }
+        (InputFormat::Html, Format::Docx) => {
+            // 用文件版本以解析相对路径的本地图片（自动内联为 base64）
+            let docx = liepress::html_file_to_docx(&args.input, &opts)?;
+            std::fs::write(&args.output, docx)?;
+            println!("DOCX saved to: {}", args.output.display());
         }
     }
 

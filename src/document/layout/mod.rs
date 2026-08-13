@@ -1,30 +1,28 @@
-//! 文档中间表示：Skeleton（结构化、带布局信息的文档树）。
+//! 文档中间表示（文档层核心 IR）。
 //!
-//! Skeleton 是文档层的核心 IR：**不分页**的块树，每个节点携带
+//! `Document` 是文档层的核心 IR：**不分页**的块树，每个节点携带
 //! [`crate::document::types::ResolvedStyle`]。按方案 §4.1「Document 不知道页」，
-//! 分页在消费侧（各输出后端）进行，因此 `DocumentSkeleton` 不含页面。
-//!
-//! - S0：定义类型（本节）。
-//! - S1：`from_ast` 从 [`crate::ast::Node`] 构建 `DocumentSkeleton`（源 IR，不分页）。
+//! 分页在消费侧（各输出后端）进行，因此 `Document` 不含页面。
 //!
 //! 分页（切页、跨页表格 MultiSpill 等）由各输出后端实现，例如
-//! `render::pdf::paginate_skeleton`。
+//! [`crate::output::pdf::paginate_layout`]。
 
-use crate::document::types::{DocImage, DocTextLine, ResolvedStyle, TextAlign};
+use crate::document::text::TextLine;
+use crate::document::types::{DocImage, ResolvedStyle, TextAlign};
 
-/// 不分页的 Skeleton 文档根（源 IR）。
+/// 不分页的文档根（源 IR）。
 ///
 /// 与方案 `StructuredDocument { blocks: Vec<Block>, page_config }` 对应：
 /// 块树保持嵌套（Table/List/Blockquote 内含 blocks）。分页在各输出后端进行。
 #[derive(Clone, Debug, Default)]
-pub struct DocumentSkeleton {
+pub struct Document {
     /// 文档顶层块（树形，不分页）
-    pub blocks: Vec<SkeletonBlock>,
+    pub blocks: Vec<Block>,
 }
 
 /// 页眉/页脚模板（源 IR 持有模板文本，分页后端据页号/总页数替换 `{page}`/`{total}`）。
 #[derive(Clone, Debug)]
-pub struct SkeletonHeaderFooter {
+pub struct HeaderFooter {
     /// 文本内容（支持 {page} / {total} 模板变量）
     pub text: String,
     /// 字体大小（pt）
@@ -33,12 +31,12 @@ pub struct SkeletonHeaderFooter {
     pub align: crate::document::types::TextAlign,
 }
 
-/// Skeleton 内容块。
+/// 内容块（源 IR 的基本单元）。
 ///
-/// 块是源 IR 的基本单元：标题、表格、图片等不可分割；段落、列表可分割。
-/// 是否可跨页分割由 [`SkeletonBlock::splittable`] 标记，供输出后端分页时参考。
+/// 标题、表格、图片等不可分割；段落、列表可分割。
+/// 是否可跨页分割由 [`Block::splittable`] 标记，供输出后端分页时参考。
 #[derive(Clone, Debug)]
-pub struct SkeletonBlock {
+pub struct Block {
     pub kind: BlockKind,
     /// 该块的已解析样式
     pub style: ResolvedStyle,
@@ -46,7 +44,16 @@ pub struct SkeletonBlock {
     pub splittable: bool,
 }
 
-impl SkeletonBlock {
+/// 定义列表项（<dt> 术语 + <dd> 定义）
+#[derive(Clone, Debug)]
+pub struct DefinitionItemBlock {
+    /// 术语（<dt>）块
+    pub term: Vec<Block>,
+    /// 定义（<dd>）块
+    pub definition: Vec<Block>,
+}
+
+impl Block {
     pub fn new(kind: BlockKind, style: ResolvedStyle, splittable: bool) -> Self {
         Self {
             kind,
@@ -61,24 +68,30 @@ impl SkeletonBlock {
     }
 }
 
-/// Skeleton 块类型。
+/// 块类型。
 #[derive(Clone, Debug)]
 pub enum BlockKind {
-    /// 文档根容器（S2 可能被展平，这里保留以承载整体）
-    Document { children: Vec<SkeletonBlock> },
+    /// 文档根容器（承载整棵块树）
+    Document { children: Vec<Block> },
 
     /// 标题（level 1-6）
-    Heading { level: u8, children: Vec<SkeletonBlock> },
+    Heading { level: u8, children: Vec<Block> },
 
     /// 段落（含已排版文本行）
-    Paragraph { lines: Vec<DocTextLine> },
+    Paragraph { lines: Vec<TextLine> },
 
     /// 列表
     List {
         ordered: bool,
         start: Option<u32>,
-        children: Vec<SkeletonBlock>,
+        children: Vec<Block>,
     },
+
+    /// 定义列表（<dl>）：有序的 (术语, 定义) 项序列
+    DefinitionList { items: Vec<DefinitionItemBlock> },
+
+    /// 脚注定义（末尾聚合）：携带 label 供 PDF 内部跳转
+    FootnoteDef { id: String, children: Vec<Block> },
 
     /// 列表项
     ///
@@ -86,7 +99,7 @@ pub enum BlockKind {
     /// 有序列表为 `"1."`/`"2."` 等，无序列表为 `"•"` 等，由 `from_ast` 注入。
     ListItem {
         marker: String,
-        children: Vec<SkeletonBlock>,
+        children: Vec<Block>,
     },
 
     /// 任务列表项（GFM 复选框）
@@ -95,11 +108,11 @@ pub enum BlockKind {
     TaskListItem {
         marker: String,
         checked: bool,
-        children: Vec<SkeletonBlock>,
+        children: Vec<Block>,
     },
 
     /// 引用块
-    Blockquote { children: Vec<SkeletonBlock> },
+    Blockquote { children: Vec<Block> },
 
     /// 代码块
     CodeBlock { code: String, lang: Option<String> },
@@ -114,13 +127,17 @@ pub enum BlockKind {
     Table {
         rows: Vec<TableRow>,
         column_align: Vec<TextAlign>,
+        /// 每列宽度（pt，按内容真实度量，见 `from_ast::compute_table_layout`）
+        col_widths: Vec<f64>,
+        /// 每行高度（pt，按列宽折行后的真实度量）
+        row_heights: Vec<f64>,
     },
 
     /// 表格行
     TableRow { cells: Vec<TableCell> },
 
     /// 表格单元格
-    TableCell { children: Vec<SkeletonBlock> },
+    TableCell { children: Vec<Block> },
 
     /// 纯文本（叶节点）
     Text { text: String },
@@ -132,14 +149,14 @@ pub enum BlockKind {
     Link {
         url: String,
         title: Option<String>,
-        children: Vec<SkeletonBlock>,
+        children: Vec<Block>,
     },
 
     /// 行内换行
     LineBreak,
 
     /// 块级/行内容器（div/span/center 等）
-    Container { children: Vec<SkeletonBlock> },
+    Container { children: Vec<Block> },
 }
 
 impl BlockKind {
@@ -188,6 +205,25 @@ impl BlockKind {
                 }
                 s
             }
+            BlockKind::DefinitionList { items } => {
+                let mut s = String::new();
+                for item in items {
+                    for b in &item.term {
+                        s.push_str(&b.text_content());
+                    }
+                    for b in &item.definition {
+                        s.push_str(&b.text_content());
+                    }
+                }
+                s
+            }
+            BlockKind::FootnoteDef { children, .. } => {
+                let mut s = String::new();
+                for b in children {
+                    s.push_str(&b.text_content());
+                }
+                s
+            }
             BlockKind::TableCell { children } => {
                 let mut s = String::new();
                 for c in children {
@@ -210,7 +246,7 @@ pub struct TableRow {
 /// 表格单元格。
 #[derive(Clone, Debug)]
 pub struct TableCell {
-    pub children: Vec<SkeletonBlock>,
+    pub children: Vec<Block>,
 }
 
 impl TableRow {

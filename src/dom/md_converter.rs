@@ -12,6 +12,7 @@ pub fn markdown_to_html(markdown: &str) -> String {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_FOOTNOTES);
+    opts.insert(Options::ENABLE_DEFINITION_LIST);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
@@ -29,13 +30,25 @@ pub fn markdown_to_html(markdown: &str) -> String {
 /// - 用户提供的额外 CSS 会追加在默认样式之后
 /// - `<title>` 优先链：`title` 参数 > 第一个 `<h1>` > `fallback_title`（如文件名）> "Document"
 /// - 本地图片需提前嵌入为 base64 data URI（参见 `embed_local_images`）
+///
+/// 方案 Y：HTML 输出直接由 `ast::Node` 语义树序列化（`node_to_html`），
+/// 跳过 `Document`（精确排版层），与 PDF 路径共享同一棵 `ast::Node`，
+/// 保证 HTML / PDF 语义一致。`markdown_to_html` 仅作为降级回退使用。
 pub fn markdown_to_html_document(
     markdown: &str,
     user_css: Option<&str>,
     title: Option<&str>,
     fallback_title: Option<&str>,
 ) -> String {
-    let body = markdown_to_html(markdown);
+    // 统一路径：Markdown → 解析为"已套用 CSS 的 styled ast"
+    // （与 PDF 路径共享 `html_to_styled_nodes` 同一棵 styled ast，样式真源一致），
+    // 再据此序列化出 HTML。每个节点的 computed style 通过 `Style::to_inline_css`
+    // 写成 `style="..."` 内联属性，导出的是自包含、带样式的 HTML。
+    let body = match crate::ast::parse_markdown_with_css(markdown, user_css.unwrap_or("")) {
+        Ok((node, _page_config)) => crate::output::html::node_to_html(&node),
+        // 解析失败（如 CSS 引擎异常）降级回 pulldown-cmark 直接渲染
+        Err(_) => markdown_to_html(markdown),
+    };
 
     // 优先链：--title > <h1> > fallback（文件名）> "Document"
     let title = title
@@ -50,7 +63,8 @@ pub fn markdown_to_html_document(
     doc.push_str("<meta charset=\"utf-8\">\n");
     doc.push_str(&format!("<title>{}</title>\n", escape_html(&title)));
 
-    // 内置默认样式
+    // 兜底样式表：即使节点已内联样式，仍保留默认/用户 CSS 以覆盖未映射元素
+    // （如 <img>、表格单元格等）。内联样式优先级更高，二者不冲突。
     doc.push_str("<style>\n");
     doc.push_str(crate::ast::presets::DEFAULT_CSS);
     doc.push_str("\n</style>\n");
@@ -200,12 +214,16 @@ fn base64_encode(data: &[u8]) -> String {
 
 /// 从 HTML 片段中提取第一个 <h1> 的文本内容
 fn extract_first_h1_text(html: &str) -> Option<String> {
-    let start = html.find("<h1>")?;
-    let end = html.find("</h1>")?;
-    if end <= start + 4 {
+    // 注意：h1 现在可能带内联 style 属性（如 <h1 style="...">），
+    // 故匹配开标签起始位置而非完整 "<h1>"。
+    let start = html.find("<h1")?;
+    // 找到该开标签的结束 '>'
+    let tag_end = html[start..].find('>')? + start;
+    let end = html[tag_end..].find("</h1>")? + tag_end;
+    if end <= tag_end + 1 {
         return None;
     }
-    let content = &html[start + 4..end];
+    let content = &html[tag_end + 1..end];
     // 去除内嵌标签，只保留纯文本
     let text = strip_html_tags(content);
     if text.is_empty() { None } else { Some(text) }
@@ -237,8 +255,8 @@ fn escape_html(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::html::ast::*;
-    use crate::html::parser::parse_html;
+    use crate::dom::*;
+    use crate::dom::parser::parse_html;
 
     /// 辅助：将 Markdown 转换为 HtmlDocument
     fn md_to_doc(md: &str) -> HtmlDocument {

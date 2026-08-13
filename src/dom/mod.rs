@@ -582,6 +582,11 @@ pub enum HtmlTag {
     // 引用
     Blockquote,
 
+    // 定义列表
+    Dl,
+    Dt,
+    Dd,
+
     // 表格
     Table,
     Thead,
@@ -646,6 +651,9 @@ impl HtmlTag {
             HtmlTag::Li => "li",
             HtmlTag::Code => "code",
             HtmlTag::Blockquote => "blockquote",
+            HtmlTag::Dl => "dl",
+            HtmlTag::Dt => "dt",
+            HtmlTag::Dd => "dd",
             HtmlTag::Table => "table",
             HtmlTag::Thead => "thead",
             HtmlTag::Tbody => "tbody",
@@ -704,6 +712,9 @@ impl HtmlTag {
             "li" => HtmlTag::Li,
             "code" => HtmlTag::Code,
             "blockquote" => HtmlTag::Blockquote,
+            "dl" => HtmlTag::Dl,
+            "dt" => HtmlTag::Dt,
+            "dd" => HtmlTag::Dd,
             "table" => HtmlTag::Table,
             "thead" => HtmlTag::Thead,
             "tbody" => HtmlTag::Tbody,
@@ -744,6 +755,9 @@ impl HtmlTag {
                 | HtmlTag::Ol
                 | HtmlTag::Li
                 | HtmlTag::Blockquote
+                | HtmlTag::Dl
+                | HtmlTag::Dt
+                | HtmlTag::Dd
                 | HtmlTag::Hr
                 | HtmlTag::Table
                 | HtmlTag::Thead
@@ -820,6 +834,9 @@ impl HtmlTag {
             "li",
             "code",
             "blockquote",
+            "dl",
+            "dt",
+            "dd",
             "table",
             "thead",
             "tbody",
@@ -998,7 +1015,7 @@ mod tests {
     #[test]
     fn test_query_selector() {
         let html = r#"<div id="main" class="container"><p class="text">Hello</p></div>"#;
-        let doc = crate::html::parser::parse_html(html);
+        let doc = crate::dom::parser::parse_html(html);
 
         // 按标签查找
         let found = doc.root.query_selector("p");
@@ -1022,7 +1039,7 @@ mod tests {
 
     #[test]
     fn test_html_serialization() {
-        use crate::html::parser::parse_html;
+        use crate::dom::parser::parse_html;
         let html = r#"<div class="foo"><p>Hello <strong>world</strong></p></div>"#;
         let doc = parse_html(html);
 
@@ -1057,7 +1074,7 @@ mod tests {
     #[test]
     fn test_find_all() {
         let html = r#"<ul><li>A</li><li>B</li><li>C</li></ul>"#;
-        let doc = crate::html::parser::parse_html(html);
+        let doc = crate::dom::parser::parse_html(html);
         let lis = doc.root.find_all(HtmlTag::Li);
         assert_eq!(lis.len(), 3);
     }
@@ -1093,3 +1110,21 @@ mod tests {
         assert_eq!(parent.nth_child(2).and_then(|n| n.as_text()), Some("C"));
     }
 }
+
+// ─── 子模块 ─────────────────────────────────────────────
+// 输入侧：Markdown/HTML → HtmlDocument（管线 Layer 1）
+pub mod markdown; // pulldown-cmark 事件流直连 HTML AST
+pub mod parser; // 纯 HTML 字符串 → HtmlDocument（html5ever）
+pub mod style_resolver; // 从 HtmlDocument 解析/合并样式表
+pub mod to_ast; // HtmlDocument + CSS → 语义树 ast::Node（套样式）
+pub mod md_converter; // Markdown 源 → HTML 文档（含 pulldown 降级入口）
+pub mod resource; // 资源解析器（图片内嵌：本地路径 + base64 data URI）
+
+pub use markdown::{inline_local_images, markdown_to_dom, markdown_to_dom_with_resolver};
+pub use resource::ResourceResolver;
+pub use parser::{parse_html, parse_html_document, parse_html_fragment, parse_html_with_resolver};
+pub use crate::css::CssEngine;
+pub use to_ast::html_to_styled_nodes;
+pub use md_converter::{
+    embed_local_images, markdown_to_html, markdown_to_html_document,
+};

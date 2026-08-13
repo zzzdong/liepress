@@ -29,21 +29,17 @@ impl Color {
     pub fn black() -> Self {
         Self::new(0, 0, 0)
     }
-}
 
-impl From<crate::document::types::DocColor> for Color {
-    fn from(c: crate::document::types::DocColor) -> Self {
-        Self::with_alpha(c.r, c.g, c.b, c.a)
-    }
-}
+    /// 不透明黑色常量（与旧 `DocColor::BLACK` 兼容）。
+    pub const BLACK: Color = Color {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
 
-impl From<Color> for crate::document::types::DocColor {
-    fn from(c: Color) -> Self {
-        crate::document::types::DocColor {
-            r: c.r,
-            g: c.g,
-            b: c.b,
-            a: c.a,
-        }
+    /// 序列化为 `#rrggbb` 形式的 CSS 颜色字符串（忽略 alpha 通道）。
+    pub fn to_hex(self) -> String {
+        format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
     }
 }
