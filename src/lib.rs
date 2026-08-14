@@ -1,26 +1,23 @@
 pub mod ast;
+pub mod color;
 pub mod css;
+pub mod document; // 重构文档层（方案 refactor-document-layer.md）
+pub mod dom; // HTML AST（管线 Layer 1）：Markdown/HTML → HtmlDocument
 pub mod error;
-pub mod generator;
-pub mod html;
-pub mod render;
-pub mod text;
-pub mod visual;
+pub mod output; // 输出层：语义树/HTML → PDF/HTML 等目标格式
 
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub use render::{
-    PageRenderer, PdfDocumentGenerator, PdfRenderer, PixmapDocumentGenerator, PixmapRenderer,
-    SvgDocumentGenerator, SvgRenderer,
-};
-
 pub use ast::PageConfig;
-
-pub use html::{markdown_to_html, markdown_to_html_document};
-
-use generator::Document;
+pub use document::from_ast::ast_to_layout;
+pub use document::layout::Document;
+pub use document::types::page::PageSettings;
+pub use dom::md_converter::{embed_local_images, markdown_to_html, markdown_to_html_document};
+pub use dom::parse_html;
+pub use output::html::node_to_html;
+pub use output::pdf::PdfDocumentGenerator;
 
 /// Markdown 转换配置
 ///
@@ -223,29 +220,9 @@ impl Default for ConvertOptions {
 
 // ─── 内部渲染辅助函数 ─────────────────────────────────────
 
-fn render_pdf(document: &Document) -> crate::error::Result<Vec<u8>> {
-    let generator = PdfDocumentGenerator::new(document);
+fn render_pdf(document: &Document, settings: &PageSettings) -> crate::error::Result<Vec<u8>> {
+    let generator = PdfDocumentGenerator::from_layout(document.clone(), settings.clone());
     generator.generate()
-}
-
-fn render_svg(document: &Document) -> Vec<String> {
-    let mut svgs = Vec::new();
-    for page in &document.pages {
-        let mut renderer = SvgRenderer::new(page.width, page.height);
-        renderer.render_elements(&page.elements);
-        svgs.push(renderer.finalize());
-    }
-    svgs
-}
-
-fn render_png(document: &Document) -> crate::error::Result<Vec<Vec<u8>>> {
-    let mut pngs = Vec::new();
-    for page in &document.pages {
-        let mut renderer = PixmapRenderer::new_default_dpi(page.width, page.height);
-        renderer.render_elements(&page.elements);
-        pngs.push(renderer.render_to_png()?);
-    }
-    Ok(pngs)
 }
 
 // ─── 内部文件读取辅助函数 ─────────────────────────────────
@@ -406,14 +383,15 @@ fn infer_font_family(markdown: &str) -> Vec<String> {
             "sans-serif".to_string(),
         ],
         ScriptRange::Latin => {
-            // 英文为主时，优先使用拉丁字体，但保留中文字体作为回退
-            let mut fonts = vec![
+            // CJK 优先（用户决策）：即使文档以拉丁字符为主，数字/英文也优先
+            // 使用 CJK 字体（含数字字形），西文字体仅作为最后的回退。
+            let mut fonts = chinese_serif_fonts;
+            fonts.extend(chinese_sans_fonts);
+            fonts.extend(vec![
                 "Noto Serif".to_string(),
                 "Georgia".to_string(),
                 "Times New Roman".to_string(),
-            ];
-            fonts.extend(chinese_serif_fonts);
-            fonts.extend(chinese_sans_fonts);
+            ]);
             fonts.push("serif".to_string());
             fonts.push("sans-serif".to_string());
             fonts
@@ -505,21 +483,30 @@ fn resolve_user_css(
 
 // ─── Markdown 管线入口 ──────────────────────────────────────
 
+/// 将 [`ConvertOptions`] 中的页面设置解析为 PDF 后端用的 [`PageSettings`]。
+fn page_settings_from(options: &ConvertOptions) -> PageSettings {
+    PageSettings::from(options.page_config.clone().unwrap_or_default())
+}
+
 /// 核心转换逻辑：Markdown → PDF
 ///
 /// 管线：Markdown → HTML → HtmlDocument → Styled Node → Document → PDF
-///
-/// 本地图片需在调用前已嵌入为 data URI（由 `markdown_file_to_pdf` 自动处理）。
+/// 其中分页（切页、跨页表格）由 PDF 后端独立完成。
 pub fn markdown_to_pdf(markdown: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
     let user_css = resolve_user_css(options, Some(markdown))?;
-    let html_str = html::markdown_to_html(markdown);
-    let document = html_to_document(
-        &html_str,
-        &user_css,
+    let resolver = dom::ResourceResolver::new(None);
+    let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
-    render_pdf(&document)
+    render_pdf(&document, &page_settings_from(options))
 }
 
 /// Markdown 文件 → PDF（自动将本地图片嵌入为 base64）
@@ -529,86 +516,22 @@ pub fn markdown_file_to_pdf(
 ) -> crate::error::Result<Vec<u8>> {
     let (markdown, base_dir) = read_markdown_file(path)?;
     let user_css = resolve_user_css(options, Some(&markdown))?;
-    let html_str = html::markdown_to_html(&markdown);
-    let html_str = html::embed_local_images(&html_str, base_dir.as_deref());
-    let document = html_to_document(
-        &html_str,
-        &user_css,
+    let resolver = dom::ResourceResolver::new(base_dir);
+    let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
-    render_pdf(&document)
+    render_pdf(&document, &page_settings_from(options))
 }
 
-/// 核心转换逻辑：Markdown → SVG
-pub fn markdown_to_svg(
-    markdown: &str,
-    options: &ConvertOptions,
-) -> crate::error::Result<Vec<String>> {
-    let user_css = resolve_user_css(options, Some(markdown))?;
-    let html_str = html::markdown_to_html(markdown);
-    let document = html_to_document(
-        &html_str,
-        &user_css,
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    Ok(render_svg(&document))
-}
-
-/// 核心转换逻辑：Markdown → PNG
-pub fn markdown_to_png(
-    markdown: &str,
-    options: &ConvertOptions,
-) -> crate::error::Result<Vec<Vec<u8>>> {
-    let user_css = resolve_user_css(options, Some(markdown))?;
-    let html_str = html::markdown_to_html(markdown);
-    let document = html_to_document(
-        &html_str,
-        &user_css,
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    render_png(&document)
-}
-
-/// Markdown 文件 → SVG（自动将本地图片嵌入为 base64）
-pub fn markdown_file_to_svg(
-    path: &Path,
-    options: &ConvertOptions,
-) -> crate::error::Result<Vec<String>> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    let user_css = resolve_user_css(options, Some(&markdown))?;
-    let html_str = html::markdown_to_html(&markdown);
-    let html_str = html::embed_local_images(&html_str, base_dir.as_deref());
-    let document = html_to_document(
-        &html_str,
-        &user_css,
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    Ok(render_svg(&document))
-}
-
-/// Markdown 文件 → PNG（自动将本地图片嵌入为 base64）
-pub fn markdown_file_to_png(
-    path: &Path,
-    options: &ConvertOptions,
-) -> crate::error::Result<Vec<Vec<u8>>> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    let user_css = resolve_user_css(options, Some(&markdown))?;
-    let html_str = html::markdown_to_html(&markdown);
-    let html_str = html::embed_local_images(&html_str, base_dir.as_deref());
-    let document = html_to_document(
-        &html_str,
-        &user_css,
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    render_png(&document)
-}
-
-// ─── HTML → PDF/SVG/PNG ─────────────────────────────────────
+// ─── HTML → PDF ─────────────────────────────────────────────
 
 /// HTML → PDF 转换
 ///
@@ -616,105 +539,369 @@ pub fn markdown_file_to_png(
 /// 适用于已有 HTML 文件的场景。
 pub fn html_to_pdf(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
     let user_css = resolve_user_css(options, None)?;
-    let document = html_to_document(html, &user_css, options.strict, options.page_config.clone())?;
-    render_pdf(&document)
+    let resolver = dom::ResourceResolver::new(None);
+    let doc = dom::parse_html_with_resolver(html, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    render_pdf(&document, &page_settings_from(options))
 }
 
 /// HTML 文件 → PDF（自动将本地图片嵌入为 base64）
 pub fn html_file_to_pdf(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
     let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
-    let base_dir = path.parent();
-    let html = html::embed_local_images(&html, base_dir);
+    let base_dir = path.parent().map(|p| p.to_path_buf());
+    let resolver = dom::ResourceResolver::new(base_dir);
+    let doc = dom::parse_html_with_resolver(&html, &resolver);
     let user_css = resolve_user_css(options, None)?;
-    let document = html_to_document(
-        &html,
-        &user_css,
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
-    render_pdf(&document)
+    render_pdf(&document, &page_settings_from(options))
 }
 
-/// HTML → SVG 转换
-pub fn html_to_svg(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<String>> {
+// ─── SVG 输出 ──────────────────────────────────────────────────
+
+/// Markdown → SVG（不分页长图）
+pub fn markdown_to_svg(markdown: &str, options: &ConvertOptions) -> crate::error::Result<String> {
+    let user_css = resolve_user_css(options, Some(markdown))?;
+    let resolver = dom::ResourceResolver::new(None);
+    let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    Ok(output::svg::document_to_svg(
+        &document,
+        &page_settings_from(options),
+    ))
+}
+
+/// HTML → SVG（不分页长图）
+pub fn html_to_svg(html: &str, options: &ConvertOptions) -> crate::error::Result<String> {
     let user_css = resolve_user_css(options, None)?;
-    let document = html_to_document(html, &user_css, options.strict, options.page_config.clone())?;
-    Ok(render_svg(&document))
+    let resolver = dom::ResourceResolver::new(None);
+    let doc = dom::parse_html_with_resolver(html, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    Ok(output::svg::document_to_svg(
+        &document,
+        &page_settings_from(options),
+    ))
 }
 
-/// HTML 文件 → SVG（自动将本地图片嵌入为 base64）
-pub fn html_file_to_svg(
+/// Markdown 文件 → SVG（自动内联本地图片）。
+pub fn markdown_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::error::Result<String> {
+    let (markdown, base_dir) = read_markdown_file(path)?;
+    let user_css = resolve_user_css(options, Some(&markdown))?;
+    let resolver = dom::ResourceResolver::new(base_dir);
+    let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    Ok(output::svg::document_to_svg(
+        &document,
+        &page_settings_from(options),
+    ))
+}
+
+/// HTML 文件 → SVG（自动内联本地图片）。
+pub fn html_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::error::Result<String> {
+    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
+    let resolver = dom::ResourceResolver::new(path.parent().map(|p| p.to_path_buf()));
+    let doc = dom::parse_html_with_resolver(&html, &resolver);
+    let user_css = resolve_user_css(options, None)?;
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    Ok(output::svg::document_to_svg(
+        &document,
+        &page_settings_from(options),
+    ))
+}
+
+// ─── PNG 输出 ──────────────────────────────────────────────────
+
+/// Markdown → PNG（不分页长图，默认 150 DPI，保证清晰度）
+pub fn markdown_to_png(markdown: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+    markdown_to_png_dpi(markdown, options, 150.0)
+}
+
+/// Markdown → PNG，可指定分辨率（DPI）
+pub fn markdown_to_png_dpi(
+    markdown: &str,
+    options: &ConvertOptions,
+    dpi: f32,
+) -> crate::error::Result<Vec<u8>> {
+    let user_css = resolve_user_css(options, Some(markdown))?;
+    let resolver = dom::ResourceResolver::new(None);
+    let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    output::png::document_to_png(&document, &page_settings_from(options), dpi)
+}
+
+/// HTML → PNG（不分页长图，默认 150 DPI，保证清晰度）
+pub fn html_to_png(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+    let user_css = resolve_user_css(options, None)?;
+    let resolver = dom::ResourceResolver::new(None);
+    let doc = dom::parse_html_with_resolver(html, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    output::png::document_to_png(&document, &page_settings_from(options), 150.0)
+}
+
+/// Markdown 文件 → PNG（自动内联本地图片，默认 150 DPI）。
+pub fn markdown_file_to_png(
     path: &Path,
     options: &ConvertOptions,
-) -> crate::error::Result<Vec<String>> {
-    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
-    let base_dir = path.parent();
-    let html = html::embed_local_images(&html, base_dir);
-    let user_css = resolve_user_css(options, None)?;
-    let document = html_to_document(
-        &html,
-        &user_css,
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    Ok(render_svg(&document))
+) -> crate::error::Result<Vec<u8>> {
+    markdown_file_to_png_dpi(path, options, 150.0)
 }
 
-/// HTML → PNG 转换
-pub fn html_to_png(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<Vec<u8>>> {
-    let user_css = resolve_user_css(options, None)?;
-    let document = html_to_document(html, &user_css, options.strict, options.page_config.clone())?;
-    render_png(&document)
-}
-
-/// HTML 文件 → PNG（自动将本地图片嵌入为 base64）
-pub fn html_file_to_png(
+/// Markdown 文件 → PNG，可指定 DPI（自动内联本地图片）。
+pub fn markdown_file_to_png_dpi(
     path: &Path,
     options: &ConvertOptions,
-) -> crate::error::Result<Vec<Vec<u8>>> {
-    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
-    let base_dir = path.parent();
-    let html = html::embed_local_images(&html, base_dir);
-    let user_css = resolve_user_css(options, None)?;
-    let document = html_to_document(
-        &html,
-        &user_css,
+    dpi: f32,
+) -> crate::error::Result<Vec<u8>> {
+    let (markdown, base_dir) = read_markdown_file(path)?;
+    let user_css = resolve_user_css(options, Some(&markdown))?;
+    let resolver = dom::ResourceResolver::new(base_dir);
+    let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
         options.strict,
         options.page_config.clone(),
     )?;
-    render_png(&document)
+    output::png::document_to_png(&document, &page_settings_from(options), dpi)
 }
 
-// ─── 内部：HTML → Document 公共逻辑 ────────────────────────
+/// HTML 文件 → PNG（自动内联本地图片，默认 150 DPI）。
+pub fn html_file_to_png(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
+    let resolver = dom::ResourceResolver::new(path.parent().map(|p| p.to_path_buf()));
+    let doc = dom::parse_html_with_resolver(&html, &resolver);
+    let user_css = resolve_user_css(options, None)?;
+    let document = html_to_layout(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+        options.page_config.clone(),
+    )?;
+    output::png::document_to_png(&document, &page_settings_from(options), 150.0)
+}
 
-/// HTML → Document 的核心转换逻辑
+// ─── DOCX 输出 ─────────────────────────────────────────────────
+
+/// Markdown → DOCX（消费 Styled AST，保留语义）。
 ///
-/// 被所有 markdown_to_* 入口共享。
-fn html_to_document(
-    html: &str,
-    user_css: &str,
+/// 字符串输入无文件路径上下文，无法解析相对路径本地图片；
+/// 若需嵌入本地图片，请使用 [`markdown_file_to_docx`]。
+pub fn markdown_to_docx(markdown: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+    let user_css = resolve_user_css(options, Some(markdown))?;
+    let resolver = dom::ResourceResolver::new(None);
+    let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
+    let node = html_to_styled_node(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+    )?;
+    output::docx::node_to_docx(&node)
+}
+
+/// Markdown 文件 → DOCX（自动将本地图片嵌入为 base64）。
+pub fn markdown_file_to_docx(
+    path: &Path,
+    options: &ConvertOptions,
+) -> crate::error::Result<Vec<u8>> {
+    let (markdown, base_dir) = read_markdown_file(path)?;
+    let user_css = resolve_user_css(options, Some(&markdown))?;
+    let resolver = dom::ResourceResolver::new(base_dir);
+    let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
+    let node = html_to_styled_node(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+    )?;
+    output::docx::node_to_docx(&node)
+}
+
+/// HTML → DOCX（消费 Styled AST，保留语义）。
+///
+/// 字符串输入无文件路径上下文，无法解析相对路径本地图片；
+/// 若需嵌入本地图片，请使用 [`html_file_to_docx`]。
+pub fn html_to_docx(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+    let user_css = resolve_user_css(options, None)?;
+    let resolver = dom::ResourceResolver::new(None);
+    let doc = dom::parse_html_with_resolver(html, &resolver);
+    let node = html_to_styled_node(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+    )?;
+    output::docx::node_to_docx(&node)
+}
+
+/// HTML 文件 → DOCX（自动将本地图片嵌入为 base64）。
+pub fn html_file_to_docx(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
+    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
+    let base_dir = path.parent().map(|p| p.to_path_buf());
+    let resolver = dom::ResourceResolver::new(base_dir);
+    let doc = dom::parse_html_with_resolver(&html, &resolver);
+    let user_css = resolve_user_css(options, None)?;
+    let node = html_to_styled_node(
+        &doc,
+        if user_css.is_empty() {
+            None
+        } else {
+            Some(&user_css)
+        },
+        options.strict,
+    )?;
+    output::docx::node_to_docx(&node)
+}
+
+// ─── 内部：HTML → Document 公共逻辑 ──────────────────────────────
+
+/// HtmlDocument → Styled AST Node 的核心转换逻辑（供 DOCX 等语义输出使用）。
+///
+/// 图片内嵌已由 [`crate::dom::markdown_to_dom_with_resolver`]（Markdown）或
+/// [`crate::dom::parser::parse_html_with_resolver`]（HTML）在 DOM 层完成，
+/// 此处不再重复处理。
+fn html_to_styled_node(
+    doc: &crate::dom::HtmlDocument,
+    user_css: Option<&str>,
+    strict: bool,
+) -> crate::error::Result<crate::ast::Node> {
+    let builtin_css = ast::presets::DEFAULT_CSS;
+    let mut engine =
+        css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
+    for sheet in &doc.style_sheets {
+        engine = engine
+            .with_user_css(sheet)
+            .map_err(crate::error::Error::CssParseError)?;
+    }
+    if let Some(css) = user_css.filter(|c| !c.is_empty()) {
+        engine = engine
+            .with_user_css(css)
+            .map_err(crate::error::Error::CssParseError)?;
+    }
+    if strict {
+        engine = engine.with_strict_mode(true);
+    }
+    let default_style = ast::Style::default();
+    let root_style = engine.resolve_style("html", &[], None, &[], &default_style);
+    engine.set_root_font_size(root_style.font_size_pt);
+    Ok(dom::to_ast::html_to_styled_nodes(doc, &engine))
+}
+
+/// HtmlDocument → Document 的核心转换逻辑
+///
+/// 被所有 `*_to_pdf`/`*_to_svg`/`*_to_png` 入口共享。源 IR 不分页，分页由各输出后端负责。
+/// 输入已是管线 Layer 1 的 `HtmlDocument`（Markdown/HTML 两个输入源在此汇合）。
+///
+/// 图片内嵌已由 [`crate::dom::markdown_to_dom_with_resolver`]（Markdown）或
+/// [`crate::dom::parser::parse_html_with_resolver`]（HTML）在 DOM 层完成。
+fn html_to_layout(
+    doc: &crate::dom::HtmlDocument,
+    user_css: Option<&str>,
     strict: bool,
     page_config: Option<PageConfig>,
-) -> crate::error::Result<generator::Document> {
-    // 1. HTML → HtmlDocument
-    let doc = html::parse_html(html);
-
-    // 2. 合并 CSS：内置样式 + <style> 标签 + 用户 CSS
+) -> crate::error::Result<Document> {
+    // 1. 合并 CSS：内置样式 + <style> 标签 + 用户 CSS
     let builtin_css = ast::presets::DEFAULT_CSS;
     let mut engine =
         css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
 
-    // 应用 <style> 标签中的 CSS
     for sheet in &doc.style_sheets {
         engine = engine
             .with_user_css(sheet)
             .map_err(crate::error::Error::CssParseError)?;
     }
 
-    // 应用用户提供的 CSS
-    if !user_css.is_empty() {
+    if let Some(css) = user_css.filter(|c| !c.is_empty()) {
         engine = engine
-            .with_user_css(user_css)
+            .with_user_css(css)
             .map_err(crate::error::Error::CssParseError)?;
     }
 
@@ -722,28 +909,17 @@ fn html_to_document(
         engine = engine.with_strict_mode(true);
     }
 
-    // 检测根元素字号：解析 <html> 元素，将计算后的 font-size 设为根字号
-    // 这让 rem 单位能正确参考根元素的实际字号
     let default_style = ast::Style::default();
     let root_style = engine.resolve_style("html", &[], None, &[], &default_style);
     engine.set_root_font_size(root_style.font_size_pt);
 
     // 3. HtmlDocument → Styled Node Tree
-    let styled_node = html::html_to_styled_nodes(&doc, &engine);
+    let styled_node = dom::to_ast::html_to_styled_nodes(doc, &engine);
 
-    // 4. Styled Node → Document（布局）
-    let page_config = page_config.unwrap_or_else(|| engine.page_config().clone());
-    let mut generator = generator::DocumentGenerator::with_settings(page_config.into());
+    // 4. Styled Node → Document（源 IR，不分页）
+    let page_settings = page_config.map(PageSettings::from).unwrap_or_default();
 
-    if let ast::NodeKind::Document { children } = &styled_node.kind {
-        for child in children {
-            generator.layout_node(child);
-        }
-    } else {
-        generator.layout_node(&styled_node);
-    }
-
-    Ok(generator.finish().into())
+    Ok(ast_to_layout(&styled_node, &page_settings))
 }
 
 #[cfg(test)]
@@ -758,19 +934,13 @@ mod pipeline_tests {
     fn test_pdf_generation() {
         let opts = ConvertOptions::default();
         let result = markdown_to_pdf(sample_markdown(), &opts);
-        assert!(result.is_ok(), "PDF generation should succeed");
+        assert!(
+            result.is_ok(),
+            "PDF generation should succeed: {:?}",
+            result.err()
+        );
         let pdf = result.unwrap();
         assert!(!pdf.is_empty(), "PDF bytes should not be empty");
         assert!(pdf.starts_with(b"%PDF"), "Should be valid PDF");
-    }
-
-    #[test]
-    fn test_svg_generation() {
-        let opts = ConvertOptions::default();
-        let result = markdown_to_svg(sample_markdown(), &opts);
-        assert!(result.is_ok(), "SVG generation should succeed");
-        let svgs = result.unwrap();
-        assert!(!svgs.is_empty(), "Should generate at least one SVG page");
-        assert!(svgs[0].contains("<svg"), "Should contain SVG tag");
     }
 }

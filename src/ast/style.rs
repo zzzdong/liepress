@@ -3,7 +3,7 @@
 //! 定义所有支持的样式属性和计算后的样式值。
 //! 这是布局引擎消费的最终样式数据结构。
 
-use crate::visual::Color;
+use crate::color::Color;
 
 // ─── 字体字重 ───
 
@@ -425,6 +425,109 @@ pub struct Style {
 /// - 可继承属性：字体、颜色、行高、字间距、文本对齐、分页控制
 /// - 不可继承属性：边距、填充、尺寸、显示、背景、表格、object-fit
 impl Style {
+    /// 将计算后的样式序列化为可用于 HTML `style="..."` 的 CSS 字符串。
+    ///
+    /// 用途：HTML 文档输出路径（方案 Y 统一路径）先把 Markdown 解析为
+    /// 已套用 CSS 的 styled `ast::Node`，再据此序列化出**自包含、内联样式**
+    /// 的 HTML。这样 HTML 输出与 PDF 输出共享同一棵 styled ast（样式真源一致），
+    /// 不再依赖 `<style>` 块（仍保留作为兜底）。
+    ///
+    /// 仅输出"有值"的属性（Option 已设置、数值非零、或枚举非默认），避免冗余。
+    pub fn to_inline_css(&self) -> String {
+        let mut decls: Vec<String> = Vec::new();
+
+        if !self.font_family.is_empty() {
+            let fam = self
+                .font_family
+                .iter()
+                .map(|f| {
+                    if f.contains(|c: char| c.is_whitespace()) {
+                        format!("\"{}\"", f)
+                    } else {
+                        f.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            decls.push(format!("font-family: {}", fam));
+        }
+        if self.font_size_pt > 0.0 {
+            decls.push(format!("font-size: {:.2}pt", self.font_size_pt));
+        }
+        decls.push(format!("font-weight: {}", self.font_weight.as_str()));
+        decls.push(format!("font-style: {}", self.font_style.as_str()));
+        if self.color.a > 0 {
+            decls.push(format!("color: {}", self.color.to_hex()));
+        }
+        if self.line_height_pt > 0.0 {
+            decls.push(format!("line-height: {:.2}pt", self.line_height_pt));
+        }
+        if self.letter_spacing != 0.0 {
+            decls.push(format!("letter-spacing: {:.2}pt", self.letter_spacing));
+        }
+        if self.text_align != TextAlign::Left {
+            decls.push(format!("text-align: {}", self.text_align.as_str()));
+        }
+        if self.white_space != WhiteSpace::Normal {
+            let ws = match self.white_space {
+                WhiteSpace::Pre => "pre",
+                WhiteSpace::NoWrap => "nowrap",
+                WhiteSpace::Normal => "normal",
+            };
+            decls.push(format!("white-space: {}", ws));
+        }
+        if self.text_decoration != TextDecoration::None {
+            let d = match self.text_decoration {
+                TextDecoration::Underline => "underline",
+                TextDecoration::LineThrough => "line-through",
+                TextDecoration::None => "none",
+            };
+            decls.push(format!("text-decoration: {}", d));
+        }
+        Self::push_box(&mut decls, "margin", &self.margin);
+        Self::push_box(&mut decls, "padding", &self.padding);
+        if let Some(bg) = self.background_color {
+            decls.push(format!("background-color: {}", bg.to_hex()));
+        }
+        Self::push_border(&mut decls, &self.border);
+
+        decls.join("; ")
+    }
+
+    fn push_box(decls: &mut Vec<String>, name: &str, b: &BoxSides) {
+        if *b == BoxSides::ZERO {
+            return;
+        }
+        decls.push(format!(
+            "{}: {:.2}pt {:.2}pt {:.2}pt {:.2}pt",
+            name, b.top, b.right, b.bottom, b.left
+        ));
+    }
+
+    fn push_border(decls: &mut Vec<String>, border: &BoxBorders) {
+        for (side, prop) in [
+            (&border.top, "border-top"),
+            (&border.right, "border-right"),
+            (&border.bottom, "border-bottom"),
+            (&border.left, "border-left"),
+        ] {
+            if side.is_visible() {
+                let style = match side.style {
+                    BorderStyle::Dashed => "dashed",
+                    BorderStyle::Dotted => "dotted",
+                    _ => "solid",
+                };
+                decls.push(format!(
+                    "{}: {:.2}pt {} {}",
+                    prop,
+                    side.width,
+                    style,
+                    side.color.to_hex()
+                ));
+            }
+        }
+    }
+
     /// 从父样式继承创建一个子样式，只覆盖特定属性
     pub fn inherit_from(parent: &Style) -> Self {
         Self {
@@ -445,7 +548,9 @@ impl Style {
             border: BoxBorders::NONE,
             width: None,
             height: None,
-            object_fit: ObjectFit::None,
+            // 与 `Style::default()` 保持一致（图片默认不拉伸、保持比例）。
+            // object-fit 为非继承属性，这里固定默认值而非继承父值。
+            object_fit: ObjectFit::Contain,
             background_color: None,
             page_break_before: parent.page_break_before,
             page_break_after: parent.page_break_after,

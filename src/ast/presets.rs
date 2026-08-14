@@ -10,7 +10,7 @@
 //! - `list_marker_style`: 列表标记样式（用于 bullet/number 布局计算）
 //! - `LIST_INDENT_PT` / `calculate_list_indent`: 列表缩进计算
 
-use crate::visual::Color;
+use crate::color::Color;
 
 use super::style::*;
 
@@ -72,8 +72,8 @@ pub fn list_marker_style() -> Style {
 
 /// 将 ComputedStyle 转换为 text::TextStyle
 /// 供生成器在创建文本布局时使用
-pub fn computed_style_to_text_style(style: &Style) -> crate::text::TextStyle {
-    use crate::text::TextAlign as TextAlign2;
+pub fn computed_style_to_text_style(style: &Style) -> crate::document::text::TextStyle {
+    use crate::document::text::TextAlign as TextAlign2;
 
     let align = match style.text_align {
         TextAlign::Left => TextAlign2::Left,
@@ -82,7 +82,7 @@ pub fn computed_style_to_text_style(style: &Style) -> crate::text::TextStyle {
         TextAlign::Justify => TextAlign2::Left, // 暂不支持两端对齐，回退到左对齐
     };
 
-    crate::text::TextStyle {
+    crate::document::text::TextStyle {
         color: style.color,
         font_family: style.font_family.clone(),
         font_size: style.font_size_pt as f64,

@@ -1,6 +1,6 @@
 # liepress
 
-**liepress** 是一个基于 Rust 的 Markdown 文档转换工具，支持 CSS 样式定制，输出 PDF、SVG、PNG 格式。
+**liepress** 是一个基于 Rust 的 Markdown / HTML 文档转换工具，支持 CSS 样式定制，输出 PDF、SVG、PNG、HTML、DOCX 格式。
 
 - 作者：zzzdong
 - 仓库：<https://github.com/zzzdong/liepress>
@@ -37,10 +37,10 @@ cargo build --release
 然后运行：
 
 ```bash
-liepress doc.md -o doc.pdf
+liepress -i doc.md -o doc.pdf
 ```
 
-liepress 会根据 Markdown 内容和 CSS 样式生成文档。
+liepress 会根据 Markdown 内容和 CSS 样式生成文档。输出格式由输出文件扩展名推断（`.pdf`、`.svg`、`.png`、`.html`、`.docx`），也可用 `-f` 显式指定。
 
 ---
 
@@ -60,8 +60,8 @@ liepress 会根据 Markdown 内容和 CSS 样式生成文档。
 
 带标题的链接：[GitHub](https://github.com/zzzdong/liepress "liepress 项目主页")
 
-> 注意：liepress 仅支持本地图片文件，不支持远程 URL。
-> 将图片放在 Markdown 同级或子目录中引用即可。
+> 注意：liepress 支持本地图片文件（相对/绝对路径）和 `data:` URI（base64 内联），
+> 不支持远程 URL。将图片放在 Markdown 同级或子目录中引用即可。
 
 ![测试图片](./assets/sample.png "本地图片示例")
 
@@ -115,16 +115,22 @@ echo "Hello, liepress!"
 Rust 代码块：
 
 ```rust
-use liepress::ConvertOptions;
+use std::fs;
+
+use liepress::{ConvertOptions, PageConfig, markdown_to_pdf};
 
 fn main() {
     let md = "# Hello\nThis is **liepress**.";
     let options = ConvertOptions::default()
-        .with_page_config((210.0, 297.0))
-        .with_font_family("serif");
+        .with_page_config(PageConfig {
+            width: Some(210.0),
+            height: Some(297.0), // A4 纵向
+            ..PageConfig::default()
+        })
+        .with_font_family(&["serif"]);
 
-    let doc = liepress::convert(md, &options).unwrap();
-    doc.save_pdf("output.pdf").unwrap();
+    let pdf = markdown_to_pdf(md, &options).unwrap();
+    fs::write("output.pdf", pdf).unwrap();
 }
 ```
 
@@ -147,7 +153,8 @@ converter.convert("doc.md", "output.pdf")
 | PDF     | krilla   | ✅ 完成 | 高 |
 | SVG     | 手写 XML | ✅ 完成 | 中 |
 | PNG     | vello_cpu | ✅ 完成 | 低 |
-| ~~HTML~~ | — | ❌ 取消 | — |
+| HTML    | 语义序列化 | ✅ 完成 | 中 |
+| DOCX    | docx-rs   | ✅ 完成 | 低 |
 
 ---
 
@@ -159,33 +166,35 @@ converter.convert("doc.md", "output.pdf")
 
 > 本章介绍 liepress 的核心架构设计。
 
-## 1.1 三阶段渲染管线
+## 1.1 分层渲染管线
 
-liepress 采用 **三阶段架构**，将文档处理分为独立的步骤：
+liepress 采用 **分层架构**，将文档处理分为独立的层：
 
-| 阶段 | 输入 | 输出 | 职责 |
+| 层 | 输入 | 输出 | 职责 |
 |:----|:----|:----|:-----|
-| 解析 | Markdown + CSS | MDAST | 将 Markdown 解析为语法树 |
-| 布局 | MDAST + Style | 布局文档 | 计算每个元素的位置和尺寸 |
-| 渲染 | 布局文档 | PDF/SVG/PNG | 将布局结果绘制为最终输出 |
+| DOM 层 | Markdown / HTML | HtmlDocument | 解析为统一的 HTML 文档树 |
+| 样式 AST | HtmlDocument + CSS | Styled AST | 计算样式，生成带样式的语法树 |
+| 文档布局 | Styled AST | Document | 计算每个元素的位置和尺寸（不分页） |
+| 渲染/输出 | Document / AST | PDF/SVG/PNG、HTML/DOCX | 将布局结果绘制/序列化为最终输出 |
+
+其中 PDF、SVG、PNG 消费精确布局的 `Document`；HTML、DOCX 作为流式输出直接消费样式 AST。
 
 ### 1.1.1 关键设计决策
 
 ```rust
-// liepress 核心类型示意
-pub enum OutputFormat {
-    Pdf,
-    Svg,
-    Png,
-}
+// liepress 核心类型示意（通过 builder 风格构造）
+let opts = liepress::ConvertOptions::new()
+    .with_font_family(&["Noto Sans CJK SC", "serif"])
+    .with_css("h1 { color: #4a90d9; }")
+    .with_strict(true)
+    .with_auto_font(true);
 
-pub struct ConvertOptions {
-    pub page_width: f32,
-    pub page_height: f32,
-    pub font_family: String,
-    pub custom_css: Option<String>,
-    // ...
-}
+// 顶层自由函数直接返回字节/字符串，由调用方落盘
+let pdf = liepress::markdown_to_pdf(md, &opts).unwrap();
+let svg = liepress::markdown_to_svg(md, &opts).unwrap();
+let png = liepress::markdown_to_png(md, &opts).unwrap();
+let docx = liepress::markdown_to_docx(md, &opts).unwrap();
+let html = liepress::markdown_to_html_document(md, None, None, None);
 ```
 
 #### 1.1.1.1 设计权衡
@@ -194,8 +203,8 @@ pub struct ConvertOptions {
 >
 > - 选择 Rust 语言以获得 **高性能** 和 **内存安全**
 > - CSS 样式系统支持 **选择器权重计算** 和 **样式层叠**
-> - 三种输出后端共享同一布局引擎
-> - ~~Word 输出~~ 暂无计划
+> - PDF/SVG/PNG 共享同一布局引擎（`Document`）
+> - HTML/DOCX 作为流式输出直接消费样式 AST
 
 ---
 
@@ -214,19 +223,7 @@ pub struct ConvertOptions {
 
 ## center 居中容器
 
-<center>
-
-# liepress
-
-### 用 Markdown 生成文档
-
-| 特性 | 说明 |
-|:----:|:----:|
-| 轻量 | 无需浏览器或 JS 运行时 |
-| 快速 | Rust 编译，毫秒级渲染 |
-| 可定制 | CSS 控制一切样式 |
-
-</center>
+<center>liepress</center>
 
 ---
 

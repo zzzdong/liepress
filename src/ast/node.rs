@@ -73,6 +73,12 @@ pub enum NodeKind {
     /// 任务列表项（GFM 复选框）
     TaskListItem { checked: bool, children: Vec<Node> },
 
+    /// 定义列表（<dl>）：有序的 (术语, 定义) 项序列
+    DefinitionList { items: Vec<DefinitionItem> },
+
+    /// 脚注定义（<div class="footnote-def">，末尾聚合）：携带 label 供内部跳转
+    FootnoteDef { id: String, children: Vec<Node> },
+
     /// 图片
     Image {
         src: String,
@@ -138,6 +144,15 @@ pub enum NodeKind {
     LineBreak,
 }
 
+/// 定义列表项（<dt> 术语 + <dd> 定义）
+#[derive(Debug, Clone)]
+pub struct DefinitionItem {
+    /// 术语（<dt>）内容
+    pub term: Vec<Node>,
+    /// 定义（<dd>）内容
+    pub definition: Vec<Node>,
+}
+
 impl NodeKind {
     /// 获取文本内容的拼接值
     pub fn text_content(&self) -> String {
@@ -166,6 +181,25 @@ impl NodeKind {
             | NodeKind::Span { children }
             | NodeKind::Center { children }
             | NodeKind::Container { children } => {
+                let mut s = String::new();
+                for child in children {
+                    s.push_str(&child.text_content());
+                }
+                s
+            }
+            NodeKind::DefinitionList { items } => {
+                let mut s = String::new();
+                for item in items {
+                    for child in &item.term {
+                        s.push_str(&child.text_content());
+                    }
+                    for child in &item.definition {
+                        s.push_str(&child.text_content());
+                    }
+                }
+                s
+            }
+            NodeKind::FootnoteDef { children, .. } => {
                 let mut s = String::new();
                 for child in children {
                     s.push_str(&child.text_content());
@@ -204,6 +238,21 @@ where
         | NodeKind::Container { children }
         | NodeKind::Subscript { children }
         | NodeKind::Superscript { children } => {
+            for child in children {
+                walk(child, callback);
+            }
+        }
+        NodeKind::DefinitionList { items } => {
+            for item in items {
+                for child in &item.term {
+                    walk(child, callback);
+                }
+                for child in &item.definition {
+                    walk(child, callback);
+                }
+            }
+        }
+        NodeKind::FootnoteDef { children, .. } => {
             for child in children {
                 walk(child, callback);
             }

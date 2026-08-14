@@ -7,7 +7,7 @@ use crate::ast::style::{
     CssLength, Display, FontStyle, FontWeight, LineHeight, ObjectFit, PageBreak, PageConfig, Style,
     TextAlign, TextDecoration, WhiteSpace,
 };
-use crate::visual::Color;
+use crate::color::Color;
 use lightningcss::rules::CssRule;
 use lightningcss::selector::Component;
 use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet};
@@ -591,7 +591,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 let bs = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::visual::Color::new(0, 0, 0),
+                    crate::color::Color::new(0, 0, 0),
                 );
                 style.border.top = bs;
                 style.border.right = bs;
@@ -605,7 +605,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 style.border.top = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::visual::Color::new(0, 0, 0),
+                    crate::color::Color::new(0, 0, 0),
                 );
             }
         }
@@ -615,7 +615,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 style.border.bottom = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::visual::Color::new(0, 0, 0),
+                    crate::color::Color::new(0, 0, 0),
                 );
             }
         }
@@ -625,7 +625,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 style.border.left = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::visual::Color::new(0, 0, 0),
+                    crate::color::Color::new(0, 0, 0),
                 );
             }
         }
@@ -635,7 +635,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 style.border.right = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::visual::Color::new(0, 0, 0),
+                    crate::color::Color::new(0, 0, 0),
                 );
             }
         }

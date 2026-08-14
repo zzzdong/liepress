@@ -14,6 +14,12 @@ pub enum Error {
     #[error("css parse error: {0}")]
     CssParseError(String),
 
+    #[error("html parse error: {0}")]
+    HtmlError(String),
+
+    #[error("render error: {0}")]
+    RenderError(String),
+
     #[error("io error: {0}")]
     IoError(#[from] std::io::Error),
 }
