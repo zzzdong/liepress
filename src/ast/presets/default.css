@@ -163,10 +163,21 @@ em {
 }
 
 /* 链接 */
+/* 链接正文：克制的蓝 + 下划线，明确可点；不做斜体以免与"带标题副文本"混淆。
+   带 title 的链接，其 title 以「（title）」斜体灰字副文本形式跟在正文后，
+   由下游输出后端（PDF/PNG/SVG/DOCX/HTML）统一追加 `.link-desc`。 */
 a {
-    color: #00f;
-    font-style: italic;
+    color: #0066cc;
+    text-decoration: underline;
     display: inline;
+}
+
+/* 带标题链接的副文本（title 说明），斜体灰字，不可点 */
+a .link-desc,
+.link-desc {
+    color: #888;
+    font-style: italic;
+    text-decoration: none;
 }
 
 /* 删除线 */

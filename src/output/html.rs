@@ -178,6 +178,16 @@ fn serialize_node(node: &Node, out: &mut String) {
             out.push_str(&format!("\"{}>", sa));
             serialize_children(children, out);
             out.push_str("</a>");
+            // 带标题的链接：正文之后追加「（title）」副文本（斜体灰字，不可点），
+            // 与 PDF/PNG/SVG/DOCX 三端一致（pandoc/typst 印刷风格）。
+            if let Some(t) = title {
+                if !t.trim().is_empty() {
+                    out.push_str(&format!(
+                        "<span class=\"link-desc\">（{}）</span>",
+                        escape_html(t)
+                    ));
+                }
+            }
         }
         NodeKind::Delete { children } => {
             out.push_str(&format!("<del{}>", sa));

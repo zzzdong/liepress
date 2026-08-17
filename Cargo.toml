@@ -1,6 +1,6 @@
 [package]
 name = "liepress"
-version = "0.1.4"
+version = "0.2.0"
 description = "A Markdown/HTML to PDF converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
@@ -23,10 +23,21 @@ lightningcss = { version = "1.0.0-alpha.71", default-features = false }
 image = { version = "0.25" }
 kamadak-exif = "0.6"
 krilla = "0.8"
-parley = "0.11.0"
 pulldown-cmark = "0.13.4"
+syntect = { version = "5", default-features = false, features = ["default-themes", "default-syntaxes", "parsing", "regex-fancy"] }
 thiserror = "2.0"
 vello_cpu = "0.2.0"
+liecharts = { version = "0.1", optional = true }
+lievisual = { version = "0.1.0-beta.2", path = "../lievisual" }
+
+[features]
+default = []
+charts = ["dep:liecharts"]
+
+# 开发期用本地 liecharts 覆盖 crates.io 版本（patch 模式）。
+# 发布 / CI 时删除此段，即回到 crates.io 发布的 liecharts。
+#[patch.crates-io]
+#liecharts = { path = "../liecharts" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }

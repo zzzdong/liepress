@@ -12,7 +12,7 @@ enum Format {
     Docx,
 }
 
-#[derive(Clone, Debug)]
+#[derive(ValueEnum, Clone, Debug)]
 enum InputFormat {
     Markdown,
     Html,
@@ -54,17 +54,23 @@ fn infer_input_format_from_ext(path: &Path) -> Option<InputFormat> {
 #[command(name = "liepress")]
 #[command(about = "Convert Markdown or HTML to PDF or HTML")]
 struct Args {
-    /// Input file path (Markdown: .md, .markdown; HTML: .html, .htm)
+    /// Input file path (Markdown: .md, .markdown; HTML: .html, .htm).
+    /// Use `-` to read from stdin.
     #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
-    /// Output file path (format inferred from extension: .pdf, .html, .svg, .png, .docx)
+    /// Output file path (format inferred from extension: .pdf, .html, .svg, .png, .docx).
+    /// Use `-` to write to stdout.
     #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Output format (overrides extension-based inference)
     #[arg(short, long, value_enum)]
     format: Option<Format>,
+
+    /// Input format (required when reading from stdin via `-`, otherwise inferred from extension)
+    #[arg(short = 'F', long = "from", value_enum)]
+    input_format: Option<InputFormat>,
 
     /// Optional CSS stylesheet file to override default styles
     #[arg(short = 's', long = "style", value_name = "CSS_FILE")]
@@ -290,12 +296,22 @@ fn build_page_config(args: &Args) -> Option<PageConfig> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    // 推断输入格式
-    let input_format = infer_input_format_from_ext(&args.input)
-        .ok_or_else(|| format!(
-            "Cannot determine input format from extension '{}'. Supported: .md, .markdown, .html, .htm",
-            args.input.extension().and_then(|e| e.to_str()).unwrap_or("(none)")
-        ))?;
+    // stdin 输入：输入路径为 `-`
+    let from_stdin = args.input.as_os_str() == "-";
+    // stdout 输出：输出路径为 `-`
+    let to_stdout = args.output.as_os_str() == "-";
+
+    // 推断输入格式（stdin 时需显式 --from，否则默认 Markdown）
+    let input_format = if from_stdin {
+        args.input_format.clone().unwrap_or(InputFormat::Markdown)
+    } else {
+        infer_input_format_from_ext(&args.input).ok_or_else(|| {
+            format!(
+                "Cannot determine input format from extension '{}'. Supported: .md, .markdown, .html, .htm",
+                args.input.extension().and_then(|e| e.to_str()).unwrap_or("(none)")
+            )
+        })?
+    };
 
     // 推断输出格式
     let format = args.format.clone().or_else(|| infer_format_from_ext(&args.output))
@@ -317,16 +333,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         opts.page_config = Some(page_config);
     }
 
+    // 统一输出：stdout 时写标准输出，否则写文件
+    let emit = |bytes: &[u8]| -> Result<(), Box<dyn std::error::Error>> {
+        if to_stdout {
+            use std::io::Write;
+            let mut out = std::io::stdout().lock();
+            out.write_all(bytes)?;
+            out.flush()?;
+        } else {
+            std::fs::write(&args.output, bytes)?;
+            println!("Saved to: {}", args.output.display());
+        }
+        Ok(())
+    };
+
+    // stdin 输入：提前读取全部内容（字符串版 API 无法解析相对路径本地图片，
+    // 图片需以 data URI 形式提供，符合「stdin 无文件路径上下文」的约束）。
+    use std::io::Read;
+    let stdin_content: Option<String> = if from_stdin {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        Some(buf)
+    } else {
+        None
+    };
+
+    // 读取本地输入文本（文件输入用）；stdin 输入直接复用 stdin_content
+    let read_input = || -> Result<String, Box<dyn std::error::Error>> {
+        if from_stdin {
+            Ok(stdin_content.clone().unwrap_or_default())
+        } else {
+            Ok(std::fs::read_to_string(&args.input)?)
+        }
+    };
     match (input_format, format) {
         // Markdown → PDF
         (InputFormat::Markdown, Format::Pdf) => {
-            let pdf_bytes = markdown_file_to_pdf(&args.input, &opts)?;
-            std::fs::write(&args.output, pdf_bytes)?;
-            println!("PDF saved to: {}", args.output.display());
+            let pdf_bytes = if from_stdin {
+                liepress::markdown_to_pdf(stdin_content.as_ref().unwrap(), &opts)?
+            } else {
+                markdown_file_to_pdf(&args.input, &opts)?
+            };
+            emit(&pdf_bytes)?;
         }
         // Markdown → HTML
         (InputFormat::Markdown, Format::Html) => {
-            let md_content = std::fs::read_to_string(&args.input)?;
+            let md_content = read_input()?;
 
             // 读取用户 CSS 文件
             let user_css = if let Some(css_path) = &args.style {
@@ -335,12 +387,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
 
-            // 从输入文件名提取 fallback title（去掉扩展名）
-            let fallback_title = args
-                .input
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string());
+            // 文件输入时从文件名提取 fallback title（去掉扩展名）；stdin 时不提供
+            let fallback_title = if from_stdin {
+                None
+            } else {
+                args.input
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+            };
 
             let html = liepress::markdown_to_html_document(
                 &md_content,
@@ -348,58 +403,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.title.as_deref(),
                 fallback_title.as_deref(),
             );
-            std::fs::write(&args.output, html)?;
-            println!("HTML saved to: {}", args.output.display());
+            emit(html.as_bytes())?;
         }
 
         // HTML → PDF
         (InputFormat::Html, Format::Pdf) => {
-            let pdf_bytes = html_file_to_pdf(&args.input, &opts)?;
-            std::fs::write(&args.output, pdf_bytes)?;
-            println!("PDF saved to: {}", args.output.display());
+            let pdf_bytes = if from_stdin {
+                liepress::html_to_pdf(stdin_content.as_ref().unwrap(), &opts)?
+            } else {
+                html_file_to_pdf(&args.input, &opts)?
+            };
+            emit(&pdf_bytes)?;
         }
         // HTML → HTML（直接复制）
         (InputFormat::Html, Format::Html) => {
-            let html_content = std::fs::read_to_string(&args.input)?;
-            std::fs::write(&args.output, html_content)?;
-            println!("HTML saved to: {}", args.output.display());
+            let html_content = read_input()?;
+            emit(html_content.as_bytes())?;
         }
 
         // Markdown → SVG / PNG / DOCX
         (InputFormat::Markdown, Format::Svg) => {
-            // 文件入口以解析相对路径本地图片
-            let svg = liepress::markdown_file_to_svg(&args.input, &opts)?;
-            std::fs::write(&args.output, svg)?;
-            println!("SVG saved to: {}", args.output.display());
+            let svg = if from_stdin {
+                liepress::markdown_to_svg(stdin_content.as_ref().unwrap(), &opts)?
+            } else {
+                liepress::markdown_file_to_svg(&args.input, &opts)?
+            };
+            emit(svg.as_bytes())?;
         }
         (InputFormat::Markdown, Format::Png) => {
-            // 文件入口以解析相对路径本地图片
-            let png = liepress::markdown_file_to_png(&args.input, &opts)?;
-            std::fs::write(&args.output, png)?;
-            println!("PNG saved to: {}", args.output.display());
+            let png = if from_stdin {
+                liepress::markdown_to_png(stdin_content.as_ref().unwrap(), &opts)?
+            } else {
+                liepress::markdown_file_to_png(&args.input, &opts)?
+            };
+            emit(&png)?;
         }
         (InputFormat::Markdown, Format::Docx) => {
-            // 用文件版本以解析相对路径的本地图片（自动内联为 base64）
-            let docx = liepress::markdown_file_to_docx(&args.input, &opts)?;
-            std::fs::write(&args.output, docx)?;
-            println!("DOCX saved to: {}", args.output.display());
+            // 用字符串版本（stdin 无相对路径图片上下文）；文件版为兼容保留
+            let docx = if from_stdin {
+                liepress::markdown_to_docx(stdin_content.as_ref().unwrap(), &opts)?
+            } else {
+                liepress::markdown_file_to_docx(&args.input, &opts)?
+            };
+            emit(&docx)?;
         }
 
         // HTML → SVG / PNG / DOCX
         (InputFormat::Html, Format::Svg) => {
-            // 文件入口以解析相对路径本地图片
-            let svg = liepress::html_file_to_svg(&args.input, &opts)?;
-            std::fs::write(&args.output, svg)?;
-            println!("SVG saved to: {}", args.output.display());
+            let svg = if from_stdin {
+                liepress::html_to_svg(stdin_content.as_ref().unwrap(), &opts)?
+            } else {
+                liepress::html_file_to_svg(&args.input, &opts)?
+            };
+            emit(svg.as_bytes())?;
         }
         (InputFormat::Html, Format::Png) => {
-            // 文件入口以解析相对路径本地图片
-            let png = liepress::html_file_to_png(&args.input, &opts)?;
-            std::fs::write(&args.output, png)?;
-            println!("PNG saved to: {}", args.output.display());
+            let png = if from_stdin {
+                liepress::html_to_png(stdin_content.as_ref().unwrap(), &opts)?
+            } else {
+                liepress::html_file_to_png(&args.input, &opts)?
+            };
+            emit(&png)?;
         }
         (InputFormat::Html, Format::Docx) => {
-            // 用文件版本以解析相对路径的本地图片（自动内联为 base64）
+            // 用字符串版本（stdin 无相对路径图片上下文）；文件版为兼容保留
             let docx = liepress::html_file_to_docx(&args.input, &opts)?;
             std::fs::write(&args.output, docx)?;
             println!("DOCX saved to: {}", args.output.display());

@@ -27,7 +27,9 @@ pub fn block_height(block: &Block, settings: &PageSettings, x: f64) -> f64 {
             children.iter().map(|c| block_height(c, settings, x)).sum()
         }
         BlockKind::Paragraph { lines } => (lines.len().max(1) as f64) * style.line_height_pt as f64,
-        BlockKind::CodeBlock { code, .. } => (code.lines().count().max(1) as f64) * 18.0 + 8.0,
+        BlockKind::CodeBlock { lines, .. } => {
+            (lines.len().max(1) as f64) * style.line_height_pt as f64 + 8.0
+        }
         BlockKind::ThematicBreak => 4.0,
         BlockKind::Image(img) => {
             if img.size.1 > 0.0 {

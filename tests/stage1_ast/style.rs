@@ -91,10 +91,10 @@ fn test_link_has_color() {
                 NodeKind::Paragraph { children } => {
                     for child in children {
                         if let NodeKind::Link { .. } = &child.kind {
-                            // Links typically have blue color
+                            // 链接颜色取自 CSS 预设 `a { color: #0066cc }`（见 default.css）。
                             assert_eq!(child.style.color.r, 0);
-                            assert_eq!(child.style.color.g, 0);
-                            assert_eq!(child.style.color.b, 255);
+                            assert_eq!(child.style.color.g, 102);
+                            assert_eq!(child.style.color.b, 204);
                             // Links have URL set
                             assert_eq!(child.style.link_url.as_deref(), Some("http://example.com"));
                             return;

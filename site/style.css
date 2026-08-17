@@ -210,6 +210,21 @@ html, body {
   margin-top: 12px;
 }
 
+/* 正文链接：克制蓝 + 下划线，明确可点（与 PDF/PNG/SVG/DOCX 一致） */
+.content a {
+  color: #0066cc;
+  text-decoration: underline;
+}
+
+/* 带标题链接的副文本（title 说明）：斜体灰字，不可点，
+   与 pandoc/typst 印刷风格一致 */
+.content a .link-desc,
+.content .link-desc {
+  color: #888;
+  font-style: italic;
+  text-decoration: none;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .container {

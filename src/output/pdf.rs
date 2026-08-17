@@ -119,8 +119,47 @@ impl PdfDocumentGenerator {
             m
         };
 
+        // 收集脚注引用位置：正文里 url 形如 `#fn-def-<label>` 的链接所在块坐标，
+        // 作为返回引用目标，key 取 `fn-ref-<label>`。使脚注定义区的 ↩ 能页内跳回引用处。
+        let footnote_ref_targets: HashMap<String, (usize, f64, f64)> = {
+            fn walk(block: &Block, page_idx: usize, x: f64, y: f64, out: &mut HashMap<String, (usize, f64, f64)>) {
+                // 段落内的链接以 TextRun.url 形式存在（脚注引用即在此），需单独收集。
+                if let BlockKind::Paragraph { lines } = &block.kind {
+                    for l in lines {
+                        for run in &l.runs {
+                            if let Some(u) = run.url.as_deref() {
+                                if let Some(label) = u.strip_prefix("#fn-def-") {
+                                    out.entry(format!("fn-ref-{}", label))
+                                        .or_insert((page_idx, x, y));
+                                }
+                            }
+                        }
+                    }
+                }
+                if let BlockKind::Link { url, .. } = &block.kind {
+                    if let Some(label) = url.strip_prefix("#fn-def-") {
+                        out.entry(format!("fn-ref-{}", label))
+                            .or_insert((page_idx, x, y));
+                    }
+                }
+                for child in block.kind.children() {
+                    walk(child, page_idx, x, y, out);
+                }
+            }
+            let mut m = HashMap::new();
+            for (idx, page) in pages.iter().enumerate() {
+                for pb in &page.blocks {
+                    walk(&pb.block, idx, pb.x, pb.y, &mut m);
+                }
+            }
+            m
+        };
+
         // 收集目录条目：标题（Heading）块 → (层级, 文本, 页索引, y)，用于生成 PDF outline。
+        // 同时建立「标题 slug → 跳转目标」映射，供正文/TOC 中的内部锚点链接（#anchor）
+        // 跳转到对应标题（与 outline 行为一致，而非退化为外部 URL 动作）。
         let mut outline_entries: Vec<OutlineEntry> = Vec::new();
+        let mut heading_targets: HashMap<String, (usize, f64, f64)> = HashMap::new();
         for (idx, page) in pages.iter().enumerate() {
             for pb in &page.blocks {
                 if let BlockKind::Heading { level, .. } = &pb.block.kind {
@@ -128,10 +167,12 @@ impl PdfDocumentGenerator {
                     if !title.is_empty() {
                         outline_entries.push(OutlineEntry {
                             level: *level,
-                            title,
+                            title: title.clone(),
                             page_index: idx,
                             y: pb.y,
                         });
+                        // 以 GitHub 风格 slug 作为锚点 key。
+                        heading_targets.insert(github_slug(&title), (idx, 0.0, pb.y));
                     }
                 }
             }
@@ -184,19 +225,29 @@ impl PdfDocumentGenerator {
 
             for (lx, ly, lw, lh, url) in links {
                 if let Some(rect) = KrillaRect::from_xywh(lx, ly, lw, lh) {
-                    // 内部锚点（#fn-def-<id>）→ 目标 destination；否则视为外部 URL 动作。
+                    // 内部锚点（#fn-def-<id> 或 #heading-slug）→ 目标 destination；
+                    // 否则视为外部 URL 动作。
                     let target = if let Some(internal) = url.strip_prefix('#') {
-                        match footnote_targets.get(internal) {
-                            Some((page_idx, tx, ty)) => {
-                                Target::Destination(Destination::Xyz(XyzDestination::new(
-                                    *page_idx,
-                                    KrillaPoint::from_xy(*tx as f32, *ty as f32),
-                                )))
-                            }
-                            None => {
-                                let action = Action::from(LinkAction::new(url.clone()));
-                                Target::Action(action)
-                            }
+                        if let Some((page_idx, tx, ty)) = footnote_targets.get(internal) {
+                            Target::Destination(Destination::Xyz(XyzDestination::new(
+                                *page_idx,
+                                KrillaPoint::from_xy(*tx as f32, *ty as f32),
+                            )))
+                        } else if let Some((page_idx, tx, ty)) = footnote_ref_targets.get(internal) {
+                            // 命中脚注返回引用（#fn-ref-<label>）：页内跳回正文引用处。
+                            Target::Destination(Destination::Xyz(XyzDestination::new(
+                                *page_idx,
+                                KrillaPoint::from_xy(*tx as f32, *ty as f32),
+                            )))
+                        } else if let Some((page_idx, tx, ty)) = heading_targets.get(internal) {
+                            // 命中标题锚点：与 outline 一致的页内跳转。
+                            Target::Destination(Destination::Xyz(XyzDestination::new(
+                                *page_idx,
+                                KrillaPoint::from_xy(*tx as f32, *ty as f32),
+                            )))
+                        } else {
+                            let action = Action::from(LinkAction::new(url.clone()));
+                            Target::Action(action)
                         }
                     } else {
                         let action = Action::from(LinkAction::new(url.clone()));
@@ -725,30 +776,19 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             BlockKind::Paragraph { lines } => {
                 self.draw_doc_lines(lines, x, y);
             }
-            BlockKind::CodeBlock { code, .. } => {
-                // 样式全部来自 document 层投影的 ResolvedStyle（源自 CSS 的 pre 规则），
-                // 不再自行定义颜色/字号，仅对 CSS 未声明时保留最小兜底默认值。
-                let bg = style.background_color.unwrap_or(Color::new(245, 245, 245));
+            BlockKind::CodeBlock { lines, .. } => {
+                // 语法高亮（暗色主题）已预排版进 `lines`，每段自带前景色；
+                // 背景统一使用深色以匹配高亮配色（CSS 未声明时兜底深灰）。
+                let bg = style.background_color.unwrap_or(Color::new(40, 44, 52));
                 let lh = if style.line_height_pt > 0.0 {
                     style.line_height_pt as f64
                 } else {
                     18.0
                 };
-                let n = code.lines().count().max(1);
+                let n = lines.len().max(1);
                 let h = n as f64 * lh + 8.0;
                 self.draw_rect(x, y, self.content_w, h, Some(bg), None);
-                let mono = text_style_from_resolved(style);
-                let mut cy = y + 4.0;
-                for raw in code.lines() {
-                    let segments = [(raw, &mono)];
-                    let layout = layout_text(&segments, None, LayoutAlign::Left);
-                    if let Some(tl) = layout.lines.last() {
-                        for run in &tl.runs {
-                            self.draw_text_run(run, Point::new(x + 4.0, cy));
-                        }
-                    }
-                    cy += lh;
-                }
+                self.draw_doc_lines(lines, x + 4.0, y + 4.0);
             }
             BlockKind::ThematicBreak => {
                 // 横线颜色来自 CSS 的 hr 规则（border-top + border-color），
@@ -1009,6 +1049,35 @@ struct OutlineEntry {
     page_index: usize,
     /// 页内 y 坐标（内容区左上角为原点，pt）
     y: f64,
+}
+
+/// 把标题文本转换为 GitHub 风格锚点 slug，用于内部链接跳转匹配。
+///
+/// 规则（与 GitHub/常见 Markdown TOC 生成器一致）：
+/// - 字母数字与字母（含 CJK）保留；ASCII 字母转小写。
+/// - 空白与标点（`.`, `,`, `!` 等）折叠为单个 `-`。
+/// - 去除首尾 `-`。
+///
+/// 例：`"1. 安装与快速开始"` → `"1-安装与快速开始"`，与手动 TOC 的 `#1-安装与快速开始` 匹配。
+fn github_slug(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() || c.is_alphabetic() {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if c.is_whitespace() || ".,!?;:'\"()[]{}|/\\<>#&*+=@$%^~`".contains(c) {
+            if !prev_dash && !out.is_empty() {
+                out.push('-');
+                prev_dash = true;
+            }
+        }
+        // 其它字符（如中文标点）跳过，不计入 slug。
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
 }
 
 /// 将扁平标题条目列表组织为层级 krilla `Outline`。

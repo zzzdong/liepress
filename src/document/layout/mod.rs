@@ -115,7 +115,15 @@ pub enum BlockKind {
     Blockquote { children: Vec<Block> },
 
     /// 代码块
-    CodeBlock { code: String, lang: Option<String> },
+    ///
+    /// `lines` 为语法高亮后的预排版文本行（来自 [`crate::document::highlight`]），
+    /// 前端/后端应优先消费 `lines` 而非重新排版 `code`。
+    CodeBlock {
+        code: String,
+        lang: Option<String>,
+        /// 语法高亮后的带色文本行（逐行一个 [`TextLine`]）
+        lines: Vec<TextLine>,
+    },
 
     /// 分隔线
     ThematicBreak,
@@ -160,6 +168,27 @@ pub enum BlockKind {
 }
 
 impl BlockKind {
+    /// 返回该块变体包含的子块（无子块则返回空切片）。用于递归遍历（如收集链接）。
+    pub fn children(&self) -> &[Block] {
+        match self {
+            BlockKind::Document { children }
+            | BlockKind::Heading { children, .. }
+            | BlockKind::List { children, .. }
+            | BlockKind::ListItem { children, .. }
+            | BlockKind::TaskListItem { children, .. }
+            | BlockKind::Blockquote { children }
+            | BlockKind::Container { children }
+            | BlockKind::FootnoteDef { children, id: _ } => children,
+            BlockKind::TableRow { .. } | BlockKind::Table { .. } => {
+                // 表格内链接（如脚注引用出现在表格中）极少见，暂不在 children() 中展开，
+                // 避免与 TableCell/TableRow 的不同容器类型冲突；不影响脚注主流程。
+                &[]
+            }
+            BlockKind::TableCell { children } => children,
+            _ => &[],
+        }
+    }
+
     pub fn text_content(&self) -> String {
         match self {
             BlockKind::Text { text } => text.clone(),

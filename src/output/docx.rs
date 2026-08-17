@@ -242,7 +242,20 @@ fn emit_inline_runs(p: Paragraph, n: &Node) -> Paragraph {
                     .east_asia("Consolas"),
             ),
         ),
-        NodeKind::Link { children, .. } => emit_inline_children(p, children),
+        NodeKind::Link { children, title, url: _ } => {
+            let mut p = emit_inline_children(p, children);
+            // 带标题的链接：正文之后追加「（title）」副文本（斜体灰字，不可点），
+            // 参照 pandoc/typst 印刷风格，与 PDF/PNG/SVG/HTML 三端一致。
+            if let Some(t) = title {
+                if !t.trim().is_empty() {
+                    let mut desc = crate::ast::Style::default();
+                    desc.color = Color::new(136, 136, 136); // #888
+                    desc.font_style = crate::ast::FontStyle::Italic;
+                    p = p.add_run(run_from_style(&format!("（{}）", t), &desc));
+                }
+            }
+            p
+        }
         NodeKind::Delete { children }
         | NodeKind::Subscript { children }
         | NodeKind::Superscript { children }

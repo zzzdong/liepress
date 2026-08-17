@@ -20,10 +20,12 @@
 
 use crate::ast::{Node, NodeKind, computed_style_to_text_style};
 use crate::color::Color;
+use crate::document::highlight::highlight_code;
+use crate::document::ext_render::{RenderOpts, find_renderer, parse_info_string};
 use crate::document::layout::{
     Block, BlockKind, DefinitionItemBlock, Document, TableCell, TableRow,
 };
-use crate::document::text::{FONT_CONTEXT, LAYOUT_CONTEXT, TextLine, TextStyle};
+use crate::document::text::{TextLine, TextStyle};
 use crate::document::types::page::PageSettings;
 use crate::document::types::{DocImage, ResolvedStyle};
 
@@ -65,40 +67,24 @@ fn measure_cell(node: &Node, style: &crate::ast::Style, padding_h: f64) -> CellM
     }
     let combined: Vec<(&str, &crate::document::text::TextStyle)> =
         segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
-    let ideal_width = FONT_CONTEXT.with(|font_cx| {
-        LAYOUT_CONTEXT.with(|layout_cx| {
-            let mut fcx = font_cx.borrow_mut();
-            let mut lcx = layout_cx.borrow_mut();
-            let layout = crate::document::text::layout_text_with_contexts(
-                &combined,
-                None,
-                crate::ast::TextAlign::Left,
-                &mut fcx,
-                &mut lcx,
-            );
-            layout.width
-        })
-    });
+    let ideal_width = crate::document::text::layout_text(
+        &combined,
+        None,
+        crate::ast::TextAlign::Left,
+    )
+    .width;
     // 最宽不可断词宽度
     let min_width = segments
         .iter()
         .flat_map(|(text, st)| split_words(text).into_iter().map(move |w| (w, st)))
         .filter(|(w, _)| !w.is_empty())
         .fold(0.0_f64, |acc, (word, st)| {
-            let w = FONT_CONTEXT.with(|font_cx| {
-                LAYOUT_CONTEXT.with(|layout_cx| {
-                    let mut fcx = font_cx.borrow_mut();
-                    let mut lcx = layout_cx.borrow_mut();
-                    let layout = crate::document::text::layout_text_with_contexts(
-                        &[(word, st)],
-                        None,
-                        crate::ast::TextAlign::Left,
-                        &mut fcx,
-                        &mut lcx,
-                    );
-                    layout.width
-                })
-            });
+            let w = crate::document::text::layout_text(
+                &[(word, st)],
+                None,
+                crate::ast::TextAlign::Left,
+            )
+            .width;
             acc.max(w)
         });
     CellMeasure {
@@ -205,20 +191,8 @@ fn measure_cell_height(node: &Node, style: &crate::ast::Style, width: f64) -> f6
     }
     let combined: Vec<(&str, &crate::document::text::TextStyle)> =
         segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
-    FONT_CONTEXT.with(|font_cx| {
-        LAYOUT_CONTEXT.with(|layout_cx| {
-            let mut fcx = font_cx.borrow_mut();
-            let mut lcx = layout_cx.borrow_mut();
-            let layout = crate::document::text::layout_text_with_contexts(
-                &combined,
-                Some(width),
-                crate::ast::TextAlign::Left,
-                &mut fcx,
-                &mut lcx,
-            );
-            layout.height
-        })
-    })
+    crate::document::text::layout_text(&combined, Some(width), crate::ast::TextAlign::Left)
+        .height
 }
 
 /// 按指定宽度转换表格单元格（`NodeKind::Paragraph`）为段落块。
@@ -345,8 +319,26 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
         }
         NodeKind::FootnoteDef { id, children } => {
             // 脚注定义（末尾聚合）：子节点转为块序列，携带 label 供 PDF 内部跳转定位。
-            let child_blocks: Vec<Block> =
+            let mut child_blocks: Vec<Block> =
                 children.iter().map(|c| convert_node(c, settings)).collect();
+            // 追加返回引用链接（↩），使脚注定义可点回正文中的引用处（页内 destination 跳转，
+            // 与 TOC/脚注引用跳转一致）。label 由 `fn-def-<label>` 反推为 `fn-ref-<label>`。
+            if let Some(label) = id.strip_prefix("fn-def-") {
+                let backref = Node::new(
+                    NodeKind::Link {
+                        url: format!("#fn-ref-{}", label),
+                        title: None,
+                        children: vec![Node::new(
+                            NodeKind::Text { text: " ↩".to_string() },
+                            crate::ast::Style::default(),
+                            false,
+                        )],
+                    },
+                    crate::ast::Style::default(),
+                    false,
+                );
+                child_blocks.push(convert_node(&backref, settings));
+            }
             Block::new(
                 BlockKind::FootnoteDef {
                     id: id.clone(),
@@ -384,14 +376,9 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             style,
             node.splittable,
         ),
-        NodeKind::CodeBlock { code, lang } => Block::new(
-            BlockKind::CodeBlock {
-                code: code.clone(),
-                lang: lang.clone(),
-            },
-            style,
-            node.splittable,
-        ),
+        NodeKind::CodeBlock { code, lang } => {
+            convert_code_block(code, lang.as_deref().unwrap_or(""), &style, settings, node.splittable)
+        }
         NodeKind::ThematicBreak => Block::new(BlockKind::ThematicBreak, style, node.splittable),
         NodeKind::Table { children, align } => {
             // 先收集所有单元格的原始 AST 节点（行→列），用于真实度量列宽/行高。
@@ -542,6 +529,78 @@ fn convert_image_node(node: &Node, style: &ResolvedStyle, settings: &PageSetting
     )
 }
 
+/// 转换代码块节点。
+///
+/// 流程：
+/// 1. 解析 info string 为 `(lang, overrides)`（如 `liecharts width=900 theme=dark`）。
+/// 2. 若 `lang` 命中已注册的外部渲染器（`ext_render::find_renderer`），则把代码块文本
+///    交给该渲染器渲染为图片，并包装成 [`BlockKind::Image`] 居中嵌入。
+/// 3. 渲染失败（JSON 非法 / 引擎错误）**软降级**：把错误信息与原始代码作为
+///    [`BlockKind::CodeBlock] 显示，不中断整篇文档渲染。
+/// 4. 未命中渲染器时，退化为普通语法高亮代码块（原行为）。
+fn convert_code_block(
+    code: &str,
+    lang: &str,
+    style: &ResolvedStyle,
+    settings: &PageSettings,
+    splittable: bool,
+) -> Block {
+    let (parsed_lang, overrides) = parse_info_string(lang);
+    if let Some(renderer) = find_renderer(&parsed_lang) {
+        let mut opts = RenderOpts::for_content_width(settings.content_width() as f64, "light");
+        opts.apply_overrides(&overrides);
+        match renderer.render(code, &opts) {
+            Ok(img) => {
+                let pixel = img.pixel_size;
+                let content_w = settings.content_width() as f64;
+                let size = resolve_image_size(style.width, style.height, pixel, content_w);
+                // 图表块默认居中更合理。
+                let mut img_style = style.clone();
+                img_style.text_align = crate::ast::TextAlign::Center;
+                return Block::new(
+                    BlockKind::Image(DocImage {
+                        position: (0.0, 0.0),
+                        size,
+                        pixel_size: pixel,
+                        data: img.data,
+                        format: img.format,
+                        alt: String::new(),
+                        object_fit: style.object_fit,
+                        background: None,
+                    }),
+                    img_style,
+                    splittable,
+                );
+            }
+            Err(e) => {
+                // 软降级：保留原始代码并附注错误，方便用户定位问题。
+                let fallback = format!("// render failed ({lang}): {e}\n{code}");
+                let lines = highlight_code(&fallback, "json", style);
+                return Block::new(
+                    BlockKind::CodeBlock {
+                        code: fallback,
+                        lang: Some("json".to_string()),
+                        lines,
+                    },
+                    style.clone(),
+                    splittable,
+                );
+            }
+        }
+    }
+    // 未命中渲染器：普通语法高亮代码块。
+    let lines = highlight_code(code, lang, style);
+    Block::new(
+        BlockKind::CodeBlock {
+            code: code.to_string(),
+            lang: if lang.is_empty() { None } else { Some(lang.to_string()) },
+            lines,
+        },
+        style.clone(),
+        splittable,
+    )
+}
+
 /// 判断节点是否为内联节点（应合并进同一段落）。
 fn is_inline_node(n: &Node) -> bool {
     matches!(
@@ -623,8 +682,26 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
             | NodeKind::Span { children: inner } => {
                 let mut merged = inherited.clone();
                 apply_node_semantic_style(&child.kind, &mut merged);
-                if let NodeKind::Link { url, .. } = &child.kind {
+                if let NodeKind::Link { url, title, .. } = &child.kind {
+                    // 链接正文的「蓝色 + 下划线」来自 CSS 的 `a` 选择器（写在节点的
+                    // `style` 上，而非 NodeKind 语义），必须显式叠加到正文样式，
+                    // 否则会回退为父段落的黑色（与其它语义类节点不同，颜色需取 CSS）。
+                    merged.color = child.style.color;
+                    merged.decoration = child.style.text_decoration;
                     merged.url = Some(url.clone());
+                    segments.extend(collect_inline_segments(inner, &merged));
+                    // 带标题的链接：正文之后追加「（title）」副文本，
+                    // 斜体 + 弱化灰 + 无 url（不可点），参照 pandoc/typst 印刷风格。
+                    if let Some(t) = title {
+                        if !t.trim().is_empty() {
+                            let mut desc = inherited.clone();
+                            desc.color = Color::new(136, 136, 136); // #888
+                            desc.font_style = "italic".to_string();
+                            desc.url = None;
+                            segments.push((format!("（{}）", t), desc));
+                        }
+                    }
+                    continue;
                 }
                 segments.extend(collect_inline_segments(inner, &merged));
             }
@@ -868,7 +945,7 @@ fn resolve_image_size(
 
 /// 将内联子节点排版为文档文本行。
 ///
-/// 复用 `collect_inline_segments` 与 text 的 `layout_text_with_contexts`，
+/// 复用 `collect_inline_segments` 与 text 的 `layout_text`，
 /// 产出已按页面可用宽度折行、含坐标的 [`crate::document::text::TextLine`]，供 PDF 等精确布局
 /// 后端重放（PDF 走 `Document` 排版层，不做二次布局）。
 fn layout_inline(
@@ -898,21 +975,13 @@ fn layout_inline(
         crate::ast::TextAlign::Justify => crate::ast::TextAlign::Left,
     };
 
-    FONT_CONTEXT.with(|font_cx| {
-        LAYOUT_CONTEXT.with(|layout_cx| {
-            let mut fcx = font_cx.borrow_mut();
-            let mut lcx = layout_cx.borrow_mut();
-            let mut layout = crate::document::text::layout_text_with_contexts(
-                &combined,
-                Some(available_width),
-                text_align,
-                &mut fcx,
-                &mut lcx,
-            );
-            annotate_runs_with_urls(&mut layout.lines, &total_text, &segments);
-            layout.lines
-        })
-    })
+    let mut layout = crate::document::text::layout_text(
+        &combined,
+        Some(available_width),
+        text_align,
+    );
+    annotate_runs_with_urls(&mut layout.lines, &total_text, &segments);
+    layout.lines
 }
 
 #[cfg(test)]
@@ -1253,7 +1322,7 @@ mod tests {
 
         // 3) CodeBlock 保留代码与语言
         match &blocks[2].kind {
-            BlockKind::CodeBlock { code, lang } => {
+            BlockKind::CodeBlock { code, lang, .. } => {
                 assert_eq!(code, "let x = 1;");
                 assert_eq!(*lang, Some("rust".to_string()));
             }

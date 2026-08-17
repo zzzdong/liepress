@@ -25,5 +25,14 @@ pub mod text;
 /// 文档中间表示：`Document`（不分页的源 IR 块树）
 pub mod layout;
 
+/// `Document` → lievisual `Scene` 转换（PNG / SVG 输出后端共用的统一图元层）
+pub mod to_scene;
+
 /// AST → `Document` 转换（源 IR 构建）
 pub mod from_ast;
+
+/// 代码块语法高亮（基于 syntect），预排版为带色文本行
+pub mod highlight;
+
+/// 可插拔「代码块 → 图片」渲染器（liecharts / mermaid 等）
+pub mod ext_render;
