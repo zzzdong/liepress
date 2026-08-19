@@ -46,11 +46,11 @@ struct FontCacheKey {
 }
 
 impl FontCacheKey {
-    fn from_font_data(font_data: &[u8]) -> Self {
+    fn from_font_data(font_data: &[u8], index: u32) -> Self {
         Self {
             data_ptr: font_data.as_ptr(),
             data_len: font_data.len(),
-            index: 0,
+            index,
         }
     }
 }
@@ -635,9 +635,14 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             }
         }
 
-        let font_key = FontCacheKey::from_font_data(run.font_data.as_slice());
+        // `run.font_data` 是 lievisual 共享的 `Arc<Vec<u8>>`，以 Arc 克隆交给 krilla
+        // （`Data: From<Arc<Vec<u8>>>`），避免 `.to_vec()` 深拷贝整份字体。
+        // `run.font_index` 用于在 ttc/otc 集合中定位具体字体实例，须同时参与缓存 key。
+        let font_key = FontCacheKey::from_font_data(run.font_data.as_slice(), run.font_index);
         if let std::collections::hash_map::Entry::Vacant(e) = self.font_cache.entry(font_key) {
-            if let Some(font) = Font::new(krilla::Data::from(run.font_data.as_ref().to_vec()), 0) {
+            if let Some(font) =
+                Font::new(krilla::Data::from(run.font_data.clone()), run.font_index)
+            {
                 e.insert(font);
             } else {
                 return;
