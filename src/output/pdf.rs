@@ -55,6 +55,12 @@ impl FontCacheKey {
     }
 }
 
+/// lievisual `Color`（0–1 f64）→ krilla 的 `RgbColor`（0–255 u8）。
+fn rgb_u8(c: lievisual::Color) -> RgbColor {
+    let to_u8 = |v: f64| -> u8 { (v.clamp(0.0, 1.0) * 255.0).round() as u8 };
+    RgbColor::new(to_u8(c.r), to_u8(c.g), to_u8(c.b))
+}
+
 /// PDF 后端分页后的单页（仅 PDF 后端内部使用，不污染 document 层）。
 #[derive(Clone, Debug, Default)]
 struct PdfPage {
@@ -620,8 +626,8 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             pb.close();
             if let Some(path) = pb.finish() {
                 let fill = Fill {
-                    paint: Paint::from(RgbColor::new(bg.r, bg.g, bg.b)),
-                    opacity: NormalizedF32::new(bg.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+                    paint: Paint::from(rgb_u8(bg)),
+                    opacity: NormalizedF32::new(bg.a as f32).unwrap_or(NormalizedF32::ONE),
                     rule: FillRule::NonZero,
                 };
                 self.surface.set_fill(Some(fill));
@@ -694,9 +700,9 @@ impl<'a, 's> PdfRenderer<'a, 's> {
 
         self.surface.set_stroke(None);
 
-        let krilla_color = RgbColor::new(run.color.r, run.color.g, run.color.b);
+        let krilla_color = rgb_u8(run.color);
         let paint = Paint::from(krilla_color);
-        let opacity = NormalizedF32::new(run.color.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE);
+        let opacity = NormalizedF32::new(run.color.a as f32).unwrap_or(NormalizedF32::ONE);
         let fill = Fill {
             paint,
             opacity,

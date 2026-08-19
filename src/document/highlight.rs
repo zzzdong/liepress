@@ -13,7 +13,9 @@
 
 use crate::ast::TextAlign;
 use crate::color::Color;
-use crate::document::text::{StyleRange, TextLine, TextStyle, layout_text_with_ranges};
+use crate::document::text::{
+    StyleRange, TextLine, TextStyle, css_text_style, layout_text_with_ranges,
+};
 use crate::document::types::ResolvedStyle;
 
 use syntect::easy::HighlightLines;
@@ -51,26 +53,18 @@ fn to_color(c: SynColor) -> Color {
 /// 不受正文 CSS 字体族影响（否则比例字体会让代码错位、视觉上「挤在一起」）。
 /// 字号/字重/颜色仍来自投影样式，syntect 仅在其上覆盖各 token 前景色。
 fn base_style(style: &ResolvedStyle) -> TextStyle {
-    TextStyle {
-        color: style.color,
-        font_family: vec!["monospace".to_string()],
-        font_size: style.font_size_pt as f64,
-        font_weight: if style.font_weight_bold {
-            "bold".to_string()
-        } else {
-            "normal".to_string()
-        },
-        font_style: if style.font_style_italic {
-            "italic".to_string()
-        } else {
-            "normal".to_string()
-        },
-        align: TextAlign::Left,
-        url: None,
-        decoration: style.text_decoration,
-        baseline_shift: 0.0,
-        background_color: None,
-    }
+    css_text_style(
+        style.color,
+        &["monospace".to_string()],
+        style.font_size_pt as f64,
+        if style.font_weight_bold { "bold" } else { "normal" },
+        if style.font_style_italic { "italic" } else { "normal" },
+        TextAlign::Left,
+        None,
+        style.text_decoration,
+        0.0,
+        None,
+    )
 }
 
 /// 根据语言名查找语法定义（支持常见别名，如 `js`/`sh`/`cpp`）。
@@ -191,8 +185,9 @@ mod tests {
         let lines = highlight_code(code, "rust", &plain_style());
         assert!(!lines.is_empty(), "应至少产出一个文本行");
 
-        // 收集所有 run 的颜色，语法高亮应产生不止一种颜色（关键字/类型/数字等）
-        let mut colors: Vec<Color> = Vec::new();
+        // 收集所有 run 的颜色（lievisual f64 颜色），语法高亮应产生不止一种颜色
+        // （关键字/类型/数字等）。
+        let mut colors: Vec<lievisual::Color> = Vec::new();
         for line in &lines {
             for run in &line.runs {
                 if !colors.contains(&run.color) {
@@ -212,7 +207,7 @@ mod tests {
         let code = "echo hello\n";
         let lines = highlight_code(code, "zzz-no-such-lang", &plain_style());
         assert!(!lines.is_empty());
-        let mut colors: Vec<Color> = Vec::new();
+        let mut colors: Vec<lievisual::Color> = Vec::new();
         for line in &lines {
             for run in &line.runs {
                 if !colors.contains(&run.color) {

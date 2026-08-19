@@ -17,7 +17,9 @@ use lievisual::{
 
 use crate::color::Color as PColor;
 use crate::document::layout::{Block, BlockKind, Document, TableRow};
-use crate::document::text::{Glyph, TextLine};
+use crate::document::text::{
+    Glyph, LineMetrics, TextLine, TextRun, to_lievisual_decoration,
+};
 use crate::document::types::page::PageSettings;
 use crate::document::types::ObjectFit as LayoutObjectFit;
 use crate::document::types::ResolvedStyle;
@@ -142,7 +144,7 @@ impl SceneBuilder {
         }
         let line_left = x + line.bounds.x0;
         let line_top = y + line.bounds.y0;
-        let default_color = lc(line.runs[0].color);
+        let default_color = line.runs[0].color;
         let default_fs = line.runs[0].font_size as f64;
         let family_str = family.join(", ");
 
@@ -158,7 +160,7 @@ impl SceneBuilder {
                     line_top - pad,
                     w + 2.0 * pad,
                     fs * 1.25,
-                    Some(lc(bg)),
+                    Some(bg),
                     None,
                 );
             }
@@ -173,14 +175,18 @@ impl SceneBuilder {
             spans.push(RichSpan::new(run.text.clone(), style));
         }
 
-        let style = text_style(&family_str, default_fs, line.runs[0].color, false, false, crate::ast::TextDecoration::None, TextBaseline::Top, 0.0, default_color);
+        let style = text_style(&family_str, default_fs, line.runs[0].color, false, false, lievisual::text::TextDecoration::None, TextBaseline::Top, 0.0, default_color);
 
+        // 使用 lievisual 的文本排版功能：预先用 `layout_text` 排好版，作为预排版
+        // `layout` 喂给 `Element::Text`，栅格后端按字形级布局精确绘制字形
+        // （而非渲染时二次排版），保证与测量 / 尺寸计算一致。
+        let prelayout = lievisual::text::layout_text(&spans, None);
         self.push(
             Element::Text {
                 spans,
                 position: Point::new(self.s(line_left), self.s(line_top)),
                 style,
-                layout: None,
+                layout: Some(prelayout),
             },
             1,
         );
@@ -240,14 +246,13 @@ impl SceneBuilder {
                         LayoutObjectFit::Fill => lievisual::ObjectFit::Fill,
                         LayoutObjectFit::None => lievisual::ObjectFit::None,
                     };
-                    let scene_img = SceneImage {
-                        data: img.data.clone(),
-                        format: img.format.clone(),
-                        width: img.pixel_size.0,
-                        height: img.pixel_size.1,
-                        object_fit: fit,
-                    };
-                    self.push(Element::Image { image: scene_img, frame, opacity: 1.0 }, 1);
+                    // lievisual 的 SceneImage 持有已解码的 RGBA8 位图（Pixmap），
+                    // 解码是调用方职责：这里用 `image` 解码原始字节为 RGBA8 再构造。
+                    if let Some(scene_img) = decode_scene_image(&img.data, fit) {
+                        self.push(Element::Image { image: scene_img, frame, opacity: 1.0 }, 1);
+                    } else {
+                        self.rect(ix, iy, w, h, Some(LColor::rgba(230, 230, 230, 255)), Some(self.border_stroke(style)));
+                    }
                 }
             }
             BlockKind::Blockquote { children } => {
@@ -443,21 +448,21 @@ impl SceneBuilder {
 fn text_style(
     family: &str,
     font_size: f64,
-    color: PColor,
+    color: LColor,
     bold: bool,
     italic: bool,
-    decoration: crate::ast::TextDecoration,
+    decoration: lievisual::text::TextDecoration,
     baseline: TextBaseline,
     baseline_shift: f64,
     _default_color: LColor,
 ) -> LTextStyle {
     let (underline, strikethrough) = match decoration {
-        crate::ast::TextDecoration::None => (false, false),
-        crate::ast::TextDecoration::Underline => (true, false),
-        crate::ast::TextDecoration::LineThrough => (false, true),
+        lievisual::text::TextDecoration::None => (false, false),
+        lievisual::text::TextDecoration::Underline => (true, false),
+        lievisual::text::TextDecoration::LineThrough => (false, true),
     };
     LTextStyle {
-        color: lc(color),
+        color,
         font_family: family.to_string(),
         font_size,
         font_weight: if bold { 700.0 } else { 400.0 },
@@ -471,6 +476,7 @@ fn text_style(
         strikethrough_color: None,
         baseline_shift,
         background_color: None,
+        url: None,
         rotation: 0.0,
         max_width: None,
         align: TextAlign::Left,
@@ -495,6 +501,7 @@ fn measure_width(text: &str, family: &str, font_size: f64, color: LColor) -> f64
         strikethrough_color: None,
         baseline_shift: 0.0,
         background_color: None,
+        url: None,
         rotation: 0.0,
         max_width: None,
         align: TextAlign::Left,
@@ -506,34 +513,52 @@ fn measure_width(text: &str, family: &str, font_size: f64, color: LColor) -> f64
 
 /// 构造单行文本（用于列表有序 marker 等纯文本标记）。
 fn make_text_line(text: &str, style: &ResolvedStyle) -> TextLine {
-    use crate::document::text::TextRun;
+    let fs = style.font_size_pt;
     let run = TextRun {
         text: text.to_string(),
         font_data: std::sync::Arc::new(Vec::new()),
-        font_size: style.font_size_pt,
-        text_offset: 0,
+        font_index: 0,
+        font_size: fs,
         font_weight_bold: style.font_weight_bold,
         font_style_italic: style.font_style_italic,
-        color: style.color,
+        color: lc(style.color),
         advance: 0.0,
         glyphs: vec![Glyph {
             id: 0,
             x: 0.0,
             y: 0.0,
-            advance: style.font_size_pt,
+            advance: fs,
             cluster: 0,
         }],
         is_rtl: false,
         baseline_x: 0.0,
-        baseline_y: style.font_size_pt as f32 * 0.8,
+        baseline_y: fs as f32 * 0.8,
         url: None,
-        decoration: style.text_decoration,
+        decoration: to_lievisual_decoration(style.text_decoration),
         baseline_shift: 0.0,
         background_color: None,
     };
     TextLine {
         runs: vec![run],
-        bounds: vello_cpu::kurbo::Rect::new(0.0, 0.0, 0.0, style.font_size_pt as f64),
-        line_height: style.font_size_pt as f32,
+        bounds: LRect::new(0.0, 0.0, 0.0, fs as f64),
+        metrics: LineMetrics {
+            ascent: fs as f32,
+            descent: 0.0,
+            baseline: fs as f32,
+            line_height: fs as f32,
+        },
     }
+}
+
+/// 解码图片原始字节为 lievisual 的 `SceneImage`（RGBA8 位图 + 适应方式）。
+///
+/// lievisual 不做解码，此处用 `image` crate 解码任意常见格式（png/jpeg/gif/webp…）。
+/// 解码失败返回 `None`（调用方回退为占位框）。
+fn decode_scene_image(data: &[u8], fit: lievisual::ObjectFit) -> Option<SceneImage> {
+    let dyn_img = image::load_from_memory(data).ok()?;
+    let rgba = dyn_img.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let pixels = rgba.into_raw();
+    let pixmap = lievisual::Pixmap::from_rgba8(w, h, pixels)?;
+    Some(SceneImage::from_pixmap(pixmap).with_object_fit(fit))
 }

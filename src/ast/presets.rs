@@ -73,27 +73,23 @@ pub fn list_marker_style() -> Style {
 /// 将 ComputedStyle 转换为 text::TextStyle
 /// 供生成器在创建文本布局时使用
 pub fn computed_style_to_text_style(style: &Style) -> crate::document::text::TextStyle {
-    use crate::document::text::TextAlign as TextAlign2;
-
+    // Justify 暂不支持，回退为左对齐。
     let align = match style.text_align {
-        TextAlign::Left => TextAlign2::Left,
-        TextAlign::Center => TextAlign2::Center,
-        TextAlign::Right => TextAlign2::Right,
-        TextAlign::Justify => TextAlign2::Left, // 暂不支持两端对齐，回退到左对齐
+        TextAlign::Justify => crate::document::text::TextAlign::Left,
+        a => a,
     };
-
-    crate::document::text::TextStyle {
-        color: style.color,
-        font_family: style.font_family.clone(),
-        font_size: style.font_size_pt as f64,
-        font_weight: style.font_weight.as_str().to_string(),
-        font_style: style.font_style.as_str().to_string(),
+    crate::document::text::css_text_style(
+        style.color,
+        &style.font_family,
+        style.font_size_pt as f64,
+        style.font_weight.as_str(),
+        style.font_style.as_str(),
         align,
-        url: style.link_url.clone(),
-        decoration: style.text_decoration,
-        baseline_shift: style.baseline_shift,
-        background_color: style.background_color,
-    }
+        style.link_url.clone(),
+        style.text_decoration,
+        style.baseline_shift,
+        style.background_color,
+    )
 }
 
 // ─── 列表缩进宽度 ──────────────────────────────────────────

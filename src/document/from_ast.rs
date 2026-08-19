@@ -25,7 +25,7 @@ use crate::document::ext_render::{RenderOpts, find_renderer, parse_info_string};
 use crate::document::layout::{
     Block, BlockKind, DefinitionItemBlock, Document, TableCell, TableRow,
 };
-use crate::document::text::{TextLine, TextStyle};
+use crate::document::text::{FontStyle, TextStyle, set_decoration, to_lcolor};
 use crate::document::types::page::PageSettings;
 use crate::document::types::{DocImage, ResolvedStyle};
 
@@ -686,8 +686,8 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
                     // 链接正文的「蓝色 + 下划线」来自 CSS 的 `a` 选择器（写在节点的
                     // `style` 上，而非 NodeKind 语义），必须显式叠加到正文样式，
                     // 否则会回退为父段落的黑色（与其它语义类节点不同，颜色需取 CSS）。
-                    merged.color = child.style.color;
-                    merged.decoration = child.style.text_decoration;
+                    merged.color = to_lcolor(child.style.color);
+                    set_decoration(&mut merged, child.style.text_decoration);
                     merged.url = Some(url.clone());
                     segments.extend(collect_inline_segments(inner, &merged));
                     // 带标题的链接：正文之后追加「（title）」副文本，
@@ -695,8 +695,8 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
                     if let Some(t) = title {
                         if !t.trim().is_empty() {
                             let mut desc = inherited.clone();
-                            desc.color = Color::new(136, 136, 136); // #888
-                            desc.font_style = "italic".to_string();
+                            desc.color = to_lcolor(Color::new(136, 136, 136)); // #888
+                            desc.font_style = FontStyle::Italic;
                             desc.url = None;
                             segments.push((format!("（{}）", t), desc));
                         }
@@ -714,11 +714,11 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
             NodeKind::InlineCode { code } => {
                 if !code.is_empty() {
                     let mut style = inherited.clone();
-                    style.font_family = vec!["monospace".to_string()];
+                    style.font_family = "monospace".to_string();
                     // 行内代码用灰色背景框区分（PDF/PNG 由 draw_text_run 依据
                     // background_color 绘制矩形；SVG/HTML 由样式输出）。
-                    style.background_color = Some(Color::new(238, 240, 244));
-                    style.color = Color::new(199, 52, 29);
+                    style.background_color = Some(to_lcolor(Color::new(238, 240, 244)));
+                    style.color = to_lcolor(Color::new(199, 52, 29));
                     segments.push((code.clone(), style));
                 }
             }
@@ -744,11 +744,11 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
 /// `ResolvedStyle` 解耦——流式后端与排版后端都从这里取同源语义。
 fn apply_node_semantic_style(kind: &NodeKind, style: &mut TextStyle) {
     match kind {
-        NodeKind::Strong { .. } => style.font_weight = "bold".to_string(),
-        NodeKind::Emphasis { .. } => style.font_style = "italic".to_string(),
-        NodeKind::Delete { .. } => style.decoration = crate::ast::TextDecoration::LineThrough,
-        NodeKind::Subscript { .. } => style.baseline_shift = -(style.font_size as f32 * 0.3),
-        NodeKind::Superscript { .. } => style.baseline_shift = style.font_size as f32 * 0.3,
+        NodeKind::Strong { .. } => style.font_weight = 700.0,
+        NodeKind::Emphasis { .. } => style.font_style = FontStyle::Italic,
+        NodeKind::Delete { .. } => set_decoration(style, crate::ast::TextDecoration::LineThrough),
+        NodeKind::Subscript { .. } => style.baseline_shift = -(style.font_size * 0.3),
+        NodeKind::Superscript { .. } => style.baseline_shift = style.font_size * 0.3,
         _ => {}
     }
 }
@@ -811,48 +811,6 @@ fn fold_segments_whitespace(segments: &mut Vec<(String, TextStyle)>) {
     retained.retain(|(text, _)| !text.is_empty());
 
     *segments = retained;
-}
-
-/// 从 segments 生成 URL 映射，并标注到 TextLine 的 runs 上。
-///
-/// 使用顺序匹配：runs 在行中的顺序与 segments 一致。通过跟踪每个 segment
-/// 已消费的 Unicode 字符数，正确处理多字节字符（如 emoji）和自动换行场景。
-fn annotate_runs_with_urls(
-    lines: &mut [TextLine],
-    _total_text: &str,
-    segments: &[(String, TextStyle)],
-) {
-    // 各 segment 的字节区间（相对 `total_text`），按顺序累计。
-    // 匹配时用 run 在 `total_text` 中的字节偏移（`run.text_offset`）精确命中，
-    // 而非按字符数顺序累加——后者在「一个 run 横跨多个 segment」（如 CJK 字体
-    // 优先后整行合并为一个 run）时会错位，导致链接 url 丢失。
-    let mut seg_bytes: Vec<(usize, usize, &(String, TextStyle))> =
-        Vec::with_capacity(segments.len());
-    let mut acc = 0usize;
-    for seg in segments {
-        let end = acc + seg.0.len();
-        seg_bytes.push((acc, end, seg));
-        acc = end;
-    }
-
-    for line in lines.iter_mut() {
-        for run in line.runs.iter_mut() {
-            let start = run.text_offset;
-            let end = start + run.text.len();
-            // 一个 run 可能横跨多个 segment（CJK 优先后 parley 常把整行合并为
-            // 一个 run）。优先取与 run 区间重叠且带 url 的 segment（保证链接不丢）；
-            // 否则回退到 run 起点所在的 segment。
-            let matched = seg_bytes
-                .iter()
-                .find(|(s, e, seg)| *s < end && *e > start && seg.1.url.is_some())
-                .or_else(|| seg_bytes.iter().find(|(s, e, _)| *s <= start && start < *e));
-            if let Some((_, _, (_seg_text, seg_style))) = matched {
-                run.url = seg_style.url.clone();
-                run.decoration = seg_style.decoration;
-                run.background_color = seg_style.background_color;
-            }
-        }
-    }
 }
 
 /// 从图片 `src` 解析 data URI，返回（解码后的字节, 图片格式）。
@@ -961,7 +919,6 @@ fn layout_inline(
     if segments.is_empty() {
         return Vec::new();
     }
-    let total_text: String = segments.iter().map(|(t, _)| t.as_str()).collect();
     let combined: Vec<(&str, &crate::document::text::TextStyle)> =
         segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
 
@@ -975,12 +932,13 @@ fn layout_inline(
         crate::ast::TextAlign::Justify => crate::ast::TextAlign::Left,
     };
 
-    let mut layout = crate::document::text::layout_text(
+    let layout = crate::document::text::layout_text(
         &combined,
         Some(available_width),
         text_align,
     );
-    annotate_runs_with_urls(&mut layout.lines, &total_text, &segments);
+    // lievisual 排版时已按 span 样式把 url / decoration / background 映射到 run，
+    // 无需再手工标注。
     layout.lines
 }
 
@@ -1039,7 +997,7 @@ mod tests {
     fn make_segments(parts: &[&str]) -> Vec<(String, crate::document::text::TextStyle)> {
         parts
             .iter()
-            .map(|s| (s.to_string(), crate::document::text::TextStyle::default()))
+            .map(|s| (s.to_string(), crate::document::text::default_text_style()))
             .collect()
     }
 

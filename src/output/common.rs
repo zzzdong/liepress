@@ -5,7 +5,7 @@
 
 use crate::color::Color;
 use crate::document::layout::{Block, BlockKind, TableRow};
-use crate::document::text::{TextDecoration, TextLine, TextStyle};
+use crate::document::text::{TextLine, TextStyle, css_text_style, to_lcolor};
 use crate::document::types::page::PageSettings;
 use crate::document::types::{ResolvedStyle, TextAlign as LayoutAlign};
 
@@ -283,53 +283,46 @@ pub fn heading_font_size(level: u8) -> f32 {
 
 /// 构造 [`crate::document::text::TextStyle`]（用于 layout_text）。
 pub fn text_style(color: Color, family: &str, size: f32, weight: &str, style: &str) -> TextStyle {
-    TextStyle {
+    css_text_style(
         color,
-        font_family: vec![family.to_string()],
-        font_size: size as f64,
-        font_weight: weight.to_string(),
-        font_style: style.to_string(),
-        align: LayoutAlign::Left,
-        url: None,
-        decoration: TextDecoration::None,
-        baseline_shift: 0.0,
-        background_color: None,
-    }
+        &[family.to_string()],
+        size as f64,
+        weight,
+        style,
+        LayoutAlign::Left,
+        None,
+        crate::ast::TextDecoration::None,
+        0.0,
+        None,
+    )
 }
 
 /// 从 document 层投影的 [`ResolvedStyle`] 构造排版用的 [`TextStyle`]。
 pub fn text_style_from_resolved(style: &ResolvedStyle) -> TextStyle {
-    TextStyle {
-        color: style.color,
-        font_family: style.font_family.clone(),
-        font_size: style.font_size_pt as f64,
-        font_weight: if style.font_weight_bold {
-            "bold".to_string()
-        } else {
-            "normal".to_string()
-        },
-        font_style: if style.font_style_italic {
-            "italic".to_string()
-        } else {
-            "normal".to_string()
-        },
-        align: LayoutAlign::Left,
-        url: None,
-        decoration: style.text_decoration,
-        baseline_shift: 0.0,
-        background_color: None,
-    }
+    css_text_style(
+        style.color,
+        &style.font_family,
+        style.font_size_pt as f64,
+        if style.font_weight_bold { "bold" } else { "normal" },
+        if style.font_style_italic { "italic" } else { "normal" },
+        LayoutAlign::Left,
+        None,
+        style.text_decoration,
+        0.0,
+        None,
+    )
 }
 
 /// 把标题文本行套用标题字号/颜色（from_ast 产出的 Paragraph 行是正文样式）。
 pub fn apply_heading_style(lines: &[TextLine], size: f32, color: Color) -> Vec<TextLine> {
+    let lv_color = to_lcolor(color);
     lines
         .iter()
         .map(|line| {
             let mut nl = line.clone();
             for r in nl.runs.iter_mut() {
                 r.font_size = size;
-                r.color = color;
+                r.color = lv_color;
             }
             nl
         })
