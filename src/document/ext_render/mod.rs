@@ -14,6 +14,9 @@
 #[cfg(feature = "charts")]
 pub mod liecharts;
 
+#[cfg(feature = "mermaid")]
+pub mod liemermaid;
+
 use std::collections::HashMap;
 
 /// 渲染器接收的选项。
@@ -121,6 +124,8 @@ pub fn builtin_renderers() -> Vec<Box<dyn BlockRenderer>> {
     let mut v: Vec<Box<dyn BlockRenderer>> = Vec::new();
     #[cfg(feature = "charts")]
     v.push(Box::new(crate::document::ext_render::liecharts::LieChartsRenderer));
+    #[cfg(feature = "mermaid")]
+    v.push(Box::new(crate::document::ext_render::liemermaid::LieMermaidRenderer));
     v
 }
 

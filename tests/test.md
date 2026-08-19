@@ -24,7 +24,8 @@
 - [8. 居中容器与内联样式](#8-居中容器与内联样式)
 - [9. 混合排版示例](#9-混合排版示例)
 - [10. 图表（liecharts）](#10-图表liecharts)
-- [11. 项目实际情况记录](#11-项目实际情况记录)
+- [11. 流程图（mermaid）](#11-流程图mermaid)
+- [12. 项目实际情况记录](#12-项目实际情况记录)
 
 ---
 
@@ -291,7 +292,41 @@ SVG 输出结构示意（长图，不分页）：
 
 ---
 
-## 11. 项目实际情况记录
+## 11. 流程图（mermaid）
+
+> 需以 `cargo run --features mermaid` 构建才会启用；未启用时代码块退化为普通文本高亮。
+
+使用 ` ```mermaid ` 代码块，块内为 Mermaid DSL 文本，自动渲染为图片并居中嵌入：
+
+```mermaid
+flowchart TD
+    A[Start]
+    B{Check}
+    C[End]
+    A --> B
+    B -- yes --> C
+    B -- no --> A
+```
+
+可通过 info string 覆盖尺寸：` ```mermaid width=640 height=360 `
+
+```mermaid width=640 height=360
+sequenceDiagram
+    participant U as User
+    participant S as Server
+    U->>S: request
+    S-->>U: response
+```
+
+非法 Mermaid 语法会软降级为带错误注释的代码块，不会中断整篇渲染：
+
+```mermaid
+this is not a valid diagram
+```
+
+---
+
+## 12. 项目实际情况记录
 
 以下为 liepress 生成能力的**真实边界**（截至 v0.1.0-beta，已与代码核对）：
 
@@ -323,10 +358,4 @@ SVG 输出结构示意（长图，不分页）：
 
 ---
 
-<center>
-
----
-
 *liepress v0.1.0-beta — 用 Markdown 生成文档*
-
-</center>
