@@ -12,11 +12,11 @@
 //!   深色背景）。
 
 use crate::ast::TextAlign;
-use crate::color::Color;
 use crate::document::text::{
     StyleRange, TextLine, TextStyle, css_text_style, layout_text_with_ranges,
 };
 use crate::document::types::ResolvedStyle;
+use lievisual::Color;
 
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color as SynColor, FontStyle as SynFontStyle, ThemeSet};
@@ -44,7 +44,7 @@ fn assets() -> &'static HighlightAssets {
 
 /// 把 syntect 颜色转成内部 [`Color`]。
 fn to_color(c: SynColor) -> Color {
-    Color::new(c.r, c.g, c.b)
+    Color::rgb(c.r, c.g, c.b)
 }
 
 /// 从文档层投影样式构造基础排版样式（字体族/字号/字重来自 CSS，颜色作为兜底）。
@@ -57,8 +57,16 @@ fn base_style(style: &ResolvedStyle) -> TextStyle {
         style.color,
         &["monospace".to_string()],
         style.font_size_pt as f64,
-        if style.font_weight_bold { "bold" } else { "normal" },
-        if style.font_style_italic { "italic" } else { "normal" },
+        if style.font_weight_bold {
+            "bold"
+        } else {
+            "normal"
+        },
+        if style.font_style_italic {
+            "italic"
+        } else {
+            "normal"
+        },
         TextAlign::Left,
         None,
         style.text_decoration,

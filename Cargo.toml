@@ -29,7 +29,7 @@ thiserror = "2.0"
 vello_cpu = "0.2.0"
 liecharts = { version = "0.1", optional = true }
 liemermaid = { version = "0.1.0-alpha.2", optional = true }
-lievisual = { version = "0.1.0-beta.4" }
+lievisual = { version = "0.1", path = "../lievisual" }
 
 [features]
 default = []

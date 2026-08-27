@@ -24,7 +24,6 @@ use krilla::surface::Surface;
 use krilla::text::Font;
 use vello_cpu::kurbo::Point;
 
-use crate::color::Color;
 use crate::document::layout::{Block, BlockKind, Document, TableRow};
 use crate::document::text::{
     TextAlign as LayoutAlign, TextDecoration, TextLine, TextRun, layout_text,
@@ -32,6 +31,7 @@ use crate::document::text::{
 use crate::document::types::page::PageSettings;
 use crate::document::types::{ResolvedStyle, TextAlign};
 use crate::error::{Error, Result};
+use lievisual::Color;
 
 use super::common::{
     BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, apply_heading_style, block_height, blockquote_content_height,
@@ -128,25 +128,31 @@ impl PdfDocumentGenerator {
         // 收集脚注引用位置：正文里 url 形如 `#fn-def-<label>` 的链接所在块坐标，
         // 作为返回引用目标，key 取 `fn-ref-<label>`。使脚注定义区的 ↩ 能页内跳回引用处。
         let footnote_ref_targets: HashMap<String, (usize, f64, f64)> = {
-            fn walk(block: &Block, page_idx: usize, x: f64, y: f64, out: &mut HashMap<String, (usize, f64, f64)>) {
+            fn walk(
+                block: &Block,
+                page_idx: usize,
+                x: f64,
+                y: f64,
+                out: &mut HashMap<String, (usize, f64, f64)>,
+            ) {
                 // 段落内的链接以 TextRun.url 形式存在（脚注引用即在此），需单独收集。
                 if let BlockKind::Paragraph { lines } = &block.kind {
                     for l in lines {
                         for run in &l.runs {
-                            if let Some(u) = run.url.as_deref() {
-                                if let Some(label) = u.strip_prefix("#fn-def-") {
-                                    out.entry(format!("fn-ref-{}", label))
-                                        .or_insert((page_idx, x, y));
-                                }
+                            if let Some(u) = run.url.as_deref()
+                                && let Some(label) = u.strip_prefix("#fn-def-")
+                            {
+                                out.entry(format!("fn-ref-{}", label))
+                                    .or_insert((page_idx, x, y));
                             }
                         }
                     }
                 }
-                if let BlockKind::Link { url, .. } = &block.kind {
-                    if let Some(label) = url.strip_prefix("#fn-def-") {
-                        out.entry(format!("fn-ref-{}", label))
-                            .or_insert((page_idx, x, y));
-                    }
+                if let BlockKind::Link { url, .. } = &block.kind
+                    && let Some(label) = url.strip_prefix("#fn-def-")
+                {
+                    out.entry(format!("fn-ref-{}", label))
+                        .or_insert((page_idx, x, y));
                 }
                 for child in block.kind.children() {
                     walk(child, page_idx, x, y, out);
@@ -239,7 +245,8 @@ impl PdfDocumentGenerator {
                                 *page_idx,
                                 KrillaPoint::from_xy(*tx as f32, *ty as f32),
                             )))
-                        } else if let Some((page_idx, tx, ty)) = footnote_ref_targets.get(internal) {
+                        } else if let Some((page_idx, tx, ty)) = footnote_ref_targets.get(internal)
+                        {
                             // 命中脚注返回引用（#fn-ref-<label>）：页内跳回正文引用处。
                             Target::Destination(Destination::Xyz(XyzDestination::new(
                                 *page_idx,
@@ -341,7 +348,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         if let Some(path) = pb.finish() {
             if let Some(c) = fill {
                 let fill = Fill {
-                    paint: Paint::from(RgbColor::new(c.r, c.g, c.b)),
+                    paint: Paint::from(to_krilla_color(&c)),
                     opacity: NormalizedF32::new(c.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                     rule: FillRule::NonZero,
                 };
@@ -351,7 +358,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             }
             if let Some((c, wt)) = stroke {
                 let stroke = KrillaStroke {
-                    paint: Paint::from(RgbColor::new(c.r, c.g, c.b)),
+                    paint: Paint::from(to_krilla_color(&c)),
                     opacity: NormalizedF32::new(c.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                     width: wt as f32,
                     miter_limit: 4.0,
@@ -374,7 +381,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         if let Some(path) = pb.finish() {
             self.surface.set_fill(None);
             let stroke = KrillaStroke {
-                paint: Paint::from(RgbColor::new(color.r, color.g, color.b)),
+                paint: Paint::from(to_krilla_color(&color)),
                 opacity: NormalizedF32::new(color.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                 width: width as f32,
                 miter_limit: 4.0,
@@ -404,7 +411,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         pb.close();
         if let Some(path) = pb.finish() {
             let fill = Fill {
-                paint: Paint::from(RgbColor::new(color.r, color.g, color.b)),
+                paint: Paint::from(to_krilla_color(&color)),
                 opacity: NormalizedF32::new(color.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                 rule: FillRule::NonZero,
             };
@@ -459,7 +466,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 pb.line_to((x0 + s * 0.8) as f32, (y0 + s * 0.28) as f32);
                 if let Some(path) = pb.finish() {
                     let stroke = KrillaStroke {
-                        paint: Paint::from(RgbColor::new(color.r, color.g, color.b)),
+                        paint: Paint::from(to_krilla_color(&color)),
                         opacity: NormalizedF32::new(color.a as f32 / 255.0)
                             .unwrap_or(NormalizedF32::ONE),
                         width: 1.6,
@@ -512,7 +519,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             return;
         }
         let style = text_style(
-            Color::new(120, 120, 120),
+            Color::rgb(120, 120, 120),
             "serif",
             font_size as f32,
             "normal",
@@ -640,8 +647,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         // `run.font_index` 用于在 ttc/otc 集合中定位具体字体实例，须同时参与缓存 key。
         let font_key = FontCacheKey::from_font_data(run.font_data.as_slice(), run.font_index);
         if let std::collections::hash_map::Entry::Vacant(e) = self.font_cache.entry(font_key) {
-            if let Some(font) =
-                Font::new(krilla::Data::from(run.font_data.clone()), run.font_index)
+            if let Some(font) = Font::new(krilla::Data::from(run.font_data.clone()), run.font_index)
             {
                 e.insert(font);
             } else {
@@ -790,7 +796,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             BlockKind::CodeBlock { lines, .. } => {
                 // 语法高亮（暗色主题）已预排版进 `lines`，每段自带前景色；
                 // 背景统一使用深色以匹配高亮配色（CSS 未声明时兜底深灰）。
-                let bg = style.background_color.unwrap_or(Color::new(40, 44, 52));
+                let bg = style.background_color.unwrap_or(Color::rgb(40, 44, 52));
                 let lh = if style.line_height_pt > 0.0 {
                     style.line_height_pt as f64
                 } else {
@@ -804,7 +810,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             BlockKind::ThematicBreak => {
                 // 横线颜色来自 CSS 的 hr 规则（border-top + border-color），
                 // 投影到 ResolvedStyle.border_color；无声明时兜底为灰。
-                let color = style.border_color.unwrap_or(Color::new(180, 180, 180));
+                let color = style.border_color.unwrap_or(Color::rgb(180, 180, 180));
                 let w = if style.border_width_top > 0.0 {
                     style.border_width_top as f64
                 } else {
@@ -831,7 +837,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     self.draw_image(&img.data, &img.format, (align_x + dx, y + dy, dw, dh));
                 } else if !img.alt.is_empty() {
                     let style =
-                        text_style(Color::new(120, 120, 120), "serif", 11.0, "normal", "normal");
+                        text_style(Color::rgb(120, 120, 120), "serif", 11.0, "normal", "normal");
                     let segments = [(img.alt.as_str(), &style)];
                     let layout = layout_text(&segments, None, LayoutAlign::Left);
                     if let Some(tl) = layout.lines.last() {
@@ -848,7 +854,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 let content_h = text_h + 2.0 * BQ_PAD_Y;
                 // 左侧竖条颜色来自 CSS 的 blockquote 规则（border-left + border-color），
                 // 投影到 ResolvedStyle.border_color；无声明时兜底为灰。
-                let bar_color = style.border_color.unwrap_or(Color::new(200, 200, 200));
+                let bar_color = style.border_color.unwrap_or(Color::rgb(200, 200, 200));
                 self.draw_rect(x, y, BQ_BAR_WIDTH, content_h, Some(bar_color), None);
                 // 文本在引用块内真正垂直居中：上下均分剩余空间。
                 let offset = ((content_h - text_h) / 2.0).max(0.0);
@@ -993,7 +999,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         let border_w = style.table_border_width_pt as f64;
         let pad_h = style.table_cell_padding_h_pt;
         let pad_v = style.table_cell_padding_v_pt;
-        let header_bg = style.table_header_bg.unwrap_or(Color::new(230, 230, 230));
+        let header_bg = style.table_header_bg.unwrap_or(Color::rgb(230, 230, 230));
         let alt_row_bg = style.table_alt_row_bg;
         // `row_idx` 为该行在整表中的索引（用于取行高）。
         let draw_row = |r: &mut PdfRenderer<'_, '_>,
@@ -1005,9 +1011,9 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             let bg = if is_header {
                 header_bg
             } else if alt {
-                alt_row_bg.unwrap_or(Color::new(255, 255, 255))
+                alt_row_bg.unwrap_or(Color::rgb(255, 255, 255))
             } else {
-                Color::new(255, 255, 255)
+                Color::rgb(255, 255, 255)
             };
             r.draw_rect(x, cy, content_w, row_h, Some(bg), Some((border, border_w)));
             // 列间分隔竖线：在每列交界处画一条垂直边框线。
@@ -1077,11 +1083,12 @@ fn github_slug(s: &str) -> String {
         if c.is_ascii_alphanumeric() || c.is_alphabetic() {
             out.push(c.to_ascii_lowercase());
             prev_dash = false;
-        } else if c.is_whitespace() || ".,!?;:'\"()[]{}|/\\<>#&*+=@$%^~`".contains(c) {
-            if !prev_dash && !out.is_empty() {
-                out.push('-');
-                prev_dash = true;
-            }
+        } else if (c.is_whitespace() || ".,!?;:'\"()[]{}|/\\<>#&*+=@$%^~`".contains(c))
+            && !prev_dash
+            && !out.is_empty()
+        {
+            out.push('-');
+            prev_dash = true;
         }
         // 其它字符（如中文标点）跳过，不计入 slug。
     }
@@ -1287,4 +1294,6 @@ fn paginate_table(
     }
 }
 
-// ─── 辅助（见 common.rs）────────────────────────────────
+fn to_krilla_color(color: &lievisual::Color) -> krilla::color::rgb::Color {
+    krilla::color::rgb::Color::new(color.r(), color.g(), color.b())
+}

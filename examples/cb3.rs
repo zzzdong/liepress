@@ -3,7 +3,7 @@ fn main() {
     let img = image::open(Path::new("/tmp/tasklist.png"))
         .unwrap()
         .to_rgb8();
-    let (w, h) = img.dimensions();
+    let (_w, _h) = img.dimensions();
     for y in [84u32, 132, 168] {
         let mut s = String::new();
         for x in 0..120u32 {

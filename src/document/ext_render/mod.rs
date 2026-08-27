@@ -58,25 +58,25 @@ impl RenderOpts {
 
     /// 用 info-string 的 `key=value` 覆盖项（width/height/theme/dpi）更新自身。
     pub fn apply_overrides(&mut self, overrides: &HashMap<String, String>) {
-        if let Some(w) = overrides.get("width").and_then(|v| v.parse::<u32>().ok()) {
-            if w > 0 {
-                self.width = w.min(4000);
-            }
+        if let Some(w) = overrides.get("width").and_then(|v| v.parse::<u32>().ok())
+            && w > 0
+        {
+            self.width = w.min(4000);
         }
-        if let Some(h) = overrides.get("height").and_then(|v| v.parse::<u32>().ok()) {
-            if h > 0 {
-                self.height = h.min(4000);
-            }
+        if let Some(h) = overrides.get("height").and_then(|v| v.parse::<u32>().ok())
+            && h > 0
+        {
+            self.height = h.min(4000);
         }
-        if let Some(t) = overrides.get("theme") {
-            if !t.is_empty() {
-                self.theme = t.clone();
-            }
+        if let Some(t) = overrides.get("theme")
+            && !t.is_empty()
+        {
+            self.theme = t.clone();
         }
-        if let Some(d) = overrides.get("dpi").and_then(|v| v.parse::<u32>().ok()) {
-            if d > 0 {
-                self.dpi = d.min(600);
-            }
+        if let Some(d) = overrides.get("dpi").and_then(|v| v.parse::<u32>().ok())
+            && d > 0
+        {
+            self.dpi = d.min(600);
         }
     }
 }
@@ -123,17 +123,19 @@ pub trait BlockRenderer: Send + Sync {
 pub fn builtin_renderers() -> Vec<Box<dyn BlockRenderer>> {
     let mut v: Vec<Box<dyn BlockRenderer>> = Vec::new();
     #[cfg(feature = "charts")]
-    v.push(Box::new(crate::document::ext_render::liecharts::LieChartsRenderer));
+    v.push(Box::new(
+        crate::document::ext_render::liecharts::LieChartsRenderer,
+    ));
     #[cfg(feature = "mermaid")]
-    v.push(Box::new(crate::document::ext_render::liemermaid::LieMermaidRenderer));
+    v.push(Box::new(
+        crate::document::ext_render::liemermaid::LieMermaidRenderer,
+    ));
     v
 }
 
 /// 按 `lang` 查找已注册的渲染器。
 pub fn find_renderer(lang: &str) -> Option<Box<dyn BlockRenderer>> {
-    builtin_renderers()
-        .into_iter()
-        .find(|r| r.lang() == lang)
+    builtin_renderers().into_iter().find(|r| r.lang() == lang)
 }
 
 /// 解析代码块 info string 为 `(lang, overrides)`。

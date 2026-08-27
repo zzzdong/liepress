@@ -3,60 +3,45 @@
 //! 定义所有支持的样式属性和计算后的样式值。
 //! 这是布局引擎消费的最终样式数据结构。
 
-use crate::color::Color;
+use lievisual::Color;
 
-// ─── 字体字重 ───
+// ─── 文本排版类型（复用 lievisual 定义，不再自行定义） ───
+//
+// lievisual 已提供 `FontStyle` / `TextAlign` / `TextDecoration` / `FontWeight` /
+// `FontWidth` 等类型，直接复用，不再自行定义。
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FontWeight {
-    Normal,
-    Bold,
-}
+pub use lievisual::text::{FontStyle, FontWeight, FontWidth, TextAlign, TextDecoration};
 
-impl FontWeight {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            FontWeight::Normal => "normal",
-            FontWeight::Bold => "bold",
-        }
+/// 字重 → CSS `font-weight` 字符串。
+pub fn font_weight_css(w: FontWeight) -> String {
+    if w == FontWeight::Bold {
+        "bold".to_string()
+    } else {
+        format!("{}", w.value())
     }
 }
 
-// ─── 字体样式 ───
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FontStyle {
-    Normal,
-    Italic,
+/// 字体样式 → CSS `font-style` 字符串（转发到 lievisual 的 `as_str`）。
+pub fn font_style_css(s: FontStyle) -> &'static str {
+    s.as_str()
 }
 
-impl FontStyle {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            FontStyle::Normal => "normal",
-            FontStyle::Italic => "italic",
-        }
+/// 文本对齐 → CSS `text-align` 字符串。
+pub fn text_align_css(a: TextAlign) -> &'static str {
+    match a {
+        TextAlign::Left => "left",
+        TextAlign::Center => "center",
+        TextAlign::Right => "right",
+        TextAlign::Justify => "justify",
     }
 }
 
-// ─── 文本对齐 ───
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TextAlign {
-    Left,
-    Center,
-    Right,
-    Justify,
-}
-
-impl TextAlign {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TextAlign::Left => "left",
-            TextAlign::Center => "center",
-            TextAlign::Right => "right",
-            TextAlign::Justify => "justify",
-        }
+/// 文本修饰 → CSS `text-decoration` 字符串。
+pub fn text_decoration_css(d: TextDecoration) -> &'static str {
+    match d {
+        TextDecoration::None => "none",
+        TextDecoration::Underline => "underline",
+        TextDecoration::LineThrough => "line-through",
     }
 }
 
@@ -210,7 +195,7 @@ impl BorderSide {
     pub const NONE: Self = Self {
         width: 0.0,
         style: BorderStyle::None,
-        color: Color::new(0, 0, 0),
+        color: Color::rgb(0, 0, 0),
     };
 
     pub fn new(width: f32, style: BorderStyle, color: Color) -> Self {
@@ -295,14 +280,7 @@ pub enum ObjectFit {
     None,
 }
 
-// ─── 文本修饰 ───
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TextDecoration {
-    None,
-    Underline,
-    LineThrough,
-}
+// ─── 文本修饰（复用 lievisual::text::TextDecoration，见文件顶部） ───
 
 // ─── CSS 长度值（未解析） ───────────
 
@@ -367,6 +345,7 @@ pub struct Style {
     // 排版（优先级从高到低的字体家族列表）
     pub font_family: Vec<String>,
     pub font_size_pt: f32,
+    /// 字重，复用 `lievisual::FontWeight`。
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub color: Color,
@@ -454,9 +433,12 @@ impl Style {
         if self.font_size_pt > 0.0 {
             decls.push(format!("font-size: {:.2}pt", self.font_size_pt));
         }
-        decls.push(format!("font-weight: {}", self.font_weight.as_str()));
-        decls.push(format!("font-style: {}", self.font_style.as_str()));
-        if self.color.a > 0 {
+        decls.push(format!(
+            "font-weight: {}",
+            font_weight_css(self.font_weight)
+        ));
+        decls.push(format!("font-style: {}", font_style_css(self.font_style)));
+        if self.color.a > 0.0 {
             decls.push(format!("color: {}", self.color.to_hex()));
         }
         if self.line_height_pt > 0.0 {
@@ -466,7 +448,7 @@ impl Style {
             decls.push(format!("letter-spacing: {:.2}pt", self.letter_spacing));
         }
         if self.text_align != TextAlign::Left {
-            decls.push(format!("text-align: {}", self.text_align.as_str()));
+            decls.push(format!("text-align: {}", text_align_css(self.text_align)));
         }
         if self.white_space != WhiteSpace::Normal {
             let ws = match self.white_space {
@@ -477,12 +459,10 @@ impl Style {
             decls.push(format!("white-space: {}", ws));
         }
         if self.text_decoration != TextDecoration::None {
-            let d = match self.text_decoration {
-                TextDecoration::Underline => "underline",
-                TextDecoration::LineThrough => "line-through",
-                TextDecoration::None => "none",
-            };
-            decls.push(format!("text-decoration: {}", d));
+            decls.push(format!(
+                "text-decoration: {}",
+                text_decoration_css(self.text_decoration)
+            ));
         }
         Self::push_box(&mut decls, "margin", &self.margin);
         Self::push_box(&mut decls, "padding", &self.padding);
@@ -575,7 +555,7 @@ impl Default for Style {
             font_size_pt: 10.5,
             font_weight: FontWeight::Normal,
             font_style: FontStyle::Normal,
-            color: Color::new(0, 0, 0),
+            color: Color::rgb(0, 0, 0),
             line_height_pt: 15.75,
             letter_spacing: 0.0,
             text_indent_em: 0.0,
@@ -592,7 +572,7 @@ impl Default for Style {
             background_color: None,
             page_break_before: PageBreak::Auto,
             page_break_after: PageBreak::Auto,
-            table_border_color: Color::new(180, 180, 180),
+            table_border_color: Color::rgb(180, 180, 180),
             table_border_width_pt: 0.5,
             table_cell_padding_h_pt: 4.0,
             table_cell_padding_v_pt: 2.0,

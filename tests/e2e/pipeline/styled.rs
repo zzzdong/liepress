@@ -44,7 +44,7 @@ fn styled_css_color_applied() {
     let p = find_node(&ast, |n| matches!(&n.kind, NodeKind::Paragraph { .. }));
     assert!(p.is_some());
     if let Some(p) = p {
-        assert!(p.style.color.a > 0, "color 样式应解析到段落节点");
+        assert!(p.style.color.a > 0.0, "color 样式应解析到段落节点");
     }
 }
 
@@ -56,7 +56,7 @@ fn styled_class_style_from_css() {
     assert!(p.is_some());
     if let Some(p) = p {
         assert!(
-            p.style.color.a > 0 && p.style.color.b > 0,
+            p.style.color.a > 0.0 && p.style.color.b > 0.0,
             "class 选择器样式应解析并应用到节点"
         );
     }

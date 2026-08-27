@@ -13,13 +13,15 @@
 //! - CSS → lievisual 样式的构造桥接（[`css_text_style`]）与语法高亮区间
 //!   （[`StyleRange`] / [`layout_text_with_ranges`]）。
 
-/// liepress 的文本对齐以 `crate::ast::TextAlign` 为真源（向下游保持兼容）；
-/// lievisual 的 `TextAlign` 以别名 [`TextAlignLv`] 暴露，用于构造 lievisual 样式。
+/// 文本排版类型直接复用 `lievisual::text`，`crate::ast` 已 `pub use` 转发，
+/// 故下游既可写 `crate::ast::TextAlign` 也可写 `lievisual::text::TextAlign`，
+/// 二者为同一类型。
 pub use crate::ast::TextAlign;
 pub use lievisual::text::{
-    FontStyle, Glyph, LineMetrics, TextAlign as TextAlignLv, TextBaseline, TextDecoration,
-    TextLayout, TextLine, TextRun, TextStyle,
+    FontStyle, FontWeight, Glyph, LineMetrics, TextBaseline, TextDecoration, TextLayout, TextLine,
+    TextRun, TextStyle,
 };
+use lievisual::{FontWidth, geometry::Rect as LRect};
 use std::sync::Arc;
 
 // 已注册字体的原始字节缓存（供 PdfRenderer 等需要嵌入字体的后端使用）。
@@ -44,12 +46,15 @@ pub fn with_font_context<R, F: FnOnce(&mut lievisual::parley::FontContext) -> R>
 }
 
 /// 访问 lievisual 的线程本地布局上下文。
-pub fn with_layout_context<R, F: FnOnce(&mut lievisual::parley::LayoutContext<crate::color::Color>) -> R>(
+pub fn with_layout_context<
+    R,
+    F: FnOnce(&mut lievisual::parley::LayoutContext<lievisual::Color>) -> R,
+>(
     f: F,
 ) -> R {
     use std::cell::RefCell;
     thread_local! {
-        static LC: RefCell<lievisual::parley::LayoutContext<crate::color::Color>> =
+        static LC: RefCell<lievisual::parley::LayoutContext<lievisual::Color>> =
             RefCell::new(lievisual::parley::LayoutContext::new());
     }
     LC.with(|cx| f(&mut cx.borrow_mut()))
@@ -60,7 +65,7 @@ pub fn with_text_contexts<
     R,
     F: FnOnce(
         &mut lievisual::parley::FontContext,
-        &mut lievisual::parley::LayoutContext<crate::color::Color>,
+        &mut lievisual::parley::LayoutContext<lievisual::Color>,
     ) -> R,
 >(
     f: F,
@@ -84,8 +89,9 @@ pub fn register_font(
 ) -> crate::error::Result<()> {
     let (lv_source, arc_bytes) = match source {
         FontSource::Path(path) => {
-            let bytes = std::fs::read(&path)
-                .map_err(|e| crate::error::Error::FontLoadError(format!("读取字体文件失败: {e}")))?;
+            let bytes = std::fs::read(&path).map_err(|e| {
+                crate::error::Error::FontLoadError(format!("读取字体文件失败: {e}"))
+            })?;
             let arc = Arc::new(bytes);
             (lievisual::FontSource::Path(path), arc)
         }
@@ -97,10 +103,10 @@ pub fn register_font(
 
     if let Some(g) = family_name_override.and_then(parse_generic_family_name) {
         lievisual::register_font_generic(lv_source, None, Some(g))
-            .map_err(|e| crate::error::Error::FontLoadError(e))?;
+            .map_err(crate::error::Error::FontLoadError)?;
     } else {
         lievisual::register_font(lv_source, family_name_override)
-            .map_err(|e| crate::error::Error::FontLoadError(e))?;
+            .map_err(crate::error::Error::FontLoadError)?;
     }
 
     if let Some(family) = family_name_override {
@@ -116,30 +122,14 @@ fn parse_generic_family_name(name: &str) -> Option<lievisual::parley::fontique::
     lievisual::parse_generic_family(name)
 }
 
-// ─── 颜色与样式桥接 ──────────────────────────────────────
-
-/// liepress `Color`（0–255 u8）→ lievisual `Color`（0–1 f64）。
+/// 按 liepress 语义的 [`TextDecoration`] 设置 lievisual `TextStyle` 的
+/// `underline` / `strikethrough` 标志（lievisual 样式没有单一 `decoration` 字段）。
+///
+/// `TextDecoration` 已直接是 `lievisual::text::TextDecoration`（见文件顶部
+/// `pub use`），此处仅作语义桥接到 lievisual 的 `underline` / `strikethrough` 标志位。
 #[inline]
-pub fn to_lcolor(c: crate::color::Color) -> lievisual::Color {
-    lievisual::Color::rgba(c.r, c.g, c.b, c.a)
-}
-
-/// 把 liepress 的 `crate::ast::TextDecoration` 转为 lievisual 的 [`TextDecoration`]。
-#[inline]
-pub fn to_lievisual_decoration(dec: crate::ast::TextDecoration) -> TextDecoration {
+pub fn set_decoration(style: &mut TextStyle, dec: TextDecoration) {
     match dec {
-        crate::ast::TextDecoration::None => TextDecoration::None,
-        crate::ast::TextDecoration::Underline => TextDecoration::Underline,
-        crate::ast::TextDecoration::LineThrough => TextDecoration::LineThrough,
-    }
-}
-
-/// 按 liepress 语义的 [`TextDecoration`]（`crate::ast::TextDecoration`）设置
-/// lievisual `TextStyle` 的 `underline` / `strikethrough` 标志（lievisual 样式没有
-/// 单一 `decoration` 字段）。
-#[inline]
-pub fn set_decoration(style: &mut TextStyle, dec: crate::ast::TextDecoration) {
-    match to_lievisual_decoration(dec) {
         TextDecoration::None => {
             style.underline = false;
             style.strikethrough = false;
@@ -155,20 +145,8 @@ pub fn set_decoration(style: &mut TextStyle, dec: crate::ast::TextDecoration) {
     }
 }
 
-/// lievisual `Color`（0–1 f64）→ liepress `Color`（0–255 u8）。
-#[inline]
-pub fn from_lcolor(c: lievisual::Color) -> crate::color::Color {
-    let to_u8 = |v: f64| -> u8 { (v.clamp(0.0, 1.0) * 255.0).round() as u8 };
-    crate::color::Color {
-        r: to_u8(c.r),
-        g: to_u8(c.g),
-        b: to_u8(c.b),
-        a: to_u8(c.a),
-    }
-}
-
 /// 将 CSS 字重字符串/数值转换为字重数值（100–900）。
-fn weight_to_f32(weight: &str) -> f32 {
+pub fn weight_to_f32(weight: &str) -> f32 {
     match weight.to_lowercase().as_str() {
         "normal" => 400.0,
         "bold" => 700.0,
@@ -199,35 +177,29 @@ fn style_to_fontstyle(style: &str) -> FontStyle {
 /// 持有样式，这里统一桥接到 lievisual 的数值/枚举字段；布局类型本身即是 lievisual 的。
 #[must_use]
 pub fn css_text_style(
-    color: crate::color::Color,
+    color: lievisual::Color,
     font_family: &[String],
     font_size: f64,
     font_weight: &str,
     font_style: &str,
     align: TextAlign,
     url: Option<String>,
-    decoration: crate::ast::TextDecoration,
+    decoration: TextDecoration,
     baseline_shift: f32,
-    background_color: Option<crate::color::Color>,
+    background_color: Option<lievisual::Color>,
 ) -> TextStyle {
-    let (underline, strikethrough) = match to_lievisual_decoration(decoration) {
+    let (underline, strikethrough) = match decoration {
         TextDecoration::None => (false, false),
         TextDecoration::Underline => (true, false),
         TextDecoration::LineThrough => (false, true),
     };
-    let lv_align = match align {
-        TextAlign::Left => TextAlignLv::Left,
-        TextAlign::Center => TextAlignLv::Center,
-        TextAlign::Right => TextAlignLv::Right,
-        TextAlign::Justify => TextAlignLv::Justify,
-    };
     TextStyle {
-        color: to_lcolor(color),
+        color: color,
         font_family: font_family.join(", "),
         font_size,
-        font_weight: weight_to_f32(font_weight),
+        font_weight: FontWeight::parse(font_weight).unwrap_or_default(),
         font_style: style_to_fontstyle(font_style),
-        font_width: None,
+        font_width: FontWidth::Normal,
         line_height: None,
         letter_spacing: 0.0,
         underline,
@@ -235,11 +207,11 @@ pub fn css_text_style(
         strikethrough,
         strikethrough_color: None,
         baseline_shift: baseline_shift as f64,
-        background_color: background_color.map(to_lcolor),
+        background_color: background_color,
         url,
         rotation: 0.0,
         max_width: None,
-        align: lv_align,
+        align,
         baseline: lievisual::text::TextBaseline::Top,
     }
 }
@@ -254,7 +226,7 @@ fn into_owned(layout: std::sync::Arc<TextLayout>) -> TextLayout {
 /// 构造一个默认的 lievisual [`TextStyle`]（liepress 语义：黑色 10.5pt sans-serif 左对齐）。
 #[must_use]
 pub fn default_text_style() -> TextStyle {
-    TextStyle::new(to_lcolor(crate::color::Color::BLACK), 10.5, "sans-serif")
+    TextStyle::new(lievisual::Color::BLACK, 10.5, "sans-serif")
 }
 
 /// 创建文本布局（委托给 lievisual）。
@@ -265,56 +237,21 @@ pub fn create_text_layout(text: &str, style: &TextStyle, max_width: Option<f64>)
     into_owned(lievisual::text::layout_text(&spans, max_width))
 }
 
-/// 使用指定的上下文创建文本布局（兼容旧签名；上下文由 lievisual 统一管理，此处忽略）。
-#[must_use]
-pub fn create_text_layout_with_contexts(
-    text: &str,
-    style: &TextStyle,
-    max_width: Option<f64>,
-    _font_cx: &mut lievisual::parley::FontContext,
-    _layout_cx: &mut lievisual::parley::LayoutContext<crate::color::Color>,
-) -> TextLayout {
-    create_text_layout(text, style, max_width)
-}
-
 /// 将多段不同样式的文本合并在一个 TextLayout 中（委托给 lievisual）。
+///
+/// `align` 即 `lievisual::text::TextAlign`（与 `crate::ast::TextAlign` 为同一类型），
+/// 直接用于每个 span 的对齐，无需额外映射。
 #[must_use]
 pub fn layout_text(
     texts: &[(&str, &TextStyle)],
     max_width: Option<f64>,
     align: TextAlign,
 ) -> TextLayout {
-    layout_text_with_contexts(texts, max_width, align, None, None)
-}
-
-/// 使用指定的 FontContext 和 LayoutContext 创建多段样式文本布局
-/// （兼容旧签名；上下文由 lievisual 统一管理，此处忽略）。
-#[must_use]
-pub fn layout_text_with_contexts(
-    texts: &[(&str, &TextStyle)],
-    max_width: Option<f64>,
-    align: TextAlign,
-    _font_cx: Option<&mut lievisual::parley::FontContext>,
-    _layout_cx: Option<&mut lievisual::parley::LayoutContext<crate::color::Color>>,
-) -> TextLayout {
-    if texts.is_empty() {
-        return TextLayout {
-            lines: Vec::new(),
-            width: 0.0,
-            height: 0.0,
-        };
-    }
-    let lv_align = match align {
-        TextAlign::Left => TextAlignLv::Left,
-        TextAlign::Center => TextAlignLv::Center,
-        TextAlign::Right => TextAlignLv::Right,
-        TextAlign::Justify => TextAlignLv::Justify,
-    };
     let spans: Vec<lievisual::RichSpan> = texts
         .iter()
         .map(|(text, style)| {
             let mut s = (*style).clone();
-            s.align = lv_align;
+            s.align = align;
             lievisual::RichSpan::new((*text).to_string(), s)
         })
         .collect();
@@ -329,7 +266,7 @@ pub struct StyleRange {
     /// 字节结束（不含，相对全文）。
     pub end: usize,
     /// 区间文本颜色。
-    pub color: crate::color::Color,
+    pub color: lievisual::Color,
     /// 区间字重（"normal" / "bold" 或数值）。
     pub font_weight: String,
     /// 区间字体风格（"normal" / "italic"）。
@@ -351,14 +288,10 @@ pub fn layout_text_with_ranges(
             lines: Vec::new(),
             width: 0.0,
             height: 0.0,
+            ink_bounds: LRect::new(0.0, 0.0, 0.0, 0.0),
         };
     }
-    let lv_align = match align {
-        TextAlign::Left => TextAlignLv::Left,
-        TextAlign::Center => TextAlignLv::Center,
-        TextAlign::Right => TextAlignLv::Right,
-        TextAlign::Justify => TextAlignLv::Justify,
-    };
+    let lv_align = align;
 
     let mut spans: Vec<lievisual::RichSpan> = Vec::new();
     let mut pos = 0usize;
@@ -371,17 +304,23 @@ pub fn layout_text_with_ranges(
             continue;
         }
         if s > pos {
-            spans.push(lievisual::RichSpan::new(full[pos..s].to_string(), base.clone()));
+            spans.push(lievisual::RichSpan::new(
+                full[pos..s].to_string(),
+                base.clone(),
+            ));
         }
         let mut over = base.clone();
-        over.color = to_lcolor(r.color);
-        over.font_weight = weight_to_f32(&r.font_weight);
+        over.color = r.color;
+        over.font_weight = FontWeight::from_value(weight_to_f32(&r.font_weight));
         over.font_style = style_to_fontstyle(&r.font_style);
         spans.push(lievisual::RichSpan::new(full[s..e].to_string(), over));
         pos = e;
     }
     if pos < full.len() {
-        spans.push(lievisual::RichSpan::new(full[pos..].to_string(), base.clone()));
+        spans.push(lievisual::RichSpan::new(
+            full[pos..].to_string(),
+            base.clone(),
+        ));
     }
     if spans.is_empty() {
         spans.push(lievisual::RichSpan::new(full.to_string(), base.clone()));

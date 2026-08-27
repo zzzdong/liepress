@@ -9,35 +9,28 @@
 //! 回到 pt 单位，二者共用同一份场景数据。
 
 use lievisual::geometry::Color as LColor;
-use lievisual::text::{FontStyle, TextAlign, TextBaseline, TextStyle as LTextStyle};
+use lievisual::text::{
+    FontStyle, FontWeight, FontWidth, TextAlign, TextBaseline, TextStyle as LTextStyle,
+};
 use lievisual::{
     Element, Fill, FillStrokeStyle, LineCap, LineJoin, Point, Rect as LRect, RichSpan, Scene,
     SceneImage, SceneNode, Stroke,
 };
 
-use crate::color::Color as PColor;
 use crate::document::layout::{Block, BlockKind, Document, TableRow};
-use crate::document::text::{
-    Glyph, LineMetrics, TextLine, TextRun, to_lievisual_decoration,
-};
-use crate::document::types::page::PageSettings;
+use crate::document::text::TextLine;
 use crate::document::types::ObjectFit as LayoutObjectFit;
 use crate::document::types::ResolvedStyle;
+use crate::document::types::page::PageSettings;
 use crate::output::common::{
-    block_height, list_item_indent, table_border_segments, table_row_height, BQ_BAR_WIDTH,
-    BQ_PAD_X, BQ_PAD_Y,
+    BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, block_height, list_item_indent, table_border_segments,
+    table_row_height,
 };
 
 /// 代码块内边距（pt）。
 const CODE_PADDING: f64 = 4.0;
 /// 默认 DPI（与旧 PNG 后端保持一致）。
 pub const DEFAULT_DPI: f64 = 144.0;
-
-/// 颜色：liepress `Color`(u8) → lievisual `Color`(u8)。
-#[inline]
-fn lc(c: PColor) -> LColor {
-    LColor::rgba(c.r, c.g, c.b, c.a)
-}
 
 /// 文档 → lievisual 场景。
 ///
@@ -101,13 +94,27 @@ impl SceneBuilder {
     }
 
     /// 矩形（填充 + 可选描边）。
-    fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, fill: Option<LColor>, stroke: Option<Stroke>) {
+    fn rect(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        fill: Option<LColor>,
+        stroke: Option<Stroke>,
+    ) {
         let fill = fill.unwrap_or_else(|| LColor::rgba(0, 0, 0, 0));
         let style = FillStrokeStyle {
             fill: Some(Fill::Solid(fill)),
             stroke,
         };
-        self.push(Element::Rect { rect: LRect::new(self.s(x), self.s(y), self.s(x + w), self.s(y + h)), style }, 0);
+        self.push(
+            Element::Rect {
+                rect: LRect::new(self.s(x), self.s(y), self.s(x + w), self.s(y + h)),
+                style,
+            },
+            0,
+        );
     }
 
     /// 直线段。
@@ -121,7 +128,14 @@ impl SceneBuilder {
             dash_offset: 0.0,
             miter_limit: 4.0,
         };
-        self.push(Element::Line { start: Point::new(self.s(x1), self.s(y1)), end: Point::new(self.s(x2), self.s(y2)), style: stroke }, 0);
+        self.push(
+            Element::Line {
+                start: Point::new(self.s(x1), self.s(y1)),
+                end: Point::new(self.s(x2), self.s(y2)),
+                style: stroke,
+            },
+            0,
+        );
     }
 
     /// 实心/描边圆。
@@ -131,7 +145,14 @@ impl SceneBuilder {
             fill: Some(Fill::Solid(fill)),
             stroke,
         };
-        self.push(Element::Circle { center: Point::new(self.s(cx), self.s(cy)), radius: self.s(r), style }, 0);
+        self.push(
+            Element::Circle {
+                center: Point::new(self.s(cx), self.s(cy)),
+                radius: self.s(r),
+                style,
+            },
+            0,
+        );
     }
 
     /// 单行文本：先绘制行内背景（如有），再绘制 `Element::Text`。
@@ -171,11 +192,35 @@ impl SceneBuilder {
         let mut spans = Vec::with_capacity(line.runs.len());
         for run in &line.runs {
             let fs = run.font_size as f64;
-            let style = text_style(&family_str, fs, run.color, run.font_weight_bold, run.font_style_italic, run.decoration, TextBaseline::Alphabetic, run.baseline_shift as f64, default_color);
+            let style = text_style(
+                &family_str,
+                fs,
+                run.color,
+                if run.font_weight_bold {
+                    FontWeight::Bold
+                } else {
+                    FontWeight::Normal
+                },
+                run.font_style_italic,
+                run.decoration,
+                TextBaseline::Alphabetic,
+                run.baseline_shift as f64,
+                default_color,
+            );
             spans.push(RichSpan::new(run.text.clone(), style));
         }
 
-        let style = text_style(&family_str, default_fs, line.runs[0].color, false, false, lievisual::text::TextDecoration::None, TextBaseline::Top, 0.0, default_color);
+        let style = text_style(
+            &family_str,
+            default_fs,
+            line.runs[0].color,
+            FontWeight::Normal,
+            false,
+            lievisual::text::TextDecoration::None,
+            TextBaseline::Top,
+            0.0,
+            default_color,
+        );
 
         // 使用 lievisual 的文本排版功能：预先用 `layout_text` 排好版，作为预排版
         // `layout` 喂给 `Element::Text`，栅格后端按字形级布局精确绘制字形
@@ -192,15 +237,67 @@ impl SceneBuilder {
         );
     }
 
+    /// 直接用 lievisual 排版并绘制一段纯文本（不经由外部预排版的 `TextLine`）。
+    ///
+    /// 适用于列表 marker、序号等简单单行文本：直接把 `(文本, 样式)` 交给
+    /// `lievisual::text::layout_text` 排版，由其负责字形测量与 `TextLine` 构造，
+    /// 得到的结果直接作为 `Element::Text` 的预排版 push 到场景。与 [`Self::text_line`]
+    /// 不同，本方法不接收外部 `TextLine`，避免「先排版一次 `TextLine` 再二次重排」。
+    fn text(&mut self, text: &str, style: &ResolvedStyle, x: f64, y: f64) {
+        let fs = style.font_size_pt as f64;
+        let family_str = style.font_family.join(", ");
+        let lv_style = text_style(
+            &family_str,
+            fs,
+            style.color,
+            if style.font_weight_bold {
+                FontWeight::Bold
+            } else {
+                FontWeight::Normal
+            },
+            style.font_style_italic,
+            lievisual::text::TextDecoration::None,
+            TextBaseline::Top,
+            0.0,
+            style.color,
+        );
+        let span = RichSpan::new(text.to_string(), lv_style.clone());
+        let prelayout = lievisual::text::layout_text(std::slice::from_ref(&span), None);
+        let bounds = prelayout.ink_bounds;
+        self.push(
+            Element::Text {
+                spans: vec![span],
+                position: Point::new(self.s(x + bounds.x0), self.s(y + bounds.y0)),
+                style: lv_style,
+                layout: Some(prelayout),
+            },
+            1,
+        );
+    }
+
     /// 绘制一个块（递归）。`x`/`y` 为该块在文档内容区的左上角（pt）。
-    fn draw_block(&mut self, block: &Block, settings: &PageSettings, x: f64, y: f64, content_w: f64) {
+    fn draw_block(
+        &mut self,
+        block: &Block,
+        settings: &PageSettings,
+        x: f64,
+        y: f64,
+        content_w: f64,
+    ) {
         let style = &block.style;
         let bg = style.background_color;
 
         match &block.kind {
             BlockKind::Heading { children, .. } => {
                 if let Some(bg) = bg {
-                    self.rect(x, y, content_w, block_height(block, settings, x), Some(lc(bg)), None);
+                    self.rect(
+                        x,
+                        y,
+                        content_w,
+                        block_height(block, settings, x),
+                        Some(bg),
+                        None,
+                    );
                 }
                 for c in children {
                     self.draw_block(c, settings, x, y, content_w);
@@ -208,7 +305,14 @@ impl SceneBuilder {
             }
             BlockKind::Paragraph { lines } => {
                 if let Some(bg) = bg {
-                    self.rect(x, y, content_w, block_height(block, settings, x), Some(lc(bg)), None);
+                    self.rect(
+                        x,
+                        y,
+                        content_w,
+                        block_height(block, settings, x),
+                        Some(bg),
+                        None,
+                    );
                 }
                 let family = &style.font_family;
                 let mut ly = y;
@@ -219,8 +323,10 @@ impl SceneBuilder {
             }
             BlockKind::CodeBlock { lines, .. } => {
                 let h = block_height(block, settings, x);
-                let code_bg = style.background_color.unwrap_or_else(|| PColor::new(245, 245, 245));
-                self.rect(x, y, content_w, h, Some(lc(code_bg)), None);
+                let code_bg = style
+                    .background_color
+                    .unwrap_or_else(|| lievisual::Color::rgb(245, 245, 245));
+                self.rect(x, y, content_w, h, Some(code_bg), None);
                 let family = &style.font_family;
                 let mut ly = y + CODE_PADDING;
                 for line in lines {
@@ -230,7 +336,7 @@ impl SceneBuilder {
             }
             BlockKind::ThematicBreak => {
                 let yy = y + 2.0;
-                self.line(x, yy, x + content_w, yy, lc(style.color), 1.0);
+                self.line(x, yy, x + content_w, yy, style.color, 1.0);
             }
             BlockKind::Image(img) => {
                 let (w, h) = img.size;
@@ -238,7 +344,14 @@ impl SceneBuilder {
                 let iy = y + img.position.1;
                 let frame = LRect::new(self.s(ix), self.s(iy), self.s(ix + w), self.s(iy + h));
                 if img.data.is_empty() {
-                    self.rect(ix, iy, w, h, Some(LColor::rgba(230, 230, 230, 255)), Some(self.border_stroke(style)));
+                    self.rect(
+                        ix,
+                        iy,
+                        w,
+                        h,
+                        Some(LColor::rgba(230, 230, 230, 255)),
+                        Some(self.border_stroke(style)),
+                    );
                 } else {
                     let fit = match img.object_fit {
                         LayoutObjectFit::Contain => lievisual::ObjectFit::Contain,
@@ -249,15 +362,36 @@ impl SceneBuilder {
                     // lievisual 的 SceneImage 持有已解码的 RGBA8 位图（Pixmap），
                     // 解码是调用方职责：这里用 `image` 解码原始字节为 RGBA8 再构造。
                     if let Some(scene_img) = decode_scene_image(&img.data, fit) {
-                        self.push(Element::Image { image: scene_img, frame, opacity: 1.0 }, 1);
+                        self.push(
+                            Element::Image {
+                                image: scene_img,
+                                frame,
+                                opacity: 1.0,
+                            },
+                            1,
+                        );
                     } else {
-                        self.rect(ix, iy, w, h, Some(LColor::rgba(230, 230, 230, 255)), Some(self.border_stroke(style)));
+                        self.rect(
+                            ix,
+                            iy,
+                            w,
+                            h,
+                            Some(LColor::rgba(230, 230, 230, 255)),
+                            Some(self.border_stroke(style)),
+                        );
                     }
                 }
             }
             BlockKind::Blockquote { children } => {
                 let bq_h = block_height(block, settings, x);
-                self.rect(x, y, BQ_BAR_WIDTH, bq_h, Some(lc(PColor::new(200, 200, 200))), None);
+                self.rect(
+                    x,
+                    y,
+                    BQ_BAR_WIDTH,
+                    bq_h,
+                    Some(lievisual::Color::rgb(200, 200, 200)),
+                    None,
+                );
                 let inner_x = x + BQ_BAR_WIDTH + BQ_PAD_X;
                 let inner_w = content_w - BQ_BAR_WIDTH - BQ_PAD_X;
                 let mut iy = y + BQ_PAD_Y;
@@ -285,7 +419,11 @@ impl SceneBuilder {
                     iy += block_height(c, settings, inner_x);
                 }
             }
-            BlockKind::TaskListItem { marker, checked, children } => {
+            BlockKind::TaskListItem {
+                marker,
+                checked,
+                children,
+            } => {
                 let indent = list_item_indent(marker, style);
                 let inner_x = x + indent;
                 self.draw_task_marker(x, y, *checked, style);
@@ -297,7 +435,14 @@ impl SceneBuilder {
             }
             BlockKind::Container { children, .. } => {
                 if let Some(bg) = bg {
-                    self.rect(x, y, content_w, block_height(block, settings, x), Some(lc(bg)), None);
+                    self.rect(
+                        x,
+                        y,
+                        content_w,
+                        block_height(block, settings, x),
+                        Some(bg),
+                        None,
+                    );
                 }
                 let mut iy = y;
                 for c in children {
@@ -305,7 +450,12 @@ impl SceneBuilder {
                     iy += block_height(c, settings, x);
                 }
             }
-            BlockKind::Table { rows, col_widths, row_heights, .. } => {
+            BlockKind::Table {
+                rows,
+                col_widths,
+                row_heights,
+                ..
+            } => {
                 self.draw_table(block, rows, col_widths, row_heights, settings, x, y);
             }
             BlockKind::TableRow { .. } | BlockKind::TableCell { .. } => {
@@ -347,10 +497,15 @@ impl SceneBuilder {
         let text_center_y = y + fs * 0.75;
 
         if marker.trim() == "•" {
-            self.circle(marker_left + fs * 0.35, text_center_y, fs * 0.18, Some(lc(style.color)), None);
+            self.circle(
+                marker_left + fs * 0.35,
+                text_center_y,
+                fs * 0.18,
+                Some(style.color),
+                None,
+            );
         } else {
-            let line = make_text_line(marker, style);
-            self.text_line(&line, marker_left, y, &style.font_family);
+            self.text(marker, style, marker_left, y);
         }
     }
 
@@ -426,14 +581,14 @@ impl SceneBuilder {
 
         // 边框。
         for seg in table_border_segments(rows, col_widths, row_heights, style, x, y) {
-            self.line(seg.x1, seg.y1, seg.x2, seg.y2, lc(seg.color), seg.width);
+            self.line(seg.x1, seg.y1, seg.x2, seg.y2, seg.color, seg.width);
         }
     }
 
     /// 由 ResolvedStyle 构造描边（用于边框 / 复选框）。
     fn border_stroke(&self, style: &ResolvedStyle) -> Stroke {
         Stroke {
-            color: lc(style.color),
+            color: style.color,
             width: self.s(1.0),
             line_cap: LineCap::Butt,
             line_join: LineJoin::Miter,
@@ -449,7 +604,7 @@ fn text_style(
     family: &str,
     font_size: f64,
     color: LColor,
-    bold: bool,
+    weight: FontWeight,
     italic: bool,
     decoration: lievisual::text::TextDecoration,
     baseline: TextBaseline,
@@ -465,9 +620,13 @@ fn text_style(
         color,
         font_family: family.to_string(),
         font_size,
-        font_weight: if bold { 700.0 } else { 400.0 },
-        font_style: if italic { FontStyle::Italic } else { FontStyle::Normal },
-        font_width: None,
+        font_weight: weight,
+        font_style: if italic {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
+        },
+        font_width: FontWidth::Normal,
         line_height: None,
         letter_spacing: 0.0,
         underline,
@@ -490,9 +649,9 @@ fn measure_width(text: &str, family: &str, font_size: f64, color: LColor) -> f64
         color,
         font_family: family.to_string(),
         font_size,
-        font_weight: 400.0,
+        font_weight: FontWeight::Normal,
         font_style: FontStyle::Normal,
-        font_width: None,
+        font_width: FontWidth::Normal,
         line_height: None,
         letter_spacing: 0.0,
         underline: false,
@@ -509,45 +668,6 @@ fn measure_width(text: &str, family: &str, font_size: f64, color: LColor) -> f64
     };
     let spans = vec![RichSpan::new(text.to_string(), style)];
     lievisual::measure_text(&spans, None).size.width
-}
-
-/// 构造单行文本（用于列表有序 marker 等纯文本标记）。
-fn make_text_line(text: &str, style: &ResolvedStyle) -> TextLine {
-    let fs = style.font_size_pt;
-    let run = TextRun {
-        text: text.to_string(),
-        font_data: std::sync::Arc::new(Vec::new()),
-        font_index: 0,
-        font_size: fs,
-        font_weight_bold: style.font_weight_bold,
-        font_style_italic: style.font_style_italic,
-        color: lc(style.color),
-        advance: 0.0,
-        glyphs: vec![Glyph {
-            id: 0,
-            x: 0.0,
-            y: 0.0,
-            advance: fs,
-            cluster: 0,
-        }],
-        is_rtl: false,
-        baseline_x: 0.0,
-        baseline_y: fs as f32 * 0.8,
-        url: None,
-        decoration: to_lievisual_decoration(style.text_decoration),
-        baseline_shift: 0.0,
-        background_color: None,
-    };
-    TextLine {
-        runs: vec![run],
-        bounds: LRect::new(0.0, 0.0, 0.0, fs as f64),
-        metrics: LineMetrics {
-            ascent: fs as f32,
-            descent: 0.0,
-            baseline: fs as f32,
-            line_height: fs as f32,
-        },
-    }
 }
 
 /// 解码图片原始字节为 lievisual 的 `SceneImage`（RGBA8 位图 + 适应方式）。

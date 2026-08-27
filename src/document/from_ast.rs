@@ -18,16 +18,18 @@
 //! - 可用宽度取整页内容宽度 `PageSettings::content_width()`，box model 缩进/边框
 //!   占用尚未纳入。
 
+use lievisual::FontWeight;
+
 use crate::ast::{Node, NodeKind, computed_style_to_text_style};
-use crate::color::Color;
-use crate::document::highlight::highlight_code;
 use crate::document::ext_render::{RenderOpts, find_renderer, parse_info_string};
+use crate::document::highlight::highlight_code;
 use crate::document::layout::{
     Block, BlockKind, DefinitionItemBlock, Document, TableCell, TableRow,
 };
-use crate::document::text::{FontStyle, TextStyle, set_decoration, to_lcolor};
+use crate::document::text::{FontStyle, TextStyle, set_decoration};
 use crate::document::types::page::PageSettings;
 use crate::document::types::{DocImage, ResolvedStyle};
+use lievisual::Color;
 
 /// 将带样式的 AST 根节点转换为文档 `Document`（不分页的源 IR）。
 ///
@@ -51,10 +53,6 @@ struct CellMeasure {
     min_width: f64,
 }
 
-/// 度量单个单元格的理想宽度与最小宽度（参考 main `generator/table.rs`）。
-///
-/// - `ideal_width`：不折行时完整文本的自然宽度（`max_width=None` 布局的宽度）。
-/// - `min_width`：最宽不可断词（最长单词）的宽度，保证该列至少能容纳一个单词。
 fn measure_cell(node: &Node, style: &crate::ast::Style, padding_h: f64) -> CellMeasure {
     let base = computed_style_to_text_style(style);
     let mut segments = collect_inline_segments(std::slice::from_ref(node), &base);
@@ -67,12 +65,8 @@ fn measure_cell(node: &Node, style: &crate::ast::Style, padding_h: f64) -> CellM
     }
     let combined: Vec<(&str, &crate::document::text::TextStyle)> =
         segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
-    let ideal_width = crate::document::text::layout_text(
-        &combined,
-        None,
-        crate::ast::TextAlign::Left,
-    )
-    .width;
+    let ideal_width =
+        crate::document::text::layout_text(&combined, None, crate::ast::TextAlign::Left).width;
     // 最宽不可断词宽度
     let min_width = segments
         .iter()
@@ -100,11 +94,6 @@ fn split_words(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// 计算表格的列宽与行高（参考 main 分支 `generator/table.rs` 算法）。
-///
-/// 列宽：优先用每列理想宽度；若总和超可用宽度，则保证每列 ≥ 最宽不可断词宽度
-/// （min_width），剩余空间按 (ideal - min) 比例分配。这样窄列不会因压缩而容不下文本。
-/// 行高：按列宽折行，取该行所有单元格折行后高度的最大值。
 fn compute_table_layout(
     cell_nodes: &[Vec<&Node>],
     style: &crate::ast::Style,
@@ -191,8 +180,7 @@ fn measure_cell_height(node: &Node, style: &crate::ast::Style, width: f64) -> f6
     }
     let combined: Vec<(&str, &crate::document::text::TextStyle)> =
         segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
-    crate::document::text::layout_text(&combined, Some(width), crate::ast::TextAlign::Left)
-        .height
+    crate::document::text::layout_text(&combined, Some(width), crate::ast::TextAlign::Left).height
 }
 
 /// 按指定宽度转换表格单元格（`NodeKind::Paragraph`）为段落块。
@@ -329,7 +317,9 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                         url: format!("#fn-ref-{}", label),
                         title: None,
                         children: vec![Node::new(
-                            NodeKind::Text { text: " ↩".to_string() },
+                            NodeKind::Text {
+                                text: " ↩".to_string(),
+                            },
                             crate::ast::Style::default(),
                             false,
                         )],
@@ -376,9 +366,13 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             style,
             node.splittable,
         ),
-        NodeKind::CodeBlock { code, lang } => {
-            convert_code_block(code, lang.as_deref().unwrap_or(""), &style, settings, node.splittable)
-        }
+        NodeKind::CodeBlock { code, lang } => convert_code_block(
+            code,
+            lang.as_deref().unwrap_or(""),
+            &style,
+            settings,
+            node.splittable,
+        ),
         NodeKind::ThematicBreak => Block::new(BlockKind::ThematicBreak, style, node.splittable),
         NodeKind::Table { children, align } => {
             // 先收集所有单元格的原始 AST 节点（行→列），用于真实度量列宽/行高。
@@ -593,7 +587,11 @@ fn convert_code_block(
     Block::new(
         BlockKind::CodeBlock {
             code: code.to_string(),
-            lang: if lang.is_empty() { None } else { Some(lang.to_string()) },
+            lang: if lang.is_empty() {
+                None
+            } else {
+                Some(lang.to_string())
+            },
             lines,
         },
         style.clone(),
@@ -686,20 +684,20 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
                     // 链接正文的「蓝色 + 下划线」来自 CSS 的 `a` 选择器（写在节点的
                     // `style` 上，而非 NodeKind 语义），必须显式叠加到正文样式，
                     // 否则会回退为父段落的黑色（与其它语义类节点不同，颜色需取 CSS）。
-                    merged.color = to_lcolor(child.style.color);
+                    merged.color = child.style.color;
                     set_decoration(&mut merged, child.style.text_decoration);
                     merged.url = Some(url.clone());
                     segments.extend(collect_inline_segments(inner, &merged));
                     // 带标题的链接：正文之后追加「（title）」副文本，
                     // 斜体 + 弱化灰 + 无 url（不可点），参照 pandoc/typst 印刷风格。
-                    if let Some(t) = title {
-                        if !t.trim().is_empty() {
-                            let mut desc = inherited.clone();
-                            desc.color = to_lcolor(Color::new(136, 136, 136)); // #888
-                            desc.font_style = FontStyle::Italic;
-                            desc.url = None;
-                            segments.push((format!("（{}）", t), desc));
-                        }
+                    if let Some(t) = title
+                        && !t.trim().is_empty()
+                    {
+                        let mut desc = inherited.clone();
+                        desc.color = Color::rgb(136, 136, 136); // #888
+                        desc.font_style = FontStyle::Italic;
+                        desc.url = None;
+                        segments.push((format!("（{}）", t), desc));
                     }
                     continue;
                 }
@@ -717,8 +715,8 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
                     style.font_family = "monospace".to_string();
                     // 行内代码用灰色背景框区分（PDF/PNG 由 draw_text_run 依据
                     // background_color 绘制矩形；SVG/HTML 由样式输出）。
-                    style.background_color = Some(to_lcolor(Color::new(238, 240, 244)));
-                    style.color = to_lcolor(Color::new(199, 52, 29));
+                    style.background_color = Some(Color::rgb(238, 240, 244));
+                    style.color = Color::rgb(199, 52, 29);
                     segments.push((code.clone(), style));
                 }
             }
@@ -744,7 +742,7 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
 /// `ResolvedStyle` 解耦——流式后端与排版后端都从这里取同源语义。
 fn apply_node_semantic_style(kind: &NodeKind, style: &mut TextStyle) {
     match kind {
-        NodeKind::Strong { .. } => style.font_weight = 700.0,
+        NodeKind::Strong { .. } => style.font_weight = FontWeight::Bold,
         NodeKind::Emphasis { .. } => style.font_style = FontStyle::Italic,
         NodeKind::Delete { .. } => set_decoration(style, crate::ast::TextDecoration::LineThrough),
         NodeKind::Subscript { .. } => style.baseline_shift = -(style.font_size * 0.3),
@@ -932,11 +930,7 @@ fn layout_inline(
         crate::ast::TextAlign::Justify => crate::ast::TextAlign::Left,
     };
 
-    let layout = crate::document::text::layout_text(
-        &combined,
-        Some(available_width),
-        text_align,
-    );
+    let layout = crate::document::text::layout_text(&combined, Some(available_width), text_align);
     // lievisual 排版时已按 span 样式把 url / decoration / background 映射到 run，
     // 无需再手工标注。
     layout.lines

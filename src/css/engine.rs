@@ -4,10 +4,11 @@
 //! 将 Lightning CSS 的类型化属性值转换为 LiePress 内部的 Style 结构。
 
 use crate::ast::style::{
-    CssLength, Display, FontStyle, FontWeight, LineHeight, ObjectFit, PageBreak, PageConfig, Style,
-    TextAlign, TextDecoration, WhiteSpace,
+    CssLength, Display, FontStyle, LineHeight, ObjectFit, PageBreak, PageConfig, Style, TextAlign,
+    TextDecoration, WhiteSpace,
 };
-use crate::color::Color;
+use lievisual::Color;
+use lievisual::text::FontWeight;
 use lightningcss::rules::CssRule;
 use lightningcss::selector::Component;
 use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet};
@@ -591,7 +592,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 let bs = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::color::Color::new(0, 0, 0),
+                    lievisual::Color::rgb(0, 0, 0),
                 );
                 style.border.top = bs;
                 style.border.right = bs;
@@ -605,7 +606,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 style.border.top = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::color::Color::new(0, 0, 0),
+                    lievisual::Color::rgb(0, 0, 0),
                 );
             }
         }
@@ -615,7 +616,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 style.border.bottom = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::color::Color::new(0, 0, 0),
+                    lievisual::Color::rgb(0, 0, 0),
                 );
             }
         }
@@ -625,7 +626,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 style.border.left = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::color::Color::new(0, 0, 0),
+                    lievisual::Color::rgb(0, 0, 0),
                 );
             }
         }
@@ -635,7 +636,7 @@ fn apply_declaration(style: &mut Style, property: &str, value: &str, root_font_s
                 style.border.right = crate::ast::style::BorderSide::new(
                     v,
                     crate::ast::style::BorderStyle::Solid,
-                    crate::color::Color::new(0, 0, 0),
+                    lievisual::Color::rgb(0, 0, 0),
                 );
             }
         }
@@ -744,33 +745,28 @@ fn parse_font_family(value: &str) -> Vec<String> {
 }
 
 fn parse_font_weight(value: &str) -> FontWeight {
-    match value.trim().to_lowercase().as_str() {
-        "bold" | "700" | "800" | "900" => FontWeight::Bold,
-        _ => FontWeight::Normal,
-    }
+    let v = crate::document::text::weight_to_f32(value);
+    FontWeight::from_value(v.clamp(100.0, 900.0))
 }
 
 fn parse_font_style(value: &str) -> FontStyle {
-    match value.trim().to_lowercase().as_str() {
-        "italic" | "oblique" => FontStyle::Italic,
-        _ => FontStyle::Normal,
-    }
+    FontStyle::parse(value).unwrap_or(FontStyle::Normal)
 }
 
 fn parse_color(value: &str) -> Option<Color> {
     let value = value.trim();
 
     match value.to_lowercase().as_str() {
-        "black" => return Some(Color::new(0, 0, 0)),
-        "white" => return Some(Color::new(255, 255, 255)),
-        "red" => return Some(Color::new(255, 0, 0)),
-        "green" => return Some(Color::new(0, 128, 0)),
-        "blue" => return Some(Color::new(0, 0, 255)),
-        "gray" | "grey" => return Some(Color::new(128, 128, 128)),
-        "silver" => return Some(Color::new(192, 192, 192)),
-        "yellow" => return Some(Color::new(255, 255, 0)),
-        "orange" => return Some(Color::new(255, 165, 0)),
-        "purple" => return Some(Color::new(128, 0, 128)),
+        "black" => return Some(Color::rgb(0, 0, 0)),
+        "white" => return Some(Color::rgb(255, 255, 255)),
+        "red" => return Some(Color::rgb(255, 0, 0)),
+        "green" => return Some(Color::rgb(0, 128, 0)),
+        "blue" => return Some(Color::rgb(0, 0, 255)),
+        "gray" | "grey" => return Some(Color::rgb(128, 128, 128)),
+        "silver" => return Some(Color::rgb(192, 192, 192)),
+        "yellow" => return Some(Color::rgb(255, 255, 0)),
+        "orange" => return Some(Color::rgb(255, 165, 0)),
+        "purple" => return Some(Color::rgb(128, 0, 128)),
         _ => {}
     }
 
@@ -780,13 +776,13 @@ fn parse_color(value: &str) -> Option<Color> {
                 let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
                 let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
                 let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
-                return Some(Color::new(r, g, b));
+                return Some(Color::rgb(r, g, b));
             }
             6 => {
                 let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
                 let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
                 let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                return Some(Color::new(r, g, b));
+                return Some(Color::rgb(r, g, b));
             }
             _ => {}
         }
@@ -799,7 +795,7 @@ fn parse_color(value: &str) -> Option<Color> {
             let r = parts[0].parse::<u8>().ok()?;
             let g = parts[1].parse::<u8>().ok()?;
             let b = parts[2].parse::<u8>().ok()?;
-            return Some(Color::new(r, g, b));
+            return Some(Color::rgb(r, g, b));
         }
     }
 
@@ -1097,7 +1093,7 @@ mod tests {
         let engine = CssEngine::new(css).unwrap();
         let parent = Style::default();
         let style = engine.resolve_style("p", &["special".to_string()], None, &[], &parent);
-        assert_eq!(style.color.b, 255);
+        assert_eq!(style.color.b(), 255);
     }
 
     #[test]
@@ -1105,7 +1101,7 @@ mod tests {
         let engine = CssEngine::new("").unwrap();
         let mut style = Style::default();
         engine.apply_inline_style(&mut style, "color: red; font-size: 14pt");
-        assert_eq!(style.color.r, 255);
+        assert_eq!(style.color.r(), 255);
         assert_eq!(style.font_size_pt, 14.0);
     }
 

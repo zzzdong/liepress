@@ -1,7 +1,7 @@
 //! 文档图片类型（自包含二进制，不依赖渲染层）。
 
-use crate::color::Color;
 use crate::document::types::ObjectFit;
+use lievisual::Color;
 
 /// 文档图片（自包含二进制）。
 ///

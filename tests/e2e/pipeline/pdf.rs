@@ -29,7 +29,7 @@ fn pdf_unicode_content() {
     let bytes = markdown_to_pdf(md, &opts()).expect("转换应成功");
     assert!(!bytes.is_empty());
     let doc = Document::load_mem(&bytes).expect("PDF 应可解析");
-    assert!(doc.get_pages().len() >= 1);
+    assert!(!doc.get_pages().is_empty());
 }
 
 #[test]
@@ -38,7 +38,7 @@ fn pdf_special_characters() {
     let bytes = markdown_to_pdf(md, &opts()).expect("转换应成功");
     assert!(!bytes.is_empty());
     let doc = Document::load_mem(&bytes).expect("PDF 应可解析");
-    assert!(doc.get_pages().len() >= 1);
+    assert!(!doc.get_pages().is_empty());
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn pdf_nested_structure() {
     let bytes = markdown_to_pdf(md, &opts()).expect("转换应成功");
     assert!(!bytes.is_empty());
     let doc = Document::load_mem(&bytes).expect("PDF 应可解析");
-    assert!(doc.get_pages().len() >= 1);
+    assert!(!doc.get_pages().is_empty());
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn pdf_table() {
     let bytes = markdown_to_pdf(md, &opts()).expect("转换应成功");
     assert!(!bytes.is_empty());
     let doc = Document::load_mem(&bytes).expect("PDF 应可解析");
-    assert!(doc.get_pages().len() >= 1);
+    assert!(!doc.get_pages().is_empty());
 }
 
 #[test]

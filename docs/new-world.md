@@ -1045,7 +1045,7 @@ impl LightningCssAdapter {
     /// 转换颜色
     fn convert_color(&self, color: &CssColor) -> crate::visual::Color {
         match color {
-            CssColor::RGB(rgb) => crate::visual::Color::new(
+            CssColor::RGB(rgb) => crate::visual::Color::rgb(
                 rgb.red,
                 rgb.green,
                 rgb.blue,
@@ -1056,12 +1056,12 @@ impl LightningCssAdapter {
                 rgba.blue,
                 (rgba.alpha * 255.0) as u8,
             ),
-            CssColor::Hex(hex) => crate::visual::Color::new(
+            CssColor::Hex(hex) => crate::visual::Color::rgb(
                 ((hex >> 16) & 0xFF) as u8,
                 ((hex >> 8) & 0xFF) as u8,
                 (hex & 0xFF) as u8,
             ),
-            _ => crate::visual::Color::new(0, 0, 0),
+            _ => crate::visual::Color::rgb(0, 0, 0),
         }
     }
     
@@ -1180,7 +1180,7 @@ impl Default for ComputedStyles {
             font_style: FontStyle::Normal,
             line_height: CssValue::Number(1.5),
             letter_spacing: CssValue::Length(0.0, LengthUnit::Px),
-            color: Color::new(0, 0, 0),
+            color: Color::rgb(0, 0, 0),
             text_align: TextAlign::Left,
             text_indent: CssValue::Length(0.0, LengthUnit::Pt),
             text_decoration: TextDecoration::None,

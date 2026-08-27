@@ -10,7 +10,7 @@
 //! - `list_marker_style`: 列表标记样式（用于 bullet/number 布局计算）
 //! - `LIST_INDENT_PT` / `calculate_list_indent`: 列表缩进计算
 
-use crate::color::Color;
+use lievisual::Color;
 
 use super::style::*;
 
@@ -40,7 +40,7 @@ pub fn list_marker_style() -> Style {
         font_size_pt: 10.5,
         font_weight: FontWeight::Normal,
         font_style: FontStyle::Normal,
-        color: Color::new(0, 0, 0),
+        color: Color::rgb(0, 0, 0),
         line_height_pt: 15.75,
         letter_spacing: 0.0,
         text_align: TextAlign::Right,
@@ -54,7 +54,7 @@ pub fn list_marker_style() -> Style {
         background_color: None,
         page_break_before: PageBreak::Auto,
         page_break_after: PageBreak::Auto,
-        table_border_color: Color::new(180, 180, 180),
+        table_border_color: Color::rgb(180, 180, 180),
         table_border_width_pt: 0.5,
         table_cell_padding_h_pt: 4.0,
         table_cell_padding_v_pt: 2.0,
@@ -82,8 +82,8 @@ pub fn computed_style_to_text_style(style: &Style) -> crate::document::text::Tex
         style.color,
         &style.font_family,
         style.font_size_pt as f64,
-        style.font_weight.as_str(),
-        style.font_style.as_str(),
+        &font_weight_css(style.font_weight),
+        font_style_css(style.font_style),
         align,
         style.link_url.clone(),
         style.text_decoration,

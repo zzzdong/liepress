@@ -12,7 +12,7 @@ pub fn document_to_svg(
 ) -> String {
     let scene = crate::document::to_scene::document_to_scene(document, settings, 72.0);
 
-    let mut r = lievisual::render::SvgRenderer::new(scene.width as f64, scene.height as f64)
+    let mut r = lievisual::render::SvgRenderer::new(scene.width, scene.height)
         .with_background(lievisual::geometry::Color::WHITE);
     use lievisual::render::Renderer;
     r.render_scene(&scene);

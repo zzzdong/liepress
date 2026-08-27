@@ -793,7 +793,7 @@ impl NodeKind {
 
 /// Mark 标签的样式调整（黄色背景高亮）
 pub fn apply_mark_style(style: &mut Style) {
-    style.background_color = Some(crate::color::Color::new(255, 255, 0));
+    style.background_color = Some(lievisual::Color::rgb(255, 255, 0));
 }
 
 /// Small 标签的样式调整（缩小字号）
@@ -1092,9 +1092,9 @@ mod tests {
         let node = html_to_styled_nodes(&doc, &engine);
         let para = find_node(&node, |k| matches!(k, NodeKind::Paragraph { .. })).unwrap();
         // 内联样式应生效
-        assert_eq!(para.style.color.r, 255);
-        assert_eq!(para.style.color.g, 0);
-        assert_eq!(para.style.color.b, 0);
+        assert_eq!(para.style.color.r(), 255);
+        assert_eq!(para.style.color.g(), 0);
+        assert_eq!(para.style.color.b(), 0);
     }
 
     #[test]

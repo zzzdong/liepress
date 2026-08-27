@@ -250,7 +250,7 @@
   - `new(r,g,b)` 3 参（不透明）、`with_alpha`、`black()`、`From<DocColor>`/`From<Color>`。
 - `src/document/types/page.rs`：`PageSettings`（分页后端输入），含 `From<PageConfig>` 与页面常量
   （A4 `PAGE_WIDTH_PT=595.276` / `PAGE_HEIGHT_PT=841.89` 等）。`document/types/mod.rs` 重新导出。
-- `src/document/types/color.rs`：`DocColor` 改为使用 `crate::color::Color`；`From<Color>` 保留在此，
+- `src/document/types/color.rs`：`DocColor` 改为使用 `lievisual::Color`；`From<Color>` 保留在此，
   `From<DocColor>` 仅在 `color.rs` 实现（避免 E0119 冲突）。`DocColor` 派生 `Default`。
 - `src/document/types/style.rs`：手写 `impl Default for ResolvedStyle`（font_size_pt=10.5、line_height_pt=15.0 等）。
 - `src/document/types/text.rs`：`DocGlyph` 增加 `cluster: u32`（字节簇偏移，相对该 Run 自身 text）；

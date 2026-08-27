@@ -11,8 +11,8 @@ impl BlockRenderer for LieMermaidRenderer {
     }
 
     fn render(&self, code: &str, opts: &RenderOpts) -> Result<RenderedImage, RenderError> {
-        let png = liemermaid::render_png(code, opts.width, opts.height)
-            .map_err(map_diagram_error)?;
+        let png =
+            liemermaid::render_png(code, opts.width, opts.height).map_err(map_diagram_error)?;
         if png.is_empty() {
             return Err(RenderError::Render("liemermaid 返回空图片".into()));
         }

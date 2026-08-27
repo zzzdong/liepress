@@ -3,11 +3,11 @@
 //! 从 `pdf.rs` 提取，供 PDF / SVG / PNG 等后端复用，避免重复实现
 //! 块高度计算、样式映射等逻辑。
 
-use crate::color::Color;
 use crate::document::layout::{Block, BlockKind, TableRow};
-use crate::document::text::{TextLine, TextStyle, css_text_style, to_lcolor};
+use crate::document::text::{TextLine, TextStyle, css_text_style};
 use crate::document::types::page::PageSettings;
 use crate::document::types::{ResolvedStyle, TextAlign as LayoutAlign};
+use lievisual::Color;
 
 /// 引用块左侧竖条宽度（pt）。
 pub const BQ_BAR_WIDTH: f64 = 2.0;
@@ -303,8 +303,16 @@ pub fn text_style_from_resolved(style: &ResolvedStyle) -> TextStyle {
         style.color,
         &style.font_family,
         style.font_size_pt as f64,
-        if style.font_weight_bold { "bold" } else { "normal" },
-        if style.font_style_italic { "italic" } else { "normal" },
+        if style.font_weight_bold {
+            "bold"
+        } else {
+            "normal"
+        },
+        if style.font_style_italic {
+            "italic"
+        } else {
+            "normal"
+        },
         LayoutAlign::Left,
         None,
         style.text_decoration,
@@ -315,14 +323,13 @@ pub fn text_style_from_resolved(style: &ResolvedStyle) -> TextStyle {
 
 /// 把标题文本行套用标题字号/颜色（from_ast 产出的 Paragraph 行是正文样式）。
 pub fn apply_heading_style(lines: &[TextLine], size: f32, color: Color) -> Vec<TextLine> {
-    let lv_color = to_lcolor(color);
     lines
         .iter()
         .map(|line| {
             let mut nl = line.clone();
             for r in nl.runs.iter_mut() {
                 r.font_size = size;
-                r.color = lv_color;
+                r.color = color;
             }
             nl
         })

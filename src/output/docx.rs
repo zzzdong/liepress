@@ -5,11 +5,11 @@
 //! （其 `Paragraph` 绑定 parley 字形坐标），而是从 `ast::Node` 重建，保留
 //! 标题/列表/表格等语义。
 
-use crate::ast::{FontStyle, FontWeight, Node, NodeKind};
-use crate::color::Color;
+use crate::ast::{FontStyle, Node, NodeKind};
 use docx_rs::{
     Document, Docx, Paragraph, Pic, Run, Style, StyleType, Styles, Table, TableCell, TableRow,
 };
+use lievisual::Color;
 
 /// 把带样式的 AST 根节点转换为 DOCX 字节（完整 .docx zip 包）。
 pub fn node_to_docx(root: &Node) -> crate::error::Result<Vec<u8>> {
@@ -58,11 +58,6 @@ fn build_styles() -> Styles {
     styles
 }
 
-/// AST 颜色 → docx 颜色字符串（"RRGGBB"）。
-fn color_hex(c: &Color) -> String {
-    format!("{:02X}{:02X}{:02X}", c.r, c.g, c.b)
-}
-
 /// 从 `ast::Style` 构造一个 Run（应用字体族/字号/颜色/字重/字形）。
 fn run_from_style(text: &str, style: &crate::ast::Style) -> Run {
     let mut run = Run::new();
@@ -78,8 +73,8 @@ fn run_from_style(text: &str, style: &crate::ast::Style) -> Run {
     if size_half > 0 {
         run = run.size(size_half);
     }
-    run = run.color(color_hex(&style.color));
-    if style.font_weight == FontWeight::Bold {
+    run = run.color(&style.color.to_hex());
+    if style.font_weight == crate::ast::FontWeight::Bold {
         run = run.bold();
     }
     if style.font_style == FontStyle::Italic {
@@ -242,17 +237,21 @@ fn emit_inline_runs(p: Paragraph, n: &Node) -> Paragraph {
                     .east_asia("Consolas"),
             ),
         ),
-        NodeKind::Link { children, title, url: _ } => {
+        NodeKind::Link {
+            children,
+            title,
+            url: _,
+        } => {
             let mut p = emit_inline_children(p, children);
             // 带标题的链接：正文之后追加「（title）」副文本（斜体灰字，不可点），
             // 参照 pandoc/typst 印刷风格，与 PDF/PNG/SVG/HTML 三端一致。
-            if let Some(t) = title {
-                if !t.trim().is_empty() {
-                    let mut desc = crate::ast::Style::default();
-                    desc.color = Color::new(136, 136, 136); // #888
-                    desc.font_style = crate::ast::FontStyle::Italic;
-                    p = p.add_run(run_from_style(&format!("（{}）", t), &desc));
-                }
+            if let Some(t) = title
+                && !t.trim().is_empty()
+            {
+                let mut desc = crate::ast::Style::default();
+                desc.color = Color::rgb(136, 136, 136); // #888
+                desc.font_style = crate::ast::FontStyle::Italic;
+                p = p.add_run(run_from_style(&format!("（{}）", t), &desc));
             }
             p
         }

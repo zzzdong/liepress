@@ -1,5 +1,4 @@
 pub mod ast;
-pub mod color;
 pub mod css;
 pub mod document; // 重构文档层（方案 refactor-document-layer.md）
 pub mod dom; // HTML AST（管线 Layer 1）：Markdown/HTML → HtmlDocument

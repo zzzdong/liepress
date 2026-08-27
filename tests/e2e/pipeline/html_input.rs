@@ -21,7 +21,7 @@ fn html_to_pdf_pipeline() {
     let bytes = html_to_pdf(HTML, &opts()).expect("转换应成功");
     assert!(!bytes.is_empty());
     let doc = lopdf::Document::load_mem(&bytes).expect("PDF 应可解析");
-    assert!(doc.get_pages().len() >= 1);
+    assert!(!doc.get_pages().is_empty());
 }
 
 #[test]
@@ -48,5 +48,5 @@ fn html_to_pdf_with_table() {
     let html = "<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></table>";
     let bytes = html_to_pdf(html, &opts()).expect("转换应成功");
     let doc = lopdf::Document::load_mem(&bytes).expect("PDF 应可解析");
-    assert!(doc.get_pages().len() >= 1);
+    assert!(!doc.get_pages().is_empty());
 }

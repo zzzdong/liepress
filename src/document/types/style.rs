@@ -8,7 +8,7 @@
 //! [`crate::ast`] 为唯一真源，文档层不再重复定义，直接复用。
 
 use crate::ast::{ObjectFit, TextAlign, TextDecoration, WhiteSpace};
-use crate::color::Color;
+use lievisual::Color;
 
 /// 已解析的文档样式（布局/分页使用）。
 ///
@@ -101,7 +101,7 @@ impl Default for ResolvedStyle {
             border_color: None,
             text_decoration: TextDecoration::None,
             baseline_shift: 0.0,
-            table_border_color: Color::new(180, 180, 180),
+            table_border_color: Color::rgb(180, 180, 180),
             table_border_width_pt: 0.5,
             table_cell_padding_h_pt: 4.0,
             table_cell_padding_v_pt: 2.0,
@@ -114,14 +114,14 @@ impl Default for ResolvedStyle {
 impl From<crate::ast::Style> for ResolvedStyle {
     /// 从计算样式投影出文档层所需的稳定子集。
     fn from(s: crate::ast::Style) -> Self {
-        use crate::ast::{Display, FontStyle, FontWeight};
+        use crate::ast::{Display, FontStyle};
         // 注意：被 CSS 覆盖为 inline 的块级元素其 margin 会被
         // `inherit_from` 清零；此处原样投影，语义由上层决定。
-        let _ = (Display::Inline, FontStyle::Italic, FontWeight::Bold);
+        let _ = (Display::Inline, FontStyle::Italic);
         ResolvedStyle {
             font_family: s.font_family.clone(),
             font_size_pt: s.font_size_pt,
-            font_weight_bold: s.font_weight == FontWeight::Bold,
+            font_weight_bold: s.font_weight == crate::ast::FontWeight::Bold,
             font_style_italic: s.font_style == FontStyle::Italic,
             color: s.color,
             line_height_pt: s.line_height_pt,
