@@ -335,8 +335,12 @@ impl SceneBuilder {
                 }
             }
             BlockKind::ThematicBreak => {
+                // 与 pdf 后端一致：横线颜色取 border_color（无声明兜底为灰）。
                 let yy = y + 2.0;
-                self.line(x, yy, x + content_w, yy, style.color, 1.0);
+                let hr_color = style
+                    .border_color
+                    .unwrap_or(lievisual::Color::rgb(180, 180, 180));
+                self.line(x, yy, x + content_w, yy, hr_color, 1.0);
             }
             BlockKind::Image(img) => {
                 let (w, h) = img.size;
@@ -534,6 +538,7 @@ impl SceneBuilder {
     }
 
     /// 表格：背景、单元格文本、边框。
+    #[allow(clippy::too_many_arguments)]
     fn draw_table(
         &mut self,
         block: &Block,
@@ -600,6 +605,7 @@ impl SceneBuilder {
 }
 
 /// 构造一个 `lievisual::TextStyle`。
+#[allow(clippy::too_many_arguments)]
 fn text_style(
     family: &str,
     font_size: f64,

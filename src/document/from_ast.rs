@@ -400,13 +400,15 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                         .into_iter()
                         .enumerate()
                         .map(|(ci, cell)| {
-                            // 与 compute_table_layout 的 padding_h 保持一致（内容区减 2*padding）。
+                            // 与 compute_table_layout 的 padding_h 保持一致（内容区减 2*padding），
+                            // 使用真实 table_cell_padding_h_pt，避免硬编码 8.0 与默认 2pt 脱节。
                             let col_w = col_widths.get(ci).copied().unwrap_or(content_w);
+                            let pad_h = cell.style.table_cell_padding_h_pt as f64;
                             TableCell {
                                 children: vec![convert_cell(
                                     cell,
                                     settings,
-                                    (col_w - 8.0).max(1.0),
+                                    (col_w - 2.0 * pad_h).max(1.0),
                                 )],
                             }
                         })

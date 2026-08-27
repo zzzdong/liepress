@@ -55,10 +55,9 @@ impl FontCacheKey {
     }
 }
 
-/// lievisual `Color`（0–1 f64）→ krilla 的 `RgbColor`（0–255 u8）。
-fn rgb_u8(c: lievisual::Color) -> RgbColor {
-    let to_u8 = |v: f64| -> u8 { (v.clamp(0.0, 1.0) * 255.0).round() as u8 };
-    RgbColor::new(to_u8(c.r), to_u8(c.g), to_u8(c.b))
+/// lievisual `Color`（0–255 u8）→ krilla 的 `RgbColor`（0–255 u8）。
+fn to_krilla_color(color: lievisual::Color) -> krilla::color::rgb::Color {
+    krilla::color::rgb::Color::new(color.r, color.g, color.b)
 }
 
 /// PDF 后端分页后的单页（仅 PDF 后端内部使用，不污染 document 层）。
@@ -348,7 +347,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         if let Some(path) = pb.finish() {
             if let Some(c) = fill {
                 let fill = Fill {
-                    paint: Paint::from(to_krilla_color(&c)),
+                    paint: Paint::from(to_krilla_color(c)),
                     opacity: NormalizedF32::new(c.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                     rule: FillRule::NonZero,
                 };
@@ -358,7 +357,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             }
             if let Some((c, wt)) = stroke {
                 let stroke = KrillaStroke {
-                    paint: Paint::from(to_krilla_color(&c)),
+                    paint: Paint::from(to_krilla_color(c)),
                     opacity: NormalizedF32::new(c.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                     width: wt as f32,
                     miter_limit: 4.0,
@@ -381,7 +380,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         if let Some(path) = pb.finish() {
             self.surface.set_fill(None);
             let stroke = KrillaStroke {
-                paint: Paint::from(to_krilla_color(&color)),
+                paint: Paint::from(to_krilla_color(color)),
                 opacity: NormalizedF32::new(color.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                 width: width as f32,
                 miter_limit: 4.0,
@@ -411,7 +410,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         pb.close();
         if let Some(path) = pb.finish() {
             let fill = Fill {
-                paint: Paint::from(to_krilla_color(&color)),
+                paint: Paint::from(to_krilla_color(color)),
                 opacity: NormalizedF32::new(color.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                 rule: FillRule::NonZero,
             };
@@ -466,7 +465,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 pb.line_to((x0 + s * 0.8) as f32, (y0 + s * 0.28) as f32);
                 if let Some(path) = pb.finish() {
                     let stroke = KrillaStroke {
-                        paint: Paint::from(to_krilla_color(&color)),
+                        paint: Paint::from(to_krilla_color(color)),
                         opacity: NormalizedF32::new(color.a as f32 / 255.0)
                             .unwrap_or(NormalizedF32::ONE),
                         width: 1.6,
@@ -633,7 +632,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             pb.close();
             if let Some(path) = pb.finish() {
                 let fill = Fill {
-                    paint: Paint::from(rgb_u8(bg)),
+                    paint: Paint::from(to_krilla_color(bg)),
                     opacity: NormalizedF32::new(bg.a as f32).unwrap_or(NormalizedF32::ONE),
                     rule: FillRule::NonZero,
                 };
@@ -711,7 +710,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
 
         self.surface.set_stroke(None);
 
-        let krilla_color = rgb_u8(run.color);
+        let krilla_color = to_krilla_color(run.color);
         let paint = Paint::from(krilla_color);
         let opacity = NormalizedF32::new(run.color.a as f32).unwrap_or(NormalizedF32::ONE);
         let fill = Fill {
@@ -1292,8 +1291,4 @@ fn paginate_table(
         ctx.pages.push(std::mem::take(ctx.cur));
         *ctx.used = 0.0;
     }
-}
-
-fn to_krilla_color(color: &lievisual::Color) -> krilla::color::rgb::Color {
-    krilla::color::rgb::Color::new(color.r(), color.g(), color.b())
 }

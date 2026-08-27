@@ -73,7 +73,7 @@ fn run_from_style(text: &str, style: &crate::ast::Style) -> Run {
     if size_half > 0 {
         run = run.size(size_half);
     }
-    run = run.color(&style.color.to_hex());
+    run = run.color(style.color.to_hex());
     if style.font_weight == crate::ast::FontWeight::Bold {
         run = run.bold();
     }
@@ -248,9 +248,11 @@ fn emit_inline_runs(p: Paragraph, n: &Node) -> Paragraph {
             if let Some(t) = title
                 && !t.trim().is_empty()
             {
-                let mut desc = crate::ast::Style::default();
-                desc.color = Color::rgb(136, 136, 136); // #888
-                desc.font_style = crate::ast::FontStyle::Italic;
+                let desc = crate::ast::Style {
+                    color: Color::rgb(136, 136, 136), // #888
+                    font_style: crate::ast::FontStyle::Italic,
+                    ..crate::ast::Style::default()
+                };
                 p = p.add_run(run_from_style(&format!("（{}）", t), &desc));
             }
             p

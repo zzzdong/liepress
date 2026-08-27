@@ -438,7 +438,7 @@ impl Style {
             font_weight_css(self.font_weight)
         ));
         decls.push(format!("font-style: {}", font_style_css(self.font_style)));
-        if self.color.a > 0.0 {
+        if self.color.a > 0 {
             decls.push(format!("color: {}", self.color.to_hex()));
         }
         if self.line_height_pt > 0.0 {

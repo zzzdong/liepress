@@ -176,6 +176,7 @@ fn style_to_fontstyle(style: &str) -> FontStyle {
 /// liepress 下游（`ast::presets`、`output::common`、`from_ast`）以 CSS 字符串形态
 /// 持有样式，这里统一桥接到 lievisual 的数值/枚举字段；布局类型本身即是 lievisual 的。
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn css_text_style(
     color: lievisual::Color,
     font_family: &[String],
@@ -194,7 +195,7 @@ pub fn css_text_style(
         TextDecoration::LineThrough => (false, true),
     };
     TextStyle {
-        color: color,
+        color,
         font_family: font_family.join(", "),
         font_size,
         font_weight: FontWeight::parse(font_weight).unwrap_or_default(),
@@ -207,7 +208,7 @@ pub fn css_text_style(
         strikethrough,
         strikethrough_color: None,
         baseline_shift: baseline_shift as f64,
-        background_color: background_color,
+        background_color,
         url,
         rotation: 0.0,
         max_width: None,

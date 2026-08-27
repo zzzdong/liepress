@@ -47,7 +47,7 @@ impl RenderOpts {
     /// 按页内容宽（pt）与主题构造默认选项，并将 info-string 中的覆盖项应用进来。
     pub fn for_content_width(content_width_pt: f64, theme: &str) -> Self {
         let width = (content_width_pt.max(0.0)).round() as u32;
-        let width = width.min(1440).max(240);
+        let width = width.clamp(240, 1440);
         Self {
             width,
             height: (width as f64 * 7.0 / 12.0).round() as u32,

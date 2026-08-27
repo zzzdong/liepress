@@ -1092,9 +1092,9 @@ mod tests {
         let node = html_to_styled_nodes(&doc, &engine);
         let para = find_node(&node, |k| matches!(k, NodeKind::Paragraph { .. })).unwrap();
         // 内联样式应生效
-        assert_eq!(para.style.color.r(), 255);
-        assert_eq!(para.style.color.g(), 0);
-        assert_eq!(para.style.color.b(), 0);
+        assert_eq!(para.style.color.r, 255);
+        assert_eq!(para.style.color.g, 0);
+        assert_eq!(para.style.color.b, 0);
     }
 
     #[test]

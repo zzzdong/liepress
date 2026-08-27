@@ -1561,7 +1561,7 @@ version = "0.1.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b36b0ab5f6bcc2b62e4aec774e15a79fbe6b64e4e980af35f6df9bd808c2b3c6"
 dependencies = [
- "lievisual 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lievisual",
  "parley",
  "pest",
  "pest_derive",
@@ -1585,7 +1585,7 @@ dependencies = [
  "krilla",
  "liecharts",
  "liemermaid",
- "lievisual 0.1.3",
+ "lievisual",
  "lightningcss",
  "lopdf",
  "pulldown-cmark",
@@ -1606,20 +1606,9 @@ dependencies = [
 
 [[package]]
 name = "lievisual"
-version = "0.1.3"
-dependencies = [
- "kurbo",
- "parley",
- "png",
- "skrifa 0.46.2",
- "vello_cpu 0.2.0",
-]
-
-[[package]]
-name = "lievisual"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d9648f24c921f5fde9a6484a56fbbaff71fa5f8e039719b31d8658bd193539c"
+checksum = "15006467c1537378d4de91a175e2f4dc008c7c5dd5018cb7c72e3abb790bebcc"
 dependencies = [
  "kurbo",
  "parley",

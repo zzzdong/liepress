@@ -1093,7 +1093,7 @@ mod tests {
         let engine = CssEngine::new(css).unwrap();
         let parent = Style::default();
         let style = engine.resolve_style("p", &["special".to_string()], None, &[], &parent);
-        assert_eq!(style.color.b(), 255);
+        assert_eq!(style.color.b, 255);
     }
 
     #[test]
@@ -1101,7 +1101,7 @@ mod tests {
         let engine = CssEngine::new("").unwrap();
         let mut style = Style::default();
         engine.apply_inline_style(&mut style, "color: red; font-size: 14pt");
-        assert_eq!(style.color.r(), 255);
+        assert_eq!(style.color.r, 255);
         assert_eq!(style.font_size_pt, 14.0);
     }
 
