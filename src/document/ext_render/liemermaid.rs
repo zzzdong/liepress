@@ -11,14 +11,23 @@ impl BlockRenderer for LieMermaidRenderer {
     }
 
     fn render(&self, code: &str, opts: &RenderOpts) -> Result<RenderedImage, RenderError> {
-        let png =
-            liemermaid::render_png(code, opts.width, opts.height).map_err(map_diagram_error)?;
+        // mermaid 的 `width` 是「目标宽度」（PNG 路径会放大到目标宽度提升分辨率）；
+        // `height` 设为 `None`（不限高），由内容决定，避免竖长图（如 flowchart TD）
+        // 被固定高度限制放大倍数。
+        let config = liemermaid::OutputConfig {
+            width: Some(opts.width as f64),
+            height: None,
+            upscale: true,
+            ..Default::default()
+        };
+        let png = liemermaid::render_png_with_config(code, &config).map_err(map_diagram_error)?;
         if png.is_empty() {
             return Err(RenderError::Render("liemermaid 返回空图片".into()));
         }
         Ok(RenderedImage {
             data: png,
             format: "png".into(),
+            // 真实尺寸由 from_ast 用 PNG 解码尺寸覆盖，此处仅作回退。
             pixel_size: (opts.width, opts.height),
         })
     }

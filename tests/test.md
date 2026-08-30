@@ -6,7 +6,7 @@
 - 作者：zzzdong
 - 仓库：<https://github.com/zzzdong/liepress>
 - 许可：MIT OR Apache-2.0
-- 当前版本：v0.1.0-beta
+- 当前版本：v0.2.0-beta
 
 > 本文件用于端到端验证 liepress 的生成能力，同时如实记录项目的实际功能边界。
 
@@ -116,6 +116,9 @@ liepress 会根据 Markdown 内容与 CSS 样式生成文档；输出格式由�
 - [x] Markdown 解析
 - [x] PDF / SVG / PNG / HTML / DOCX 输出
 - [x] 代码块语法高亮
+- [x] 图表渲染（liecharts）
+- [x] 流程图渲染（mermaid）
+- [x] 代码块 / 长段落跨页分页
 - [x] PDF 大纲书签与脚注跳转
 - [ ] 数学公式（暂缓）
 - [ ] 远程 URL 图片（需引入较大依赖）
@@ -328,7 +331,7 @@ this is not a valid diagram
 
 ## 12. 项目实际情况记录
 
-以下为 liepress 生成能力的**真实边界**（截至 v0.1.0-beta，已与代码核对）：
+以下为 liepress 生成能力的**真实边界**（截至 v0.2.0-beta，已与代码核对）：
 
 **已实现**
 
@@ -341,7 +344,13 @@ this is not a valid diagram
 - 引用块（多层嵌套）、无序 / 有序 / 任务列表、定义列表。
 - 代码块语法高亮（syntect，`base16-ocean.dark` 暗色主题），支持常见语言别名
   （rust / python / js / sh / cpp 等），PDF/SVG/PNG 均生效；未知语言退化为单宽单色。
+- 图表渲染：` ```liecharts ` 代码块（ECharts 风格 JSON）渲染为图片并居中嵌入，
+  可通过 info string 覆盖 width / height / theme / dpi。
+- 流程图渲染：` ```mermaid ` 代码块（Mermaid DSL）渲染为图片，支持 flowchart /
+  sequence / class / state / ER / pie / gitgraph / timeline 八种图表。
+- 图表 / 流程图以 150 DPI 高分辨率渲染，放大到页宽时仍清晰。
 - 表格（含对齐），PDF 支持跨页续表头。
+- 代码块 / 长段落跨页分页：PDF 后端按行切分超高块，续页保持背景 / 缩进上下文。
 - 居中容器 `<center>`、内联 `<style>` 标签自定义类。
 - CSS 样式系统：选择器权重计算与层叠，支持 `-s/--style` 外部 CSS 文件。
 - 字体子集化由 krilla 内部完成，无需手动处理。
@@ -358,4 +367,4 @@ this is not a valid diagram
 
 ---
 
-*liepress v0.1.0-beta — 用 Markdown 生成文档*
+*liepress v0.2.0-beta — 用 Markdown 生成文档*

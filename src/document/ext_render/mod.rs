@@ -19,6 +19,9 @@ pub mod liemermaid;
 
 use std::collections::HashMap;
 
+/// 默认位图渲染 DPI（用于把排版宽度 pt 换算为像素）。
+const DEFAULT_DPI: f64 = 150.0;
+
 /// 渲染器接收的选项。
 #[derive(Debug, Clone)]
 pub struct RenderOpts {
@@ -44,24 +47,30 @@ impl Default for RenderOpts {
 }
 
 impl RenderOpts {
-    /// 按页内容宽（pt）与主题构造默认选项，并将 info-string 中的覆盖项应用进来。
+    /// 按页内容宽（pt）与主题构造默认选项。
+    ///
+    /// 位图渲染需要足够分辨率：把排版宽度（pt）按 DPI 换算成像素。否则页宽约 467pt
+    /// 若只渲染 467px，放大到页宽后仅约 72 DPI，明显发虚。
     pub fn for_content_width(content_width_pt: f64, theme: &str) -> Self {
-        let width = (content_width_pt.max(0.0)).round() as u32;
-        let width = width.clamp(240, 1440);
+        // 1pt = 1/72 英寸，像素 = 英寸 × DPI。
+        let width = (content_width_pt.max(0.0) * DEFAULT_DPI / 72.0).round() as u32;
+        let width = width.clamp(480, 3000);
         Self {
             width,
             height: (width as f64 * 7.0 / 12.0).round() as u32,
             theme: theme.to_string(),
-            dpi: 150,
+            dpi: DEFAULT_DPI as u32,
         }
     }
 
     /// 用 info-string 的 `key=value` 覆盖项（width/height/theme/dpi）更新自身。
     pub fn apply_overrides(&mut self, overrides: &HashMap<String, String>) {
+        let mut has_explicit_width = false;
         if let Some(w) = overrides.get("width").and_then(|v| v.parse::<u32>().ok())
             && w > 0
         {
             self.width = w.min(4000);
+            has_explicit_width = true;
         }
         if let Some(h) = overrides.get("height").and_then(|v| v.parse::<u32>().ok())
             && h > 0
@@ -76,7 +85,15 @@ impl RenderOpts {
         if let Some(d) = overrides.get("dpi").and_then(|v| v.parse::<u32>().ok())
             && d > 0
         {
-            self.dpi = d.min(600);
+            let new_dpi = d.min(600) as f64;
+            // 未显式指定像素宽时，保持物理宽度不变，按新 DPI 重算像素宽，
+            // 让 `dpi=` 覆盖项真正生效（而非只改元数据）。
+            if !has_explicit_width {
+                let phys_pt = self.width as f64 * 72.0 / self.dpi.max(1) as f64;
+                self.width = (phys_pt * new_dpi / 72.0).round() as u32;
+                self.height = (self.width as f64 * 7.0 / 12.0).round() as u32;
+            }
+            self.dpi = new_dpi as u32;
         }
     }
 }

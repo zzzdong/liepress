@@ -101,7 +101,8 @@ fn compute_table_layout(
     content_w: f64,
 ) -> (Vec<f64>, Vec<f64>) {
     if n_cols == 0 || cell_nodes.is_empty() {
-        return (vec![content_w], vec![0.0]);
+        // 空表格：返回与 rows 等长的空列宽/行高，避免下游按行数切片时越界。
+        return (Vec::new(), Vec::new());
     }
     // 单元格内边距取自样式（与绘制端 pdf.rs/png.rs 读取的
     // `table_cell_padding_h_pt` / `table_cell_padding_v_pt` 保持一致），
@@ -255,14 +256,17 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
             // 比默认的 "•" 在正文同字号下视觉更大更清晰）。
             // 子列表（ListItem 内的 List）由其自身 List 节点重新计数，因此递归到
             // convert_list_item 后，内层 List 的 convert_node 会再次计算序号。
-            let start_n: u32 = start.unwrap_or(if *ordered { 1 } else { 0 });
+            // 起始序号完全由用户输入（`<ol start="...">`）控制，可能为 u32::MAX；
+            // 用 u64 + saturating_add 累加，避免 debug 下 `idx += 1` 溢出 panic、
+            // release 下静默回绕成 0 导致序号错乱。
+            let start_n: u64 = start.unwrap_or(if *ordered { 1 } else { 0 }) as u64;
             let mut idx = start_n;
             let children_blocks: Vec<Block> = children
                 .iter()
                 .map(|c| {
                     let marker = if *ordered {
                         let m = format!("{}.", idx);
-                        idx += 1;
+                        idx = idx.saturating_add(1);
                         m
                     } else {
                         "●".to_string()
@@ -508,7 +512,8 @@ fn convert_image_node(node: &Node, style: &ResolvedStyle, settings: &PageSetting
         probe_image_dimensions(&data).unwrap_or((0, 0))
     };
     let content_w = settings.content_width() as f64;
-    let size = resolve_image_size(style.width, style.height, pixel, content_w);
+    let content_h = settings.content_height() as f64;
+    let size = resolve_image_size(style.width, style.height, pixel, content_w, content_h);
     Block::new(
         BlockKind::Image(DocImage {
             position: (0.0, 0.0),
@@ -547,9 +552,17 @@ fn convert_code_block(
         opts.apply_overrides(&overrides);
         match renderer.render(code, &opts) {
             Ok(img) => {
-                let pixel = img.pixel_size;
+                // 渲染器返回的 `pixel_size` 可能不准确（如 liemermaid 的 PNG 是
+                // 「贴合内容」尺寸，而非请求的 width/height），这里用真实解码尺寸，
+                // 保证后续按宽高比缩放正确。
+                let pixel = if !img.data.is_empty() {
+                    probe_image_dimensions(&img.data).unwrap_or(img.pixel_size)
+                } else {
+                    img.pixel_size
+                };
                 let content_w = settings.content_width() as f64;
-                let size = resolve_image_size(style.width, style.height, pixel, content_w);
+                let content_h = settings.content_height() as f64;
+                let size = resolve_image_size(style.width, style.height, pixel, content_w, content_h);
                 // 图表块默认居中更合理。
                 let mut img_style = style.clone();
                 img_style.text_align = crate::ast::TextAlign::Center;
@@ -872,15 +885,25 @@ fn resolve_image_size(
     css_h: Option<f32>,
     pixel: (u32, u32),
     content_w: f64,
+    max_h: f64,
 ) -> (f64, f64) {
     let (pw, ph) = (pixel.0 as f64, pixel.1 as f64);
     let has_aspect = pw > 0.0 && ph > 0.0;
+    // 自适应场景下按高度上限等比缩放，避免超高图片（如长截图）高度超过一页、
+    // 在分页层被直接放进单页而溢出裁剪、导致下方内容丢失。
+    let clamp_by_height = |w: f64, h: f64| -> (f64, f64) {
+        if has_aspect && max_h > 0.0 && h > max_h {
+            (max_h * pw / ph, max_h)
+        } else {
+            (w, h)
+        }
+    };
     match (css_w, css_h) {
         (Some(w), Some(h)) => (w as f64, h as f64),
         (Some(w), None) => {
             let w = w as f64;
             let h = if has_aspect { w * ph / pw } else { w * 0.75 };
-            (w, h)
+            clamp_by_height(w, h)
         }
         (None, Some(h)) => {
             let h = h as f64;
@@ -893,7 +916,7 @@ fn resolve_image_size(
         }
         (None, None) => {
             if has_aspect {
-                (content_w, content_w * ph / pw)
+                clamp_by_height(content_w, content_w * ph / pw)
             } else {
                 (content_w, content_w * 0.75)
             }
@@ -1101,21 +1124,21 @@ mod tests {
     #[test]
     fn test_resolve_image_size_both_explicit() {
         // 同时指定宽高：作为固定 box，不按比例
-        let (w, h) = resolve_image_size(Some(200.0), Some(100.0), (800, 600), 500.0);
+        let (w, h) = resolve_image_size(Some(200.0), Some(100.0), (800, 600), 500.0, f64::MAX);
         assert_eq!((w, h), (200.0, 100.0));
     }
 
     #[test]
     fn test_resolve_image_size_width_only_preserves_aspect() {
         // 仅指定宽度：高度按原始宽高比推算（800x600 → 200x150）
-        let (w, h) = resolve_image_size(Some(200.0), None, (800, 600), 500.0);
+        let (w, h) = resolve_image_size(Some(200.0), None, (800, 600), 500.0, f64::MAX);
         assert_eq!((w, h), (200.0, 150.0));
     }
 
     #[test]
     fn test_resolve_image_size_height_only_preserves_aspect() {
         // 仅指定高度：宽度按原始宽高比推算（800x600 → 200x150）
-        let (w, h) = resolve_image_size(None, Some(150.0), (800, 600), 500.0);
+        let (w, h) = resolve_image_size(None, Some(150.0), (800, 600), 500.0, f64::MAX);
         assert_eq!((w, h), (200.0, 150.0));
     }
 
@@ -1123,7 +1146,7 @@ mod tests {
     fn test_resolve_image_size_fit_content_width() {
         // 均未指定：适合页宽（宽度=内容宽度，高度按宽高比）
         let content_w = PageSettings::default().content_width() as f64;
-        let (w, h) = resolve_image_size(None, None, (800, 600), content_w);
+        let (w, h) = resolve_image_size(None, None, (800, 600), content_w, f64::MAX);
         assert_eq!(w, content_w);
         assert!((h - content_w * 600.0 / 800.0).abs() < 1e-9);
     }
@@ -1131,16 +1154,33 @@ mod tests {
     #[test]
     fn test_resolve_image_size_unknown_aspect_ratio_uses_4x3() {
         // 未知宽高比时按 4:3 兜底
-        let (w, h) = resolve_image_size(None, None, (0, 0), 400.0);
+        let (w, h) = resolve_image_size(None, None, (0, 0), 400.0, f64::MAX);
         assert_eq!(w, 400.0);
         assert!((h - 300.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_resolve_image_size_clamps_oversized_height() {
+        // 超高图片（如 100×2000 长截图）自适应页宽时，高度应被限制到一页内，
+        // 避免在分页层被放进单页而溢出裁剪。
+        let content_w = PageSettings::default().content_width() as f64;
+        let content_h = PageSettings::default().content_height() as f64;
+        let (w, h) = resolve_image_size(None, None, (100, 2000), content_w, content_h);
+        assert!(
+            h <= content_h + 1e-9,
+            "高度应被限制到一页内: {h} > {content_h}"
+        );
+        assert!(
+            (w - content_h * 100.0 / 2000.0).abs() < 1e-6,
+            "宽度应按高度等比缩小，got {w}"
+        );
     }
 
     #[test]
     fn test_resolve_image_size_not_100_fixed() {
         // 回归：不再固定 100×100；未指定时按内容宽度缩放
         let content_w = PageSettings::default().content_width() as f64;
-        let (w, _) = resolve_image_size(None, None, (800, 600), content_w);
+        let (w, _) = resolve_image_size(None, None, (800, 600), content_w, f64::MAX);
         assert_eq!(w, content_w);
         assert!(content_w > 100.0);
     }

@@ -33,11 +33,16 @@ static ASSETS: std::sync::OnceLock<HighlightAssets> = std::sync::OnceLock::new()
 fn assets() -> &'static HighlightAssets {
     ASSETS.get_or_init(|| {
         let syntax_set = SyntaxSet::load_defaults_newlines();
-        let theme = ThemeSet::load_defaults()
+        // 优先暗色主题，回退 InspiredGitHub，二者都缺失（理论不会）退化为默认主题。
+        // 原来的回退用 `themes["InspiredGitHub"]` 索引（键不存在会 panic），且
+        // `ThemeSet::load_defaults()` 被重复解析了两次，这里统一复用一份。
+        let themes = ThemeSet::load_defaults();
+        let theme = themes
             .themes
             .get("base16-ocean.dark")
+            .or_else(|| themes.themes.get("InspiredGitHub"))
             .cloned()
-            .unwrap_or_else(|| ThemeSet::load_defaults().themes["InspiredGitHub"].clone());
+            .unwrap_or_default();
         HighlightAssets { syntax_set, theme }
     })
 }
@@ -131,7 +136,6 @@ pub fn highlight_code(code: &str, lang: &str, style: &ResolvedStyle) -> Vec<Text
             let mut out_ranges = Vec::new();
             let mut cursor = 0usize;
             for line in full.split('\n') {
-                let line_len = line.len();
                 // highlight_line 针对该行（不含换行符）。
                 let hl = h
                     .highlight_line(line, &a.syntax_set)
@@ -162,8 +166,6 @@ pub fn highlight_code(code: &str, lang: &str, style: &ResolvedStyle) -> Vec<Text
                 if cursor > full.len() {
                     break;
                 }
-                // 抑制未使用变量告警（line_len 供调试；此处仅用于潜在校验）
-                let _ = line_len;
             }
             out_ranges
         }

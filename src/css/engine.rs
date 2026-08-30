@@ -771,20 +771,24 @@ fn parse_color(value: &str) -> Option<Color> {
     }
 
     if let Some(hex) = value.strip_prefix('#') {
-        match hex.len() {
-            3 => {
-                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
-                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
-                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
-                return Some(Color::rgb(r, g, b));
+        // 仅当全部为 ASCII 十六进制字符时才按字节切片，避免在多字节字符
+        // （如 `#é1`）的中间做字节索引而 panic。
+        if !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            match hex.len() {
+                3 => {
+                    let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
+                    let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
+                    let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
+                    return Some(Color::rgb(r, g, b));
+                }
+                6 => {
+                    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                    return Some(Color::rgb(r, g, b));
+                }
+                _ => {}
             }
-            6 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                return Some(Color::rgb(r, g, b));
-            }
-            _ => {}
         }
     }
 

@@ -771,6 +771,7 @@ impl NodeKind {
         matches!(
             self,
             NodeKind::Paragraph { .. }
+                | NodeKind::CodeBlock { .. }
                 | NodeKind::List { .. }
                 | NodeKind::ListItem { .. }
                 | NodeKind::TaskListItem { .. }

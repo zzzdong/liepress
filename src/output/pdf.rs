@@ -1166,6 +1166,8 @@ fn paginate_layout(document: &Document, settings: &PageSettings) -> Vec<PdfPage>
                     pages: &mut pages,
                     cur: &mut cur,
                     used: &mut used,
+                    header: &header,
+                    footer: &footer,
                 },
                 content_x,
                 content_y,
@@ -1178,6 +1180,46 @@ fn paginate_layout(document: &Document, settings: &PageSettings) -> Vec<PdfPage>
             used += block.style.margin_bottom as f64;
             continue;
         }
+
+        // 段落 / 代码块：可分割且整块高于一页时按行分页（其余走下方普通块逻辑）。
+        // 代码块与段落同构（语法高亮后的 `lines: Vec<TextLine>`），本应像普通文本一样
+        // 自然跨页；仅当确实放不下一页时才按行切分，避免对短块引入克隆开销。
+        if block.splittable && h > content_h {
+            let line_block = match &block.kind {
+                BlockKind::Paragraph { lines } if lines.len() > 1 => {
+                    Some((lines.as_slice(), (block.style.line_height_pt as f64).max(1.0), 0.0))
+                }
+                BlockKind::CodeBlock { lines, .. } if lines.len() > 1 => {
+                    let lh = if block.style.line_height_pt > 0.0 {
+                        block.style.line_height_pt as f64
+                    } else {
+                        18.0
+                    };
+                    Some((lines.as_slice(), lh, 4.0))
+                }
+                _ => None,
+            };
+            if let Some((lines, line_h, pad_v)) = line_block {
+                paginate_lines_block(
+                    block,
+                    lines,
+                    line_h,
+                    pad_v,
+                    &mut PaginateCtx {
+                        pages: &mut pages,
+                        cur: &mut cur,
+                        used: &mut used,
+                        header: &header,
+                        footer: &footer,
+                    },
+                    content_x,
+                    content_y,
+                    content_h,
+                );
+                continue;
+            }
+        }
+
         if used + h > content_h && used > 0.0 {
             cur.header = header.clone();
             cur.footer = footer.clone();
@@ -1203,6 +1245,20 @@ struct PaginateCtx<'a> {
     pages: &'a mut Vec<PdfPage>,
     cur: &'a mut PdfPage,
     used: &'a mut f64,
+    header: &'a Option<String>,
+    footer: &'a Option<String>,
+}
+
+impl PaginateCtx<'_> {
+    /// 结束当前页并开新页，同时写入页眉页脚（否则跨页的中间页会缺页眉页脚）。
+    fn push_page(&mut self) {
+        let header = self.header.clone();
+        let footer = self.footer.clone();
+        self.cur.header = header;
+        self.cur.footer = footer;
+        self.pages.push(std::mem::take(self.cur));
+        *self.used = 0.0;
+    }
 }
 
 /// 表格分页：按整行切分，续页重复表头。
@@ -1221,6 +1277,10 @@ fn paginate_table(
     content_y: f64,
     content_h: f64,
 ) {
+    // 空表格（无任何行）不生成块，直接返回，避免后续按行切片越界。
+    if rows.is_empty() {
+        return;
+    }
     // 表头行高 = 第一行行高（若无预计算值则退回行高）。
     let header_h = row_heights.first().copied().unwrap_or(18.0);
     let n = rows.len();
@@ -1254,15 +1314,17 @@ fn paginate_table(
 
         if fit == 0 {
             if !ctx.cur.blocks.is_empty() || *ctx.used > 0.0 {
-                ctx.pages.push(std::mem::take(ctx.cur));
-                *ctx.used = 0.0;
+                ctx.push_page();
             }
             fit = 1;
             need = header_h;
         }
 
         let page_rows: Vec<TableRow> = rows[i..i + fit].to_vec();
-        let page_row_heights: Vec<f64> = row_heights[i..i + fit].to_vec();
+        // 防御：row_heights 若与 rows 不等长（异常输入），缺省退回 header_h，避免切片越界。
+        let page_row_heights: Vec<f64> = (i..i + fit)
+            .map(|ri| row_heights.get(ri).copied().unwrap_or(header_h))
+            .collect();
         let is_continuation = i > 0;
         let page_h: f64 = page_row_heights.iter().sum();
         let mut pb = PositionedBlock::new(
@@ -1288,7 +1350,171 @@ fn paginate_table(
         if i >= n {
             break;
         }
-        ctx.pages.push(std::mem::take(ctx.cur));
-        *ctx.used = 0.0;
+        ctx.push_page();
+    }
+}
+
+/// 把一段文本行的坐标重新基准化到新原点（首行 y 归零），用于分页片段。
+///
+/// `TextLine.bounds` / `ink_bounds` 是相对整段文本 layout origin 的坐标；按行切分到
+/// 不同页面后，每个片段需从自身原点开始绘制，故把 `bounds` / `ink_bounds` 的 y 分量
+/// 减去片段首行的偏移 `base_y`。
+fn rebase_lines(lines: &[TextLine], base_y: f64) -> Vec<TextLine> {
+    lines
+        .iter()
+        .map(|line| {
+            let mut nl = line.clone();
+            nl.bounds.y0 -= base_y;
+            nl.bounds.y1 -= base_y;
+            nl.ink_bounds.y0 -= base_y;
+            nl.ink_bounds.y1 -= base_y;
+            nl
+        })
+        .collect()
+}
+
+/// 对带 `lines` 的可分割块（段落 / 代码块）按行分页。
+///
+/// 与 [`paginate_table`] 同理，但以「文本行」为切分单位：行高按 `line_h` 固定步进
+/// （与 `block_height` 对 Paragraph/CodeBlock 的度量一致），首片段预留 `margin_top`、
+/// 末片段追加 `margin_bottom`，中间片段零外边距。每个页面片段通过 [`rebase_lines`]
+/// 重新基准化，保证跨页后各片段仍从自身原点正确绘制。
+#[allow(clippy::too_many_arguments)]
+fn paginate_lines_block(
+    block: &Block,
+    lines: &[TextLine],
+    line_h: f64,
+    pad_v: f64,
+    ctx: &mut PaginateCtx,
+    content_x: f64,
+    content_y: f64,
+    content_h: f64,
+) {
+    let style = &block.style;
+    let margin_top = style.margin_top as f64;
+    let margin_bottom = style.margin_bottom as f64;
+    // 上下内边距之和（代码块背景 padding；段落为 0）。
+    let overhead = 2.0 * pad_v;
+    let n = lines.len();
+    let mut i = 0usize;
+
+    while i < n {
+        // 首片段额外预留上外边距。
+        let leading = if i == 0 { margin_top } else { 0.0 };
+        let avail = (content_h - *ctx.used).max(0.0);
+        let usable = (avail - leading - overhead).max(0.0);
+        let mut fit = if line_h > 0.0 {
+            (usable / line_h).floor() as usize
+        } else {
+            n - i
+        };
+        fit = fit.min(n - i);
+
+        if fit == 0 {
+            // 当前页连一行（含外边距/内边距）都放不下：换页重试。
+            if *ctx.used > 0.0 || !ctx.cur.blocks.is_empty() {
+                ctx.push_page();
+            }
+            // 换页后仍放不下（单行比整页还高）时至少放一行，宁可溢出也不丢内容。
+            let usable = (content_h - leading - overhead).max(0.0);
+            fit = if line_h > 0.0 {
+                ((usable / line_h).floor() as usize).max(1)
+            } else {
+                (n - i).max(1)
+            };
+            fit = fit.min(n - i);
+        }
+
+        let seg = rebase_lines(&lines[i..i + fit], lines[i].bounds.y0);
+        let seg_h = fit as f64 * line_h + overhead;
+        let kind = match &block.kind {
+            BlockKind::Paragraph { .. } => BlockKind::Paragraph { lines: seg },
+            BlockKind::CodeBlock { code, lang, .. } => BlockKind::CodeBlock {
+                code: code.clone(),
+                lang: lang.clone(),
+                lines: seg,
+            },
+            _ => unreachable!("paginate_lines_block 只接受 Paragraph/CodeBlock"),
+        };
+        ctx.cur.blocks.push(PositionedBlock::new(
+            Block::new(kind, style.clone(), block.splittable),
+            content_x,
+            content_y + *ctx.used + leading,
+            seg_h,
+        ));
+        *ctx.used += leading + seg_h;
+        i += fit;
+
+        if i >= n {
+            *ctx.used += margin_bottom;
+            break;
+        }
+        ctx.push_page();
+    }
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    use super::*;
+    use crate::document::text::LineMetrics;
+    use lievisual::geometry::Rect;
+
+    /// 构造一行文本（runs 留空即可，分页逻辑只关心 `bounds` 与行数）。
+    fn make_line(y: f64) -> TextLine {
+        TextLine {
+            runs: Vec::new(),
+            bounds: Rect::new(0.0, y, 100.0, y + 14.0),
+            metrics: LineMetrics {
+                ascent: 0.0,
+                descent: 0.0,
+                baseline: 0.0,
+                line_height: 14.0,
+            },
+            ink_bounds: Rect::new(0.0, y, 100.0, y + 14.0),
+        }
+    }
+
+    fn make_lines(n: usize) -> Vec<TextLine> {
+        (0..n).map(|i| make_line(i as f64 * 14.0)).collect()
+    }
+
+    #[test]
+    fn rebase_lines_shifts_to_new_origin() {
+        let lines = make_lines(3);
+        let rebased = rebase_lines(&lines[1..], lines[1].bounds.y0);
+        assert_eq!(rebased[0].bounds.y0, 0.0, "片段首行应归零");
+        assert_eq!(rebased[1].bounds.y0, 14.0, "后续行应保持相对间距");
+    }
+
+    #[test]
+    fn long_code_block_paginates_without_losing_lines() {
+        let n = 60;
+        // ResolvedStyle::default 的 line_height_pt = 15，60 行 ≈ 908pt > 一页高。
+        let block = Block::new(
+            BlockKind::CodeBlock {
+                code: String::new(),
+                lang: None,
+                lines: make_lines(n),
+            },
+            ResolvedStyle::default(),
+            true,
+        );
+        let doc = Document {
+            blocks: vec![block],
+        };
+        let pages = paginate_layout(&doc, &PageSettings::default());
+
+        let mut total = 0usize;
+        for page in &pages {
+            for pb in &page.blocks {
+                if let BlockKind::CodeBlock { lines, .. } = &pb.block.kind {
+                    total += lines.len();
+                    // 每个片段都应重新基准化到自身原点。
+                    assert_eq!(lines[0].bounds.y0, 0.0, "片段首行 bounds.y0 应归零");
+                }
+            }
+        }
+        assert_eq!(total, n, "跨页后代码行不应丢失");
+        assert!(pages.len() >= 2, "60 行代码块应跨多页，实际 {} 页", pages.len());
     }
 }
