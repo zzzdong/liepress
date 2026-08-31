@@ -1518,14 +1518,14 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liecharts"
-version = "0.1.4"
+version = "0.2.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dad5866cc10703d55ada3f727a8af94d600b9d9c2075568c36995a87fabb5c6"
+checksum = "7e13762d4eebb98d5d6f5df7dab79f4ae336a6509d167da6eae080041588d014"
 dependencies = [
  "anyhow",
  "clap",
  "image",
- "lievisual 0.1.4",
+ "lievisual",
  "parley",
  "serde",
  "serde_json",
@@ -1535,13 +1535,13 @@ dependencies = [
 
 [[package]]
 name = "liemermaid"
-version = "0.1.2"
+version = "0.2.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31e0612b87b6a50ed067dd8334d8b4ae0d70b4d107847c636481628d26ddf897"
+checksum = "7634593a7512aa2098ca92e85decdc2794ee52dee2b5f63be08772087c05d4c7"
 dependencies = [
  "anyhow",
  "clap",
- "lievisual 0.1.4",
+ "lievisual",
  "parley",
  "serde",
  "thiserror",
@@ -1551,7 +1551,7 @@ dependencies = [
 
 [[package]]
 name = "liepress"
-version = "0.2.0-beta.2"
+version = "0.2.0-beta.3"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -1563,7 +1563,7 @@ dependencies = [
  "krilla",
  "liecharts",
  "liemermaid",
- "lievisual 0.2.0-beta.2",
+ "lievisual",
  "lightningcss",
  "lopdf",
  "pulldown-cmark",
@@ -1580,19 +1580,6 @@ dependencies = [
  "base64 0.23.1",
  "liepress",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "lievisual"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15006467c1537378d4de91a175e2f4dc008c7c5dd5018cb7c72e3abb790bebcc"
-dependencies = [
- "kurbo",
- "parley",
- "png",
- "skrifa 0.46.2",
- "vello_cpu",
 ]
 
 [[package]]
