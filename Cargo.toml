@@ -1,6 +1,6 @@
 [package]
 name = "liepress"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 description = "A Markdown/HTML to PDF converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
@@ -29,7 +29,7 @@ thiserror = "2.0"
 vello_cpu = "0.2.0"
 liecharts = { version = "0.1", optional = true }
 liemermaid = { version = "0.1.2", optional = true }
-lievisual = { version = "0.1" }
+lievisual = "=0.2.0-beta.2"
 
 [features]
 default = ["charts", "mermaid"]
