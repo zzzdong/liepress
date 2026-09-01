@@ -1535,9 +1535,9 @@ dependencies = [
 
 [[package]]
 name = "liemermaid"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7634593a7512aa2098ca92e85decdc2794ee52dee2b5f63be08772087c05d4c7"
+checksum = "122eb193b061d0d0cb97e6a41a8f6e03a7a313f520a6173591d8a8f6282c4561"
 dependencies = [
  "anyhow",
  "clap",
@@ -1551,7 +1551,7 @@ dependencies = [
 
 [[package]]
 name = "liepress"
-version = "0.2.0-beta.3"
+version = "0.2.0-beta.4"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2223,9 +2223,9 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "ppmd-rust"
-version = "1.4.0"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efca4c95a19a79d1c98f791f10aebd5c1363b473244630bb7dbde1dc98455a24"
+checksum = "9e9219bcb9d7aca6b2f63c83cf100cf78bcd619ac46e6ecbd0dd90869a39345d"
 
 [[package]]
 name = "ppv-lite86"
