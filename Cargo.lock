@@ -1518,9 +1518,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liecharts"
-version = "0.2.0-beta.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e13762d4eebb98d5d6f5df7dab79f4ae336a6509d167da6eae080041588d014"
+checksum = "8a4a3415af88d9eb8cbb4547092127ec1143fac5f984dfa73c5eb873d48ab0e9"
 dependencies = [
  "anyhow",
  "clap",
@@ -1535,9 +1535,9 @@ dependencies = [
 
 [[package]]
 name = "liemermaid"
-version = "0.2.0-beta.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "122eb193b061d0d0cb97e6a41a8f6e03a7a313f520a6173591d8a8f6282c4561"
+checksum = "7cb68d2bfe6545cc5f2b511417247094a18170bb072cb8eaca899f0ae4d652a7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1584,9 +1584,9 @@ dependencies = [
 
 [[package]]
 name = "lievisual"
-version = "0.2.0-beta.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df9eb99582efa5710307939cb1fa0b5863b0aa8aa2f810fdf9a1f6538691e044"
+checksum = "8439f304b978aa41953c379fd7d76bb5e6a3286981bd79185e95955d31dd5d95"
 dependencies = [
  "kurbo",
  "parley",
