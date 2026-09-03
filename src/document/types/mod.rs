@@ -33,3 +33,11 @@ pub const PAGE_MARGIN_BOTTOM_PT: f32 = 36.0;
 pub const PAGE_MARGIN_LEFT_PT: f32 = 54.0;
 /// 右边距（pt）- 0.75 英寸
 pub const PAGE_MARGIN_RIGHT_PT: f32 = 54.0;
+
+/// 默认内容区宽度（pt）= A4 宽度 − 左右边距。
+///
+/// 供 CSS 引擎在页面设置尚未确定时作为 `%` 的兜底基准（见
+/// [`crate::css::engine::CssEngine::set_containing_block_width`]）。
+pub const fn default_content_width() -> f32 {
+    PAGE_WIDTH_PT - PAGE_MARGIN_LEFT_PT - PAGE_MARGIN_RIGHT_PT
+}

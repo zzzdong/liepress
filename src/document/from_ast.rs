@@ -188,7 +188,7 @@ fn measure_cell_height(node: &Node, style: &crate::ast::Style, width: f64) -> f6
 ///
 /// 与 `convert_node` 的 Paragraph 分支等价，但 `layout_inline` 使用 `col_width`
 /// 作为可用宽度，保证文本在真实列宽下正确折行、不溢出。
-fn convert_cell(node: &Node, settings: &PageSettings, col_width: f64) -> Block {
+fn convert_cell(node: &Node, settings: &PageSettings, col_width: f64, depth: usize) -> Block {
     let style = ResolvedStyle::from(node.style.clone());
     match &node.kind {
         NodeKind::Paragraph { children } => Block::new(
@@ -199,17 +199,41 @@ fn convert_cell(node: &Node, settings: &PageSettings, col_width: f64) -> Block {
             node.splittable,
         ),
         // 其余节点（如纯文本）按整列宽布局
-        _ => convert_node(node, settings),
+        _ => convert_node_depth(node, settings, depth),
     }
 }
 
-/// 递归转换单个 AST 节点为 `Block`。
+/// 递归转换单个 AST 节点为 `Block`（入口，深度 0）。
 fn convert_node(node: &Node, settings: &PageSettings) -> Block {
+    convert_node_depth(node, settings, 0)
+}
+
+/// S-3 深嵌套保护：Node → Block 递归的最大深度。
+///
+/// 超过后停止下钻、返回空文本块。虽经 `to_ast` 深度限制后正常输入不会触达，
+/// 但 `Node` 树可由库使用方手工构造，此处防御性兜底（栈溢出 abort 无法捕获）。
+const MAX_CONVERT_DEPTH: usize = 256;
+
+/// 递归转换单个 AST 节点为 `Block`（带深度保护）。
+fn convert_node_depth(node: &Node, settings: &PageSettings, depth: usize) -> Block {
+    if depth > MAX_CONVERT_DEPTH {
+        return Block::new(
+            BlockKind::Text {
+                text: String::new(),
+            },
+            ResolvedStyle::default(),
+            false,
+        );
+    }
+    let child_depth = depth + 1;
     let style = ResolvedStyle::from(node.style.clone());
     match &node.kind {
         NodeKind::Document { children } => Block::new(
             BlockKind::Document {
-                children: children.iter().map(|c| convert_node(c, settings)).collect(),
+                children: children
+                    .iter()
+                    .map(|c| convert_node_depth(c, settings, child_depth))
+                    .collect(),
             },
             style,
             node.splittable,
@@ -271,7 +295,7 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                     } else {
                         "●".to_string()
                     };
-                    convert_list_item(c, &marker, settings)
+                    convert_list_item(c, &marker, settings, child_depth)
                 })
                 .collect();
             Block::new(
@@ -292,12 +316,12 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                     term: item
                         .term
                         .iter()
-                        .map(|c| convert_node(c, settings))
+                        .map(|c| convert_node_depth(c, settings, child_depth))
                         .collect(),
                     definition: item
                         .definition
                         .iter()
-                        .map(|c| convert_node(c, settings))
+                        .map(|c| convert_node_depth(c, settings, child_depth))
                         .collect(),
                 })
                 .collect();
@@ -311,8 +335,10 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
         }
         NodeKind::FootnoteDef { id, children } => {
             // 脚注定义（末尾聚合）：子节点转为块序列，携带 label 供 PDF 内部跳转定位。
-            let mut child_blocks: Vec<Block> =
-                children.iter().map(|c| convert_node(c, settings)).collect();
+            let mut child_blocks: Vec<Block> = children
+                .iter()
+                .map(|c| convert_node_depth(c, settings, child_depth))
+                .collect();
             // 追加返回引用链接（↩），使脚注定义可点回正文中的引用处（页内 destination 跳转，
             // 与 TOC/脚注引用跳转一致）。label 由 `fn-def-<label>` 反推为 `fn-ref-<label>`。
             if let Some(label) = id.strip_prefix("fn-def-") {
@@ -331,7 +357,7 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                     crate::ast::Style::default(),
                     false,
                 );
-                child_blocks.push(convert_node(&backref, settings));
+                child_blocks.push(convert_node_depth(&backref, settings, child_depth));
             }
             Block::new(
                 BlockKind::FootnoteDef {
@@ -345,7 +371,7 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
         NodeKind::ListItem { .. } => {
             // 非列表直接子项的边缘情况：marker 留空，交由 convert_list_item 统一处理
             // （合并连续内联节点为单个段落，避免每个内联节点被拆成独立段落）。
-            convert_list_item(node, "", settings)
+            convert_list_item(node, "", settings, depth)
         }
         NodeKind::TaskListItem { checked, children } => {
             let marker = if *checked {
@@ -357,7 +383,10 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                 BlockKind::TaskListItem {
                     marker,
                     checked: *checked,
-                    children: children.iter().map(|c| convert_node(c, settings)).collect(),
+                    children: children
+                        .iter()
+                        .map(|c| convert_node_depth(c, settings, child_depth))
+                        .collect(),
                 },
                 style,
                 node.splittable,
@@ -365,7 +394,10 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
         }
         NodeKind::Blockquote { children } => Block::new(
             BlockKind::Blockquote {
-                children: children.iter().map(|c| convert_node(c, settings)).collect(),
+                children: children
+                    .iter()
+                    .map(|c| convert_node_depth(c, settings, child_depth))
+                    .collect(),
             },
             style,
             node.splittable,
@@ -413,6 +445,7 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
                                     cell,
                                     settings,
                                     (col_w - 2.0 * pad_h).max(1.0),
+                                    child_depth,
                                 )],
                             }
                         })
@@ -435,7 +468,10 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
         | NodeKind::Container { children }
         | NodeKind::Span { children } => Block::new(
             BlockKind::Container {
-                children: children.iter().map(|c| convert_node(c, settings)).collect(),
+                children: children
+                    .iter()
+                    .map(|c| convert_node_depth(c, settings, child_depth))
+                    .collect(),
             },
             style,
             node.splittable,
@@ -466,7 +502,7 @@ fn convert_node(node: &Node, settings: &PageSettings) -> Block {
 /// 必须合并为一个 `Paragraph` 并整体排版，而不是让每个内联节点各自落到
 /// `convert_node` 的"内联节点当作块级顶层"分支、被拆成独立段落。
 /// 这里按"块级 / 内联"对 children 分组，连续的內联节点合并为单个段落。
-fn convert_list_item(node: &Node, marker: &str, settings: &PageSettings) -> Block {
+fn convert_list_item(node: &Node, marker: &str, settings: &PageSettings, depth: usize) -> Block {
     match &node.kind {
         NodeKind::ListItem { children } => Block::new(
             BlockKind::ListItem {
@@ -475,7 +511,7 @@ fn convert_list_item(node: &Node, marker: &str, settings: &PageSettings) -> Bloc
                 // 左缘**单独绘制**（PDF/PNG 矢量画圆点/方框、有序数字画文本；
                 // SVG 单独 `<text>`）。正文首行与续行统一从缩进槽起点排起，
                 // 因此 marker 不会与正文重叠，天然实现悬挂缩进。
-                children: group_inline_children(children, settings),
+                children: group_inline_children(children, settings, depth),
             },
             ResolvedStyle::from(node.style.clone()),
             node.splittable,
@@ -484,12 +520,12 @@ fn convert_list_item(node: &Node, marker: &str, settings: &PageSettings) -> Bloc
             BlockKind::TaskListItem {
                 marker: marker.to_string(),
                 checked: *checked,
-                children: group_inline_children(children, settings),
+                children: group_inline_children(children, settings, depth),
             },
             ResolvedStyle::from(node.style.clone()),
             node.splittable,
         ),
-        _ => convert_node(node, settings),
+        _ => convert_node_depth(node, settings, depth),
     }
 }
 
@@ -562,7 +598,8 @@ fn convert_code_block(
                 };
                 let content_w = settings.content_width() as f64;
                 let content_h = settings.content_height() as f64;
-                let size = resolve_image_size(style.width, style.height, pixel, content_w, content_h);
+                let size =
+                    resolve_image_size(style.width, style.height, pixel, content_w, content_h);
                 // 图表块默认居中更合理。
                 let mut img_style = style.clone();
                 img_style.text_align = crate::ast::TextAlign::Center;
@@ -631,7 +668,7 @@ fn is_inline_node(n: &Node) -> bool {
 }
 
 /// 将连续的內联兄弟节点合并为单个 `Paragraph`，块级节点保持独立。
-fn group_inline_children(children: &[Node], settings: &PageSettings) -> Vec<Block> {
+fn group_inline_children(children: &[Node], settings: &PageSettings, depth: usize) -> Vec<Block> {
     let mut out = Vec::new();
     let mut inline_buf: Vec<&Node> = Vec::new();
     for c in children {
@@ -639,7 +676,7 @@ fn group_inline_children(children: &[Node], settings: &PageSettings) -> Vec<Bloc
             inline_buf.push(c);
         } else {
             flush_inline_buffer(&mut inline_buf, &mut out, settings);
-            out.push(convert_node(c, settings));
+            out.push(convert_node_depth(c, settings, depth));
         }
     }
     flush_inline_buffer(&mut inline_buf, &mut out, settings);

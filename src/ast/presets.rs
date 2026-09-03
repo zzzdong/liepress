@@ -8,7 +8,6 @@
 //! 此外保留必要的辅助函数：
 //! - `computed_style_to_text_style`: 将 Style 转换为 text::TextStyle
 //! - `list_marker_style`: 列表标记样式（用于 bullet/number 布局计算）
-//! - `LIST_INDENT_PT` / `calculate_list_indent`: 列表缩进计算
 
 use lievisual::Color;
 
@@ -89,18 +88,7 @@ pub fn computed_style_to_text_style(style: &Style) -> crate::document::text::Tex
         style.text_decoration,
         style.baseline_shift,
         style.background_color,
+        // line-height 为 0 表示未声明（保持字体默认）。
+        (style.line_height_pt > 0.0).then_some(style.line_height_pt as f64),
     )
-}
-
-// ─── 列表缩进宽度 ──────────────────────────────────────────
-
-/// 默认列表缩进（2em 标准宽度）
-/// 遵循 CSS 常见做法，缩进宽度为当前字号的两倍。
-/// 正文 10.5pt 下为 21pt。
-pub const LIST_INDENT_PT: f32 = 21.0;
-
-/// 计算基于字体大小的列表缩进
-/// 2em = font_size_pt * 2.0
-pub fn calculate_list_indent(font_size_pt: f32) -> f32 {
-    font_size_pt * 2.0
 }

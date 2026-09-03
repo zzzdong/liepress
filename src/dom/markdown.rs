@@ -48,6 +48,14 @@ pub fn markdown_to_dom_with_resolver(
     // 脚注：label → 序号（按首次出现的顺序编号；引用与定义共用同一序号）。
     let mut footnote_index: HashMap<String, usize> = HashMap::new();
 
+    // GFM 表格列对齐：`Tag::Table(Vec<Alignment>)` 携带各列对齐标记（`:---` /
+    // `:---:` / `---:`）。pulldown 不会把对齐写进 `<td>`，若不在此显式落为
+    // inline `style="text-align:…"`，下游 `extract_table_align` 只能读到空列表，
+    // GFM 对齐列全部退化为左对齐（与 HTML 输入路径行为不一致）。
+    let mut table_aligns: Vec<Vec<pulldown_cmark::Alignment>> = Vec::new();
+    // 当前表格行内已处理的单元格数（在 Thead/TableRow 开始时清零）。
+    let mut table_col: usize = 0;
+
     let mut style_sheets: Vec<String> = Vec::new();
 
     for event in parser {
@@ -82,12 +90,44 @@ pub fn markdown_to_dom_with_resolver(
                     stack.push(el);
                     continue;
                 }
-                let el = element_from_start_tag(&tag);
+                // HtmlBlock 透明处理：pulldown 0.13 把原始 HTML 块包在 Tag::HtmlBlock
+                // 中，若按下述通用逻辑映射成 Span，块内元素（如带内联样式的 <div>）
+                // 会被多包一层行内容器，破坏块级结构与 page-break 等块级语义。
+                if matches!(tag, Tag::HtmlBlock) {
+                    continue;
+                }
+                let mut el = element_from_start_tag(&tag);
+                match &tag {
+                    Tag::Table(alignments) => table_aligns.push(alignments.clone()),
+                    Tag::TableHead | Tag::TableRow => table_col = 0,
+                    Tag::TableCell => {
+                        if let Some(align) = table_aligns
+                            .last()
+                            .and_then(|cols| cols.get(table_col).copied())
+                            && let Some(css) = alignment_inline_style(align)
+                        {
+                            el.attrs.insert("style".to_string(), css);
+                        }
+                        table_col += 1;
+                    }
+                    _ => {}
+                }
                 stack.push(el);
             }
-            Event::End(_tag_end) => {
+            Event::End(tag_end) => {
+                if matches!(tag_end, pulldown_cmark::TagEnd::Table) {
+                    table_aligns.pop();
+                }
+                // HtmlBlock 开始时未入栈（透明处理），结束时也不弹出。
+                if matches!(tag_end, pulldown_cmark::TagEnd::HtmlBlock) {
+                    continue;
+                }
                 // 当前元素闭合：弹出并挂回父（或根）。
-                let mut closed = stack.pop().expect("pulldown 事件流闭合多于打开");
+                // 事件流不配对时容错跳过（S-2：此前 `expect` 会 panic，虽未构造出
+                // 成功路径，但 abort 无法被调用方捕获，防御性降级）。
+                let Some(mut closed) = stack.pop() else {
+                    continue;
+                };
                 // 脚注定义闭合：把编号前缀 "N. " 插入 children 最前面。
                 if closed.tag == HtmlTag::Div
                     && closed
@@ -281,6 +321,18 @@ fn simple(tag: HtmlTag) -> HtmlElement {
         tag,
         attrs: HashMap::new(),
         children: Vec::new(),
+    }
+}
+
+/// 把 pulldown 的 GFM 列对齐标记转成 `<td>`/`<th>` 的 inline style。
+///
+/// `Alignment::None`（未声明 `---`）返回 `None`（不写 style，保持默认左对齐）。
+fn alignment_inline_style(align: pulldown_cmark::Alignment) -> Option<String> {
+    match align {
+        pulldown_cmark::Alignment::None => None,
+        pulldown_cmark::Alignment::Left => Some("text-align: left".to_string()),
+        pulldown_cmark::Alignment::Center => Some("text-align: center".to_string()),
+        pulldown_cmark::Alignment::Right => Some("text-align: right".to_string()),
     }
 }
 

@@ -150,7 +150,10 @@ struct Args {
     height_unlimited: bool,
 }
 
-/// Parse a length string with unit (pt, mm, cm, in) into points (pt)
+/// Parse a length string with unit (pt, mm, cm, in) into points (pt).
+///
+/// Rejects non-finite values (`NaN`/`inf`) — S-4：非有限值一旦进入页面几何
+/// 会使输出 PDF 尺寸/坐标异常。
 fn parse_length(value: &str) -> Option<f32> {
     let value = value.trim();
 
@@ -158,21 +161,21 @@ fn parse_length(value: &str) -> Option<f32> {
         return Some(0.0);
     }
 
+    let parse_finite =
+        |s: &str| -> Option<f32> { s.trim().parse::<f32>().ok().filter(|v| v.is_finite()) };
+
     if let Some(v) = value.strip_suffix("pt") {
-        v.trim().parse::<f32>().ok()
+        parse_finite(v)
     } else if let Some(v) = value.strip_suffix("mm") {
-        let mm = v.trim().parse::<f32>().ok()?;
-        Some(mm * 72.0 / 25.4)
+        Some(parse_finite(v)? * 72.0 / 25.4)
     } else if let Some(v) = value.strip_suffix("cm") {
-        let cm = v.trim().parse::<f32>().ok()?;
-        Some(cm * 72.0 / 2.54)
+        Some(parse_finite(v)? * 72.0 / 2.54)
     } else if let Some(v) = value.strip_suffix("in") {
-        let inches = v.trim().parse::<f32>().ok()?;
-        Some(inches * 72.0)
+        Some(parse_finite(v)? * 72.0)
     } else if let Some(v) = value.strip_suffix("px") {
-        v.trim().parse::<f32>().ok()
+        parse_finite(v)
     } else {
-        value.parse::<f32>().ok()
+        parse_finite(value)
     }
 }
 

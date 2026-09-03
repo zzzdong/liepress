@@ -2,7 +2,6 @@
 //!
 //! 管线：先经 [`crate::document::to_scene::document_to_scene`] 统一转换为
 //! `lievisual::Scene`，再委托 lievisual 的 `VelloPixmapRenderer` 光栅化。
-//! 由此移除原先手写的 vello_cpu 字形 / 图片绘制逻辑，所有图元由 lievisual 负责。
 //!
 //! 画布尺寸参考 PDF：宽度取整页宽（含左右边距），高度取内容高 + 上下边距。
 //! 坐标原点为页面左上角，内容从 `(margin_left, margin_top)` 开始绘制。

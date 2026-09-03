@@ -3,10 +3,13 @@
 **liepress** 是一个基于 Rust 的 Markdown / HTML 文档转换工具，支持 CSS 样式定制，
 可将文档输出为 **PDF / SVG / PNG / HTML / DOCX** 五种格式。
 
+本文件本身即一份演示文档：分别以五种格式输出，可直观对比各后端的渲染表现
+（排版、分页、语法高亮、图表嵌入等）。
+
 - 作者：zzzdong
 - 仓库：<https://github.com/zzzdong/liepress>
 - 许可：MIT OR Apache-2.0
-- 当前版本：v0.2.0-beta
+- 当前版本：v0.2.0
 
 > 本文件用于端到端验证 liepress 的生成能力，同时如实记录项目的实际功能边界。
 
@@ -22,10 +25,11 @@
 - [6. 表格](#6-表格)
 - [7. 定义列表](#7-定义列表)
 - [8. 居中容器与内联样式](#8-居中容器与内联样式)
-- [9. 混合排版示例](#9-混合排版示例)
-- [10. 图表（liecharts）](#10-图表liecharts)
-- [11. 流程图（mermaid）](#11-流程图mermaid)
-- [12. 项目实际情况记录](#12-项目实际情况记录)
+- [9. 页面配置（@page 与命令行）](#9-页面配置page-与命令行)
+- [10. 混合排版示例](#10-混合排版示例)
+- [11. 图表（liecharts）](#11-图表liecharts)
+- [12. 流程图（mermaid）](#12-流程图mermaid)
+- [13. 项目实际情况记录](#13-项目实际情况记录)
 
 ---
 
@@ -34,10 +38,12 @@
 从源码构建：
 
 ```bash
-git clone https://github.com/zzzdong/liepress
+git clone https://github.com/zzdong/liepress
 cd liepress
 cargo build --release
 ```
+
+> 说明：crates.io 上的包名为 `liepress`，也可用 `cargo install liepress` 安装。
 
 准备一个 Markdown 文件 `doc.md`，然后运行：
 
@@ -45,13 +51,24 @@ cargo build --release
 # 输出格式由扩展名推断
 liepress -i doc.md -o doc.pdf
 
-# 也可用 -f 显式指定格式，从标准输入读取、写入标准输出
+# 也可用 -f 显式指定格式
+liepress -i doc.md -o doc.svg -f svg
+liepress -i doc.md -o doc.png -f png
+liepress -i doc.md -o doc.docx -f docx
+
+# 从标准输入读取、写入标准输出
 cat doc.md | liepress -i - -o - -f pdf > doc.pdf
 ```
 
 liepress 会根据 Markdown 内容与 CSS 样式生成文档；输出格式由输出文件扩展名
 （`.pdf` / `.svg` / `.png` / `.html` / `.docx`）推断，也可用 `-f` 显式指定。
 输入文件为 `-` 时从 stdin 读取，输出为 `-` 时写入 stdout。
+
+标准输入场景需额外用 `-F/--from` 指明输入格式：
+
+```bash
+cat doc.md | liepress -i - -o - -F markdown -f pdf > doc.pdf
+```
 
 ---
 
@@ -69,9 +86,9 @@ liepress 会根据 Markdown 内容与 CSS 样式生成文档；输出格式由�
 
 ## 3. 链接、图片与脚注
 
-[liepress 仓库](https://github.com/zzzdong/liepress)
+[liepress 仓库](https://github.com/zzdong/liepress)
 
-带标题的链接：[GitHub](https://github.com/zzzdong/liepress "liepress 项目主页")
+带标题的链接：[GitHub](https://github.com/zzdong/liepress "liepress 项目主页")
 
 > 注：liepress 支持本地图片文件（相对 / 绝对路径）与 `data:` URI（base64 内联），
 > 但不支持远程 URL 图片（需先下载为本地文件或 data URI）。将图片放在 Markdown 同级
@@ -99,8 +116,8 @@ liepress 会根据 Markdown 内容与 CSS 样式生成文档；输出格式由�
 无序列表：
 
 - PDF 输出（基于 krilla）
-- SVG 输出（手写 XML）
-- PNG 输出（基于 vello_cpu，支持 DPI 配置）
+- SVG 输出（经 to_scene 转 `lievisual::Scene`，由 `SvgRenderer` 序列化为 XML，默认 72 DPI）
+- PNG 输出（经 to_scene 转 `lievisual::Scene`，由 `VelloPixmapRenderer` 光栅化，默认 150 DPI）
   - 默认 150 DPI
   - 长图不分页
 
@@ -115,7 +132,7 @@ liepress 会根据 Markdown 内容与 CSS 样式生成文档；输出格式由�
 
 - [x] Markdown 解析
 - [x] PDF / SVG / PNG / HTML / DOCX 输出
-- [x] 代码块语法高亮
+- [x] 代码块语法高亮（PDF / SVG / PNG）
 - [x] 图表渲染（liecharts）
 - [x] 流程图渲染（mermaid）
 - [x] 代码块 / 长段落跨页分页
@@ -176,8 +193,9 @@ await Bun.write("output.pdf", pdf);
 ```
 
 > 语法高亮在文档层完成（基于 syntect，使用 `base16-ocean.dark` 暗色主题），
-> 预排版为带颜色的文本行，PDF/SVG/PNG 后端直接消费，因此对三种位图 / 矢量输出
-> 均生效。未知语言退化为单色等宽文本。
+> 预排版为带颜色的文本行，PDF / SVG / PNG 后端直接消费，因此对三种位图 / 矢量输出
+> 均生效。未知语言退化为单色等宽文本。HTML / DOCX 后端为流式序列化、未接入该高亮，
+> 代码块保持单色。
 
 ---
 
@@ -186,8 +204,8 @@ await Bun.write("output.pdf", pdf);
 | 输出格式 | 渲染后端 | 状态 | 优先级 |
 |:--------|:---------|:----:|:------:|
 | PDF     | krilla   | ✅ 完成 | 高 |
-| SVG     | 手写 XML | ✅ 完成 | 中 |
-| PNG     | vello_cpu | ✅ 完成 | 低 |
+| SVG     | lievisual `SvgRenderer`（to_scene→Scene→XML） | ✅ 完成 | 中 |
+| PNG     | lievisual `VelloPixmapRenderer`（to_scene→Scene→像素） | ✅ 完成 | 低 |
 | HTML    | 语义序列化 | ✅ 完成 | 中 |
 | DOCX    | docx-rs   | ✅ 完成 | 低 |
 
@@ -238,7 +256,53 @@ await Bun.write("output.pdf", pdf);
 
 ---
 
-## 9. 混合排版示例
+## 9. 页面配置（@page 与命令行）
+
+页面几何（尺寸、边距、方向）可用 Markdown 内联 `<style>` 中的 `@page` 规则声明，
+也可通过命令行参数覆盖。
+
+`@page` 支持 `size`（命名尺寸 A3 / A4 / A5 / Letter / Legal / Tabloid，可附加 `landscape` / `portrait`）
+与 `margin`（含四边简写）：
+
+```html
+<style>
+@page {
+    size: A4;
+    margin: 36pt 54pt;   /* 上下 36pt，左右 54pt */
+}
+</style>
+```
+
+命令行同样可指定页面尺寸与边距（单位支持 pt / mm / cm / in），并支持横向：
+
+```bash
+# A5 页面 + 统一边距
+liepress -i doc.md -o doc.pdf -p A5 --margin 24pt
+
+# 自定义宽高（横向）
+liepress -i doc.md -o doc.pdf --page-width 297mm --page-height 210mm --landscape
+```
+
+页眉与页脚通过命令行设置，支持 `{page}`（当前页）与 `{total}`（总页数）占位符；
+默认页脚显示页码，`--no-page-number` 可移除：
+
+```bash
+liepress -i doc.md -o doc.pdf \
+  --header "项目报告" \
+  --footer "第 {page} / {total} 页"
+
+# 移除默认页码
+liepress -i doc.md -o doc.pdf --no-page-number
+```
+
+> 注：`@page` 仅解析 `size` 与 `margin`；页眉 / 页脚目前由命令行参数控制。
+
+字体方面，liepress 默认开启**自动字体探测**：根据文档语言选择字体（中文 → 仿宋 FangSong），
+可用 `--no-auto-font` 关闭并回退到 `with_font_family` / CSS `font-family` 指定的字体。
+
+---
+
+## 10. 混合排版示例
 
 这是 **加粗**、*斜体*、`代码`、<span style="color: red;">红色文字</span> 和
 [链接](https://example.com) 混合在一起的段落。
@@ -260,11 +324,12 @@ SVG 输出结构示意（长图，不分页）：
 
 ---
 
-## 10. 图表（liecharts）
+## 11. 图表（liecharts）
 
-> 需以 `cargo run --features charts` 构建才会启用；未启用时代码块退化为普通 JSON 高亮。
+> `charts` 为默认 feature（见 §13），默认构建即包含 `liecharts`；以 `--no-default-features`
+> 构建时退化为普通 JSON 高亮。
 
-使用 ` ```liecharts ` 代码块，块内为 echarts 风格 JSON 配置，自动渲染为图片并居中嵌入：
+使用 ` ```liecharts ` 代码块，块内为 ECharts 风格 JSON 配置，自动渲染为图片并居中嵌入：
 
 ```liecharts
 {
@@ -295,9 +360,10 @@ SVG 输出结构示意（长图，不分页）：
 
 ---
 
-## 11. 流程图（mermaid）
+## 12. 流程图（mermaid）
 
-> 需以 `cargo run --features mermaid` 构建才会启用；未启用时代码块退化为普通文本高亮。
+> `mermaid` 为默认 feature（见 §13），默认构建即包含 `liemermaid`；以 `--no-default-features`
+> 构建时退化为普通文本高亮。
 
 使用 ` ```mermaid ` 代码块，块内为 Mermaid DSL 文本，自动渲染为图片并居中嵌入：
 
@@ -329,9 +395,9 @@ this is not a valid diagram
 
 ---
 
-## 12. 项目实际情况记录
+## 13. 项目实际情况记录
 
-以下为 liepress 生成能力的**真实边界**（截至 v0.2.0-beta，已与代码核对）：
+以下为 liepress 生成能力的**真实边界**（截至 v0.2.0，已与代码核对）：
 
 **已实现**
 
@@ -343,7 +409,7 @@ this is not a valid diagram
 - 脚注：正文角标与文末脚注区双向锚点跳转（PDF 链接注解）。
 - 引用块（多层嵌套）、无序 / 有序 / 任务列表、定义列表。
 - 代码块语法高亮（syntect，`base16-ocean.dark` 暗色主题），支持常见语言别名
-  （rust / python / js / sh / cpp 等），PDF/SVG/PNG 均生效；未知语言退化为单宽单色。
+  （rust / python / js / sh / cpp 等），PDF / SVG / PNG 均生效；未知语言退化为单宽单色。
 - 图表渲染：` ```liecharts ` 代码块（ECharts 风格 JSON）渲染为图片并居中嵌入，
   可通过 info string 覆盖 width / height / theme / dpi。
 - 流程图渲染：` ```mermaid ` 代码块（Mermaid DSL）渲染为图片，支持 flowchart /
@@ -353,18 +419,22 @@ this is not a valid diagram
 - 代码块 / 长段落跨页分页：PDF 后端按行切分超高块，续页保持背景 / 缩进上下文。
 - 居中容器 `<center>`、内联 `<style>` 标签自定义类。
 - CSS 样式系统：选择器权重计算与层叠，支持 `-s/--style` 外部 CSS 文件。
+- 页面配置：`@page` 规则（`size` / `margin`）与命令行参数
+  （`-p/--page-size`、`--page-width/height`、`--margin*`、`--landscape`）；
+  页眉 / 页脚由 `--header` / `--footer`（`{page}` / `{total}` 模板）与 `--no-page-number` 控制。
+- 自动字体探测：默认开启，按文档语言选择字体（中文 → 仿宋 FangSong），`--no-auto-font` 可关闭。
 - 字体子集化由 krilla 内部完成，无需手动处理。
-- 标准输入 / 输出：`-i -` 读 stdin，`-o -` 写 stdout；stdin 场景用字符串 API，
+- 标准输入 / 输出：`-i -` 读 stdin，`-o -` 写 stdout；stdin 场景用 `-F/--from` 指定输入格式，
   图片需以 data URI 提供。
 
 **暂未实现 / 限制**
 
 - 数学公式：暂缓（现成库会引入较大依赖；当前可用图片形式替代）。
 - 远程 URL 图片：不支持，需先下载为本地文件或 data URI。
-- HTML / DOCX 为流式输出，直接消费样式 AST，未接入文档层语法高亮
-  （代码块在 HTML/DOCX 中仍是单色）。
+- HTML / DOCX 为流式输出，直接消费样式 AST（`ast::Node`），未接入文档层语法高亮
+  （代码块在 HTML / DOCX 中仍是单色）。
 - stdin 输入无文件路径上下文，无法解析相对路径本地图片。
 
 ---
 
-*liepress v0.2.0-beta — 用 Markdown 生成文档*
+*liepress v0.2.0 — 用 Markdown 生成文档*

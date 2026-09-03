@@ -1,14 +1,21 @@
 [package]
 name = "liepress"
-version = "0.2.0-beta.4"
+version = "0.2.0"
 description = "A Markdown/HTML to PDF converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
+readme = "README.md"
 repository = "https://github.com/zzzdong/liepress"
 homepage = "https://github.com/zzzdong/liepress"
-keywords = ["markdown", "html", "pdf", "document"]
+keywords = ["markdown", "html", "pdf", "document", "converter"]
 categories = ["command-line-utilities", "rendering", "text-processing"]
 edition = "2024"
+rust-version = "1.92"
+default-run = "liepress"
+exclude = ["site"]
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "liepress"
@@ -19,23 +26,21 @@ base64 = { version = "0.23", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 docx-rs = "0.4"
 html5ever = "0.39.0"
-lightningcss = { version = "1.0.0-alpha.71", default-features = false }
 image = { version = "0.25" }
+liecharts = { version = "0.2", optional = true }
+liemermaid = { version = "0.2", optional = true }
+lievisual = "0.2"
+lightningcss = { version = "1.0.0-alpha.71", default-features = false }
 kamadak-exif = "0.6"
 krilla = "0.8"
 pulldown-cmark = "0.13.4"
 syntect = { version = "5", default-features = false, features = ["default-themes", "default-syntaxes", "parsing", "regex-fancy"] }
 thiserror = "2.0"
-vello_cpu = "0.2.0"
-liecharts = { version = "0.2", optional = true }
-liemermaid = { version = "0.2", optional = true }
-lievisual = "0.2"
 
 [features]
 default = ["charts", "mermaid"]
 charts = ["dep:liecharts"]
 mermaid = ["dep:liemermaid"]
-
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }

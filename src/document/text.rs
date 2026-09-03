@@ -175,6 +175,11 @@ fn style_to_fontstyle(style: &str) -> FontStyle {
 ///
 /// liepress 下游（`ast::presets`、`output::common`、`from_ast`）以 CSS 字符串形态
 /// 持有样式，这里统一桥接到 lievisual 的数值/枚举字段；布局类型本身即是 lievisual 的。
+///
+/// `line_height` 为**绝对行高（pt）**（与 lievisual `TextStyle::line_height` 语义
+/// 一致，内部按 `line_height / font_size` 换算为倍数）。传 `None` 表示未声明，
+/// 使用字体默认行高——此前 `line-height` 只写入 `Style.line_height_pt` 参与
+/// 垂直步进，却从未进入实际字形排版，导致声明 1.0 与 2.0 排出的字形盒完全相同。
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn css_text_style(
@@ -188,6 +193,7 @@ pub fn css_text_style(
     decoration: TextDecoration,
     baseline_shift: f32,
     background_color: Option<lievisual::Color>,
+    line_height: Option<f64>,
 ) -> TextStyle {
     let (underline, strikethrough) = match decoration {
         TextDecoration::None => (false, false),
@@ -201,7 +207,7 @@ pub fn css_text_style(
         font_weight: FontWeight::parse(font_weight).unwrap_or_default(),
         font_style: style_to_fontstyle(font_style),
         font_width: FontWidth::Normal,
-        line_height: None,
+        line_height,
         letter_spacing: 0.0,
         underline,
         underline_color: None,

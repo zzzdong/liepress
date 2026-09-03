@@ -22,8 +22,8 @@ use krilla::page::PageSettings as KrillaPageSettings;
 use krilla::paint::{Fill, FillRule, LineCap, LineJoin, Paint, Stroke as KrillaStroke};
 use krilla::surface::Surface;
 use krilla::text::Font;
-use vello_cpu::kurbo::Point;
 
+use crate::ast::PageBreak;
 use crate::document::layout::{Block, BlockKind, Document, TableRow};
 use crate::document::text::{
     TextAlign as LayoutAlign, TextDecoration, TextLine, TextRun, layout_text,
@@ -31,7 +31,7 @@ use crate::document::text::{
 use crate::document::types::page::PageSettings;
 use crate::document::types::{ResolvedStyle, TextAlign};
 use crate::error::{Error, Result};
-use lievisual::Color;
+use lievisual::{Color, geometry::Point};
 
 use super::common::{
     BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, apply_heading_style, block_height, blockquote_content_height,
@@ -66,6 +66,11 @@ struct PdfPage {
     blocks: Vec<PositionedBlock>,
     header: Option<String>,
     footer: Option<String>,
+    /// 本页内容区实际占用高度（pt）。
+    ///
+    /// 无限高度模式（`height_unlimited`）下据此确定最终页面高度
+    /// （页高 = 上边距 + used_h + 下边距），否则固定为配置页高。
+    used_h: f64,
 }
 
 /// PDF 后端分页后的绝对定位块。
@@ -192,7 +197,14 @@ impl PdfDocumentGenerator {
         let mut krilla_doc = KrillaDocument::new();
         for (idx, page) in pages.iter().enumerate() {
             let width = self.settings.width_pt;
-            let height = self.settings.height_pt;
+            // 无限高度模式：页高 = 上边距 + 内容实际占用 + 下边距（按页自适应），
+            // 而非固定 A4 高度——否则内容下方会留出大片空白。
+            let height = if self.settings.height_unlimited {
+                (self.settings.margin_top_pt + page.used_h as f32 + self.settings.margin_bottom_pt)
+                    .max(1.0)
+            } else {
+                self.settings.height_pt
+            };
             let size = Size::from_wh(width, height)
                 .ok_or_else(|| Error::RenderError("invalid page size".into()))?;
             let mut krilla_page = krilla_doc.start_page_with(KrillaPageSettings::new(size));
@@ -1147,96 +1159,110 @@ fn paginate_layout(document: &Document, settings: &PageSettings) -> Vec<PdfPage>
     let header = settings.header.clone();
     let footer = settings.footer.clone();
 
-    for block in &document.blocks {
-        let h = block_height(block, settings, content_x);
-        if let BlockKind::Table {
-            rows,
-            column_align,
-            col_widths,
-            row_heights,
-        } = &block.kind
-        {
-            paginate_table(
+    {
+        let mut ctx = PaginateCtx {
+            pages: &mut pages,
+            cur: &mut cur,
+            used: &mut used,
+            header: &header,
+            footer: &footer,
+        };
+
+        for block in &document.blocks {
+            let h = block_height(block, settings, content_x);
+
+            // P2-5：`page-break-before: always` —— 当前页已有内容时在该块前强制换页。
+            let force_break_before = block.style.page_break_before == PageBreak::Always
+                && (*ctx.used > 0.0 || !ctx.cur.blocks.is_empty());
+
+            if let BlockKind::Table {
                 rows,
                 column_align,
                 col_widths,
                 row_heights,
-                &block.style,
-                &mut PaginateCtx {
-                    pages: &mut pages,
-                    cur: &mut cur,
-                    used: &mut used,
-                    header: &header,
-                    footer: &footer,
-                },
-                content_x,
-                content_y,
-                content_h,
-            );
-            // 表格后有自身下边距（与下一个块形成垂直间距）。
-            // 注意：表格与其上方块的间距由上一个块的 margin_bottom 提供
-            // （本布局系统采用"相邻块间距 = 上一块 margin_bottom"约定），
-            // 故此处不再额外加表格的 margin_top，否则会与上方间距叠加导致过大。
-            used += block.style.margin_bottom as f64;
-            continue;
-        }
-
-        // 段落 / 代码块：可分割且整块高于一页时按行分页（其余走下方普通块逻辑）。
-        // 代码块与段落同构（语法高亮后的 `lines: Vec<TextLine>`），本应像普通文本一样
-        // 自然跨页；仅当确实放不下一页时才按行切分，避免对短块引入克隆开销。
-        if block.splittable && h > content_h {
-            let line_block = match &block.kind {
-                BlockKind::Paragraph { lines } if lines.len() > 1 => {
-                    Some((lines.as_slice(), (block.style.line_height_pt as f64).max(1.0), 0.0))
+            } = &block.kind
+            {
+                if force_break_before {
+                    ctx.push_page();
                 }
-                BlockKind::CodeBlock { lines, .. } if lines.len() > 1 => {
-                    let lh = if block.style.line_height_pt > 0.0 {
-                        block.style.line_height_pt as f64
-                    } else {
-                        18.0
-                    };
-                    Some((lines.as_slice(), lh, 4.0))
-                }
-                _ => None,
-            };
-            if let Some((lines, line_h, pad_v)) = line_block {
-                paginate_lines_block(
-                    block,
-                    lines,
-                    line_h,
-                    pad_v,
-                    &mut PaginateCtx {
-                        pages: &mut pages,
-                        cur: &mut cur,
-                        used: &mut used,
-                        header: &header,
-                        footer: &footer,
-                    },
+                paginate_table(
+                    rows,
+                    column_align,
+                    col_widths,
+                    row_heights,
+                    &block.style,
+                    &mut ctx,
                     content_x,
                     content_y,
                     content_h,
                 );
+                // 表格后有自身下边距（与下一个块形成垂直间距）。
+                // 注意：表格与其上方块的间距由上一个块的 margin_bottom 提供
+                // （本布局系统采用"相邻块间距 = 上一块 margin_bottom"约定），
+                // 故此处不再额外加表格的 margin_top，否则会与上方间距叠加导致过大。
+                *ctx.used += block.style.margin_bottom as f64;
+                if block.style.page_break_after == PageBreak::Always {
+                    ctx.push_page();
+                }
                 continue;
             }
-        }
 
-        if used + h > content_h && used > 0.0 {
-            cur.header = header.clone();
-            cur.footer = footer.clone();
-            pages.push(std::mem::take(&mut cur));
-            used = 0.0;
+            // 段落 / 代码块：可分割且整块高于一页时按行分页（其余走下方普通块逻辑）。
+            // 代码块与段落同构（语法高亮后的 `lines: Vec<TextLine>`），本应像普通文本一样
+            // 自然跨页；仅当确实放不下一页时才按行切分，避免对短块引入克隆开销。
+            if block.splittable && h > content_h {
+                let line_block = match &block.kind {
+                    BlockKind::Paragraph { lines } if lines.len() > 1 => Some((
+                        lines.as_slice(),
+                        (block.style.line_height_pt as f64).max(1.0),
+                        0.0,
+                    )),
+                    BlockKind::CodeBlock { lines, .. } if lines.len() > 1 => {
+                        let lh = if block.style.line_height_pt > 0.0 {
+                            block.style.line_height_pt as f64
+                        } else {
+                            18.0
+                        };
+                        Some((lines.as_slice(), lh, 4.0))
+                    }
+                    _ => None,
+                };
+                if let Some((lines, line_h, pad_v)) = line_block {
+                    if force_break_before {
+                        ctx.push_page();
+                    }
+                    paginate_lines_block(
+                        block, lines, line_h, pad_v, &mut ctx, content_x, content_y, content_h,
+                    );
+                    if block.style.page_break_after == PageBreak::Always {
+                        ctx.push_page();
+                    }
+                    continue;
+                }
+            }
+
+            if (*ctx.used + h > content_h && *ctx.used > 0.0) || force_break_before {
+                ctx.push_page();
+            }
+            let y = content_y + *ctx.used;
+            ctx.cur
+                .blocks
+                .push(PositionedBlock::new(block.clone(), content_x, y, h));
+            *ctx.used += h;
+            if block.style.page_break_after == PageBreak::Always {
+                ctx.push_page();
+            }
         }
-        cur.blocks.push(PositionedBlock::new(
-            block.clone(),
-            content_x,
-            content_y + used,
-            h,
-        ));
-        used += h;
     }
-    cur.header = header;
-    cur.footer = footer;
-    pages.push(cur);
+
+    // 末页：仅在仍有内容（或整个文档为空）时收尾，避免
+    // 「最后一个块 page-break-after 触发换页」后附加一张空白页。
+    if !cur.blocks.is_empty() || pages.is_empty() {
+        cur.header = header;
+        cur.footer = footer;
+        cur.used_h = used;
+        pages.push(cur);
+    }
     pages
 }
 
@@ -1256,6 +1282,7 @@ impl PaginateCtx<'_> {
         let footer = self.footer.clone();
         self.cur.header = header;
         self.cur.footer = footer;
+        self.cur.used_h = *self.used;
         self.pages.push(std::mem::take(self.cur));
         *self.used = 0.0;
     }
@@ -1515,6 +1542,10 @@ mod pagination_tests {
             }
         }
         assert_eq!(total, n, "跨页后代码行不应丢失");
-        assert!(pages.len() >= 2, "60 行代码块应跨多页，实际 {} 页", pages.len());
+        assert!(
+            pages.len() >= 2,
+            "60 行代码块应跨多页，实际 {} 页",
+            pages.len()
+        );
     }
 }

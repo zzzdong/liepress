@@ -66,6 +66,12 @@ fn build_engine_and_parse(
         engine = engine.with_user_css(&combined_css)?;
     }
 
+    // Step 4b: 根字号 + 百分比基准（页面内容宽度，来自 @page 声明）
+    let root_style = engine.resolve_style("html", &[], None, &[], &Style::default());
+    engine.set_root_font_size(root_style.font_size_pt);
+    let page_settings = crate::document::types::PageSettings::from(engine.page_config().clone());
+    engine.set_containing_block_width(page_settings.content_width());
+
     // Step 5: 从 HtmlDocument 构建 Node AST（使用新管线 html/styled）
     let mut node = crate::dom::to_ast::html_to_styled_nodes(&doc, &engine);
     // 保证根节点一定是 Document（兼容测试和下游消费者）

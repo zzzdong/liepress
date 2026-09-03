@@ -871,7 +871,38 @@ fn html_to_styled_node(
     let default_style = ast::Style::default();
     let root_style = engine.resolve_style("html", &[], None, &[], &default_style);
     engine.set_root_font_size(root_style.font_size_pt);
+    apply_page_metrics(&mut engine, None);
     Ok(dom::to_ast::html_to_styled_nodes(doc, &engine))
+}
+
+/// 依据页面配置设定 CSS 引擎的包含块宽度（盒模型 `%` 的基准）。
+///
+/// 合并优先级：显式 [`PageConfig`]（来自 [`ConvertOptions`]）> CSS `@page` 声明
+/// > 内置默认（A4）。必须在 Styled AST 转换之前调用，否则 `%` 会退回默认值。
+fn apply_page_metrics(engine: &mut css::engine::CssEngine, page_config: Option<&PageConfig>) {
+    let mut pc = engine.page_config().clone();
+    if let Some(explicit) = page_config {
+        if explicit.width.is_some() {
+            pc.width = explicit.width;
+        }
+        if explicit.height.is_some() {
+            pc.height = explicit.height;
+        }
+        if explicit.margin_top.is_some() {
+            pc.margin_top = explicit.margin_top;
+        }
+        if explicit.margin_bottom.is_some() {
+            pc.margin_bottom = explicit.margin_bottom;
+        }
+        if explicit.margin_left.is_some() {
+            pc.margin_left = explicit.margin_left;
+        }
+        if explicit.margin_right.is_some() {
+            pc.margin_right = explicit.margin_right;
+        }
+    }
+    let settings = PageSettings::from(pc);
+    engine.set_containing_block_width(settings.content_width());
 }
 
 /// HtmlDocument → Document 的核心转换逻辑
@@ -911,6 +942,8 @@ fn html_to_layout(
     let default_style = ast::Style::default();
     let root_style = engine.resolve_style("html", &[], None, &[], &default_style);
     engine.set_root_font_size(root_style.font_size_pt);
+    // 百分比基准 = 页面内容宽度（须在 Styled AST 转换前设置）。
+    apply_page_metrics(&mut engine, page_config.as_ref());
 
     // 3. HtmlDocument → Styled Node Tree
     let styled_node = dom::to_ast::html_to_styled_nodes(doc, &engine);

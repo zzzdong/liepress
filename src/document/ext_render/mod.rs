@@ -136,18 +136,13 @@ pub trait BlockRenderer: Send + Sync {
 ///
 /// 默认空（不开任何 feature 时，代码块不会走图片渲染）。
 /// 开启对应 feature 时登记相应渲染器，主流程无需变动。
-#[allow(unused_mut)]
 pub fn builtin_renderers() -> Vec<Box<dyn BlockRenderer>> {
-    let mut v: Vec<Box<dyn BlockRenderer>> = Vec::new();
-    #[cfg(feature = "charts")]
-    v.push(Box::new(
-        crate::document::ext_render::liecharts::LieChartsRenderer,
-    ));
-    #[cfg(feature = "mermaid")]
-    v.push(Box::new(
-        crate::document::ext_render::liemermaid::LieMermaidRenderer,
-    ));
-    v
+    vec![
+        #[cfg(feature = "charts")]
+        Box::new(crate::document::ext_render::liecharts::LieChartsRenderer),
+        #[cfg(feature = "mermaid")]
+        Box::new(crate::document::ext_render::liemermaid::LieMermaidRenderer),
+    ]
 }
 
 /// 按 `lang` 查找已注册的渲染器。

@@ -147,11 +147,20 @@ pub fn embed_local_images(html: &str, base_dir: Option<&Path>) -> String {
 
 /// 判断 src 是否应该被嵌入为 base64
 fn should_embed(src: &str) -> bool {
-    // 跳过 data URI、网络地址、绝对路径
-    !src.starts_with("data:")
-        && !src.starts_with("http://")
-        && !src.starts_with("https://")
-        && !src.starts_with('/')
+    // 跳过 data URI、网络地址、锚点
+    if src.starts_with("data:")
+        || src.starts_with("http://")
+        || src.starts_with("https://")
+        || src.starts_with("//")
+        || src.starts_with('#')
+    {
+        return false;
+    }
+    // S-1：与主管线（dom::resource）语义对齐 —— 拒绝目录穿越、绝对路径、
+    // 非图片扩展名，避免 `![](/etc/passwd)` 在 HTML 输出被内嵌读取。
+    !super::resource::has_parent_component(src)
+        && !super::resource::is_absolute_src(src)
+        && super::resource::has_image_extension(Path::new(src))
 }
 
 /// 尝试将本地文件读取为 base64 data URI

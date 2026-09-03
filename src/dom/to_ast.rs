@@ -22,6 +22,41 @@ pub fn html_to_styled_nodes(doc: &HtmlDocument, engine: &CssEngine) -> Node {
     convert_element(&doc.root, &mut resolver, &Style::default())
 }
 
+/// S-3 深嵌套保护：`convert_element` 递归的最大深度。
+///
+/// 恶意/病态 HTML（数千层嵌套 `<div>`）会造成深递归栈溢出（abort，不可捕获）。
+/// 超限时 `convert_element` 返回空文本节点、停止下钻。每层递归实际涉及
+/// convert_element + resolve + with_ancestor 等约 4 个栈帧，128 层上限在默认
+/// 2MB 线程栈下仍有充足余量，而正常文档（Markdown 生成的 HTML）通常 < 20 层。
+const MAX_HTML_TO_AST_DEPTH: usize = 128;
+
+thread_local! {
+    static CONVERT_DEPTH: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+/// 递归深度守卫：进入 `convert_element` 时 +1，Drop 时 -1（覆盖所有提前 return）。
+struct DepthGuard;
+
+impl DepthGuard {
+    /// 尝试进入一层递归；超过 [`MAX_HTML_TO_AST_DEPTH`] 返回 `None`。
+    fn enter() -> Option<Self> {
+        CONVERT_DEPTH.with(|d| {
+            let cur = d.get();
+            if cur >= MAX_HTML_TO_AST_DEPTH {
+                return None;
+            }
+            d.set(cur + 1);
+            Some(DepthGuard)
+        })
+    }
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        CONVERT_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 /// 转换 HTML 元素为 Styled Node
 ///
 /// 职责链：
@@ -29,6 +64,18 @@ pub fn html_to_styled_nodes(doc: &HtmlDocument, engine: &CssEngine) -> Node {
 /// 2. 本函数根据标签类型映射到 `NodeKind`
 /// 3. 递归处理子元素
 fn convert_element(elem: &HtmlElement, resolver: &mut StyleResolver, parent_style: &Style) -> Node {
+    // ── 0. 深嵌套保护（S-3）──
+    // 守卫的 Drop 在函数所有提前 return 路径上自动递减计数。
+    let Some(_depth_guard) = DepthGuard::enter() else {
+        return Node::new(
+            NodeKind::Text {
+                text: String::new(),
+            },
+            Style::default(),
+            false,
+        );
+    };
+
     // ── 1. 解析样式 ──
     let mut style = resolver.resolve(elem, parent_style);
 
@@ -388,7 +435,14 @@ fn convert_tag_block(elem: &HtmlElement, style: &Style, resolver: &mut StyleReso
                 return NodeKind::FootnoteDef { id, children };
             }
             let children = convert_children(&elem.children, resolver, style);
-            NodeKind::Paragraph { children }
+            // P2-4：div 内嵌块级子元素（<h1>/<table>/<p>…）时映射为 Container，
+            // 保留块级结构与样式；此前一律降级 Paragraph，块级子节点被
+            // collect_inline_segments 压平成一串文本。纯行内内容仍为 Paragraph。
+            if contains_block_child(elem) {
+                NodeKind::Container { children }
+            } else {
+                NodeKind::Paragraph { children }
+            }
         }
 
         // HTML5 语义结构标签
@@ -402,7 +456,12 @@ fn convert_tag_block(elem: &HtmlElement, style: &Style, resolver: &mut StyleReso
         | HtmlTag::Figure
         | HtmlTag::Figcaption => {
             let children = convert_children(&elem.children, resolver, style);
-            NodeKind::Paragraph { children }
+            // 同 <div>：含块级子元素时保留块级结构（见上）。
+            if contains_block_child(elem) {
+                NodeKind::Container { children }
+            } else {
+                NodeKind::Paragraph { children }
+            }
         }
 
         // <br> — 行内换行
@@ -695,9 +754,58 @@ fn extract_code_block(elem: &HtmlElement) -> (String, Option<String>) {
     (elem.text_content(), lang)
 }
 
+/// 判断元素的**直接子级**中是否存在块级元素。
+///
+/// 用于容器标签（`<div>`/`<section>` 等）的映射决策：含块级子元素 → `Container`
+///（保留块级结构）；纯行内内容 → `Paragraph`（维持既有简化语义）。
+fn contains_block_child(elem: &HtmlElement) -> bool {
+    elem.children
+        .iter()
+        .any(|c| matches!(c, HtmlNode::Element(e) if is_block_tag(e.tag)))
+}
+
+/// 粗粒度 HTML 块级标签判定（覆盖本文档模型关心的子集）。
+fn is_block_tag(tag: HtmlTag) -> bool {
+    matches!(
+        tag,
+        HtmlTag::Div
+            | HtmlTag::Section
+            | HtmlTag::Article
+            | HtmlTag::Nav
+            | HtmlTag::Aside
+            | HtmlTag::Header
+            | HtmlTag::Footer
+            | HtmlTag::Main
+            | HtmlTag::H1
+            | HtmlTag::H2
+            | HtmlTag::H3
+            | HtmlTag::H4
+            | HtmlTag::H5
+            | HtmlTag::H6
+            | HtmlTag::P
+            | HtmlTag::Pre
+            | HtmlTag::Blockquote
+            | HtmlTag::Hr
+            | HtmlTag::Ul
+            | HtmlTag::Ol
+            | HtmlTag::Dl
+            | HtmlTag::Table
+            | HtmlTag::Center
+            | HtmlTag::Figure
+    )
+}
+
 /// 从表格元素中提取列对齐方式
 fn extract_table_align(elem: &HtmlElement) -> Vec<TextAlign> {
     let mut aligns = Vec::new();
+
+    /// 读取单个单元格的对齐（inline `style="text-align:…"`，缺省 Left）。
+    fn cell_align(cell_elem: &HtmlElement) -> TextAlign {
+        cell_elem
+            .inline_style()
+            .and_then(parse_text_align_from_inline)
+            .unwrap_or(TextAlign::Left)
+    }
 
     for child in &elem.children {
         if let HtmlNode::Element(row) = child {
@@ -706,33 +814,31 @@ fn extract_table_align(elem: &HtmlElement) -> Vec<TextAlign> {
                     if let HtmlNode::Element(cell_elem) = cell
                         && matches!(cell_elem.tag, HtmlTag::Th | HtmlTag::Td)
                     {
-                        let align = cell_elem
-                            .inline_style()
-                            .and_then(parse_text_align_from_inline)
-                            .unwrap_or(TextAlign::Left);
-                        aligns.push(align);
+                        aligns.push(cell_align(cell_elem));
                     }
                 }
                 break;
             }
-            // thead/tbody 内
+            // thead/tbody 内：兼容两种结构 ——
+            // ① HTML 手写 `<thead><tr><td>`：Thead → Tr → Td
+            // ② Markdown（pulldown）事件流：TableHead 直接产出 Thead → Td（无中间 Tr）
             if matches!(row.tag, HtmlTag::Thead | HtmlTag::Tbody) {
                 for gc in &row.children {
-                    if let HtmlNode::Element(inner_row) = gc
-                        && inner_row.tag == HtmlTag::Tr
-                    {
-                        for cell in &inner_row.children {
-                            if let HtmlNode::Element(cell_elem) = cell
-                                && matches!(cell_elem.tag, HtmlTag::Th | HtmlTag::Td)
-                            {
-                                let align = cell_elem
-                                    .inline_style()
-                                    .and_then(parse_text_align_from_inline)
-                                    .unwrap_or(TextAlign::Left);
-                                aligns.push(align);
+                    if let HtmlNode::Element(inner) = gc {
+                        if inner.tag == HtmlTag::Tr {
+                            for cell in &inner.children {
+                                if let HtmlNode::Element(cell_elem) = cell
+                                    && matches!(cell_elem.tag, HtmlTag::Th | HtmlTag::Td)
+                                {
+                                    aligns.push(cell_align(cell_elem));
+                                }
                             }
+                            break;
                         }
-                        break;
+                        // 结构②：单元格直接挂在 Thead 下
+                        if matches!(inner.tag, HtmlTag::Th | HtmlTag::Td) {
+                            aligns.push(cell_align(inner));
+                        }
                     }
                 }
                 break;

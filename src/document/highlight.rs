@@ -77,6 +77,13 @@ fn base_style(style: &ResolvedStyle) -> TextStyle {
         style.text_decoration,
         0.0,
         None,
+        // 代码块行高参与 parley 排版：与 draw_block 垂直步进（line_height_pt，
+        // 0 时回退 18pt）保持一致，避免字形盒与行距错位。
+        Some(if style.line_height_pt > 0.0 {
+            style.line_height_pt as f64
+        } else {
+            18.0
+        }),
     )
 }
 

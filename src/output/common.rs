@@ -294,6 +294,7 @@ pub fn text_style(color: Color, family: &str, size: f32, weight: &str, style: &s
         crate::ast::TextDecoration::None,
         0.0,
         None,
+        None,
     )
 }
 
@@ -318,6 +319,7 @@ pub fn text_style_from_resolved(style: &ResolvedStyle) -> TextStyle {
         style.text_decoration,
         0.0,
         None,
+        (style.line_height_pt > 0.0).then_some(style.line_height_pt as f64),
     )
 }
 

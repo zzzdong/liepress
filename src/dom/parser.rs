@@ -90,76 +90,137 @@ impl DomSink {
         self.collect_children_with_opts(handle, false)
     }
 
-    /// 收集子节点，`in_pre` 为 true 时不 trim 文本节点（保留 <pre> 内的原始空白）
+    /// 收集子节点，`in_pre` 为 true 时不 trim 文本节点（保留 <pre> 内的原始空白）。
+    ///
+    /// S-3 深嵌套保护：以显式栈迭代替代递归——数千层嵌套 `<div>` 在默认 2MB
+    /// 测试线程栈下不会触发栈溢出（递归版 3000 层即 abort，无法被调用方捕获）。
+    /// 语义与原递归实现一致：
+    /// - 文本节点在兄弟元素边界与子列表末尾合并 flush（不做 trim，保留原始空白）；
+    /// - `<head>` 仅保留 `<style>` 子元素；
+    /// - `<pre>` 上下文向子树传递；document 节点透传其子列表。
     fn collect_children_with_opts(&self, handle: &Handle, in_pre: bool) -> Vec<HtmlNode> {
-        let mut result = Vec::new();
-        let mut pending_text = String::new();
+        struct Frame {
+            /// 预克隆的子节点列表（避免每步重复借用/克隆）
+            children: Vec<Handle>,
+            idx: usize,
+            in_pre: bool,
+            out: Vec<HtmlNode>,
+            pending: String,
+            /// 完成后要构建的元素 `(tag_name, attrs)`；`None` 表示 document 透传。
+            elem: Option<(String, HashMap<String, String>)>,
+        }
 
-        for child in handle.children.borrow().iter() {
-            if let Some(ref name) = child.element_name {
-                // Element node - flush pending text first
-                // 注意：这里不做 trim，保留文本节点原始空白。跨元素分词的边界
-                // 空格（如 `This is a <b> bold </b> text`）必须在元素边界保留，
-                // 否则被误删；CSS 空白折叠与块级边界去空由 styled 层处理。
-                let text = pending_text.clone();
-                if !text.is_empty() {
-                    result.push(HtmlNode::Text(text));
+        let children = handle.children.borrow().clone();
+        let mut stack = vec![Frame {
+            children,
+            idx: 0,
+            in_pre,
+            out: Vec::new(),
+            pending: String::new(),
+            elem: None, // 根（document）：直接返回子列表
+        }];
+
+        while !stack.is_empty() {
+            let has_next_child = {
+                let top = stack.last().expect("栈非空");
+                top.idx < top.children.len()
+            };
+
+            if has_next_child {
+                let (child, child_in_pre, parent_in_pre) = {
+                    let top = stack.last_mut().expect("栈非空");
+                    let child = Rc::clone(&top.children[top.idx]);
+                    top.idx += 1;
+                    let pip = top.in_pre;
+                    // `<pre>` 上下文仅由元素子节点开启
+                    let cip = child
+                        .element_name
+                        .as_ref()
+                        .is_some_and(|n| n.local.as_ref() == "pre")
+                        || pip;
+                    (child, cip, pip)
+                };
+
+                if let Some(ref name) = child.element_name {
+                    // 元素子节点：压入新帧（完成后回填到父帧）
+                    let tag_name = name.local.as_ref().to_string();
+                    let attr_map = {
+                        let attrs = child.element_attrs.borrow();
+                        let mut map = HashMap::new();
+                        for attr in attrs.iter() {
+                            map.insert(
+                                attr.name.local.as_ref().to_string(),
+                                attr.value.to_string(),
+                            );
+                        }
+                        map
+                    };
+                    stack.push(Frame {
+                        children: child.children.borrow().clone(),
+                        idx: 0,
+                        in_pre: child_in_pre,
+                        out: Vec::new(),
+                        pending: String::new(),
+                        elem: Some((tag_name, attr_map)),
+                    });
+                } else if child.is_document {
+                    // document 透传节点
+                    stack.push(Frame {
+                        children: child.children.borrow().clone(),
+                        idx: 0,
+                        in_pre: parent_in_pre,
+                        out: Vec::new(),
+                        pending: String::new(),
+                        elem: None,
+                    });
+                } else if let Some(ref text) = *child.text_content.borrow() {
+                    // 文本：合并进当前帧的 pending
+                    let top = stack.last_mut().expect("栈非空");
+                    top.pending.push_str(text.as_ref());
                 }
-                pending_text.clear();
+                continue;
+            }
 
-                let tag_name = name.local.as_ref().to_string();
-                let attr_map = {
-                    let attrs = child.element_attrs.borrow();
-                    let mut map = HashMap::new();
-                    for attr in attrs.iter() {
-                        map.insert(attr.name.local.as_ref().to_string(), attr.value.to_string());
+            // 栈顶帧完成：flush 尾部文本并回填父帧
+            let mut done = stack.pop().expect("栈非空");
+            if !done.pending.is_empty() {
+                done.out.push(HtmlNode::Text(done.pending));
+            }
+            let Some(parent) = stack.last_mut() else {
+                return done.out; // 根帧完成
+            };
+            match done.elem {
+                Some((tag_name, attrs)) => {
+                    // 文本在元素之前 flush（保持子节点原始顺序）
+                    if !parent.pending.is_empty() {
+                        parent
+                            .out
+                            .push(HtmlNode::Text(std::mem::take(&mut parent.pending)));
                     }
-                    map
-                };
-
-                let child_in_pre = tag_name == "pre" || in_pre;
-                let children = self.collect_children_with_opts(child, child_in_pre);
-
-                let children = if tag_name == "head" {
-                    children
-                        .into_iter()
-                        .filter(|c| {
-                            if let HtmlNode::Element(e) = c {
-                                e.tag == HtmlTag::Style
-                            } else {
-                                false
-                            }
-                        })
-                        .collect()
-                } else {
-                    children
-                };
-
-                result.push(HtmlNode::Element(HtmlElement {
-                    tag: HtmlTag::from_str(&tag_name),
-                    attrs: attr_map,
-                    children,
-                }));
-            } else if child.is_document {
-                // Document node - recurse into children, preserving in_pre context
-                let doc_children = self.collect_children_with_opts(child, in_pre);
-                result.extend(doc_children);
-            } else {
-                // Text or comment node
-                if let Some(ref text) = *child.text_content.borrow() {
-                    pending_text.push_str(text.as_ref());
+                    let children = if tag_name == "head" {
+                        done.out
+                            .into_iter()
+                            .filter(
+                                |c| matches!(c, HtmlNode::Element(e) if e.tag == HtmlTag::Style),
+                            )
+                            .collect()
+                    } else {
+                        done.out
+                    };
+                    parent.out.push(HtmlNode::Element(HtmlElement {
+                        tag: HtmlTag::from_str(&tag_name),
+                        attrs,
+                        children,
+                    }));
+                }
+                None => {
+                    // document 透传：与原实现一致（不 flush 父帧 pending）
+                    parent.out.extend(done.out);
                 }
             }
         }
 
-        // Flush remaining text
-        // 同样不做 trim：保留原始空白，交给 styled 层的块级边界去空。
-        let text = pending_text.clone();
-        if !text.is_empty() {
-            result.push(HtmlNode::Text(text));
-        }
-
-        result
+        Vec::new()
     }
 }
 

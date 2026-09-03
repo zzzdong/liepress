@@ -7,7 +7,7 @@
 //! 样式枚举（`TextDecoration`/`TextAlign`/`WhiteSpace`/`ObjectFit` 等）以
 //! [`crate::ast`] 为唯一真源，文档层不再重复定义，直接复用。
 
-use crate::ast::{ObjectFit, TextAlign, TextDecoration, WhiteSpace};
+use crate::ast::{ObjectFit, PageBreak, TextAlign, TextDecoration, WhiteSpace};
 use lievisual::Color;
 
 /// 已解析的文档样式（布局/分页使用）。
@@ -67,6 +67,10 @@ pub struct ResolvedStyle {
     pub table_cell_padding_v_pt: f32,
     pub table_header_bg: Option<Color>,
     pub table_alt_row_bg: Option<Color>,
+
+    // 分页控制（投影自 ast::Style；仅分页后端 PDF 消费，SVG/PNG 单画布忽略）
+    pub page_break_before: PageBreak,
+    pub page_break_after: PageBreak,
 }
 
 impl Default for ResolvedStyle {
@@ -107,6 +111,8 @@ impl Default for ResolvedStyle {
             table_cell_padding_v_pt: 2.0,
             table_header_bg: None,
             table_alt_row_bg: None,
+            page_break_before: PageBreak::Auto,
+            page_break_after: PageBreak::Auto,
         }
     }
 }
@@ -162,6 +168,8 @@ impl From<crate::ast::Style> for ResolvedStyle {
             table_cell_padding_v_pt: s.table_cell_padding_v_pt,
             table_header_bg: s.table_header_bg,
             table_alt_row_bg: s.table_alt_row_bg,
+            page_break_before: s.page_break_before,
+            page_break_after: s.page_break_after,
         }
     }
 }

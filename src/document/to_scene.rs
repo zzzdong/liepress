@@ -2,7 +2,6 @@
 //!
 //! 这是 PNG / SVG 输出后端共用的统一转换层：两个后端都先调用 [`document_to_scene`]
 //! 构造 `lievisual::Scene`，再分别委托给 lievisual 的 `VelloPixmapRenderer` / `SvgRenderer`，
-//! 从而移除原先手写的 vello_cpu / resvg 绘制逻辑。
 //!
 //! 坐标约定：转换全程在 pt 坐标系下进行，最后统一乘 `scale = dpi / 72` 归一到 px；
 //! 这样 PNG 后端按 `scale` 设置画布像素尺寸，SVG 后端通过 `Scene.scale` 让 `viewBox`
@@ -159,7 +158,16 @@ impl SceneBuilder {
     ///
     /// 坐标：`position = (x + bounds.x0, y + bounds.y0)`，即行左上角（lievisual 的
     /// `baseline = Top` 语义）。`family` 为块级字体族（run 不携带族名）。
-    fn text_line(&mut self, line: &TextLine, x: f64, y: f64, family: &[String]) {
+    /// `line_height` 为该行所属块的行高（pt，绝对值）；与 `draw_block` 的垂直步进
+    /// 同源，保证字形排版与行距一致。
+    fn text_line(
+        &mut self,
+        line: &TextLine,
+        x: f64,
+        y: f64,
+        family: &[String],
+        line_height: Option<f64>,
+    ) {
         if line.runs.is_empty() {
             return;
         }
@@ -206,6 +214,7 @@ impl SceneBuilder {
                 TextBaseline::Alphabetic,
                 run.baseline_shift as f64,
                 default_color,
+                line_height,
             );
             spans.push(RichSpan::new(run.text.clone(), style));
         }
@@ -220,6 +229,7 @@ impl SceneBuilder {
             TextBaseline::Top,
             0.0,
             default_color,
+            line_height,
         );
 
         // 使用 lievisual 的文本排版功能：预先用 `layout_text` 排好版，作为预排版
@@ -260,6 +270,7 @@ impl SceneBuilder {
             TextBaseline::Top,
             0.0,
             style.color,
+            resolved_line_height(style),
         );
         let span = RichSpan::new(text.to_string(), lv_style.clone());
         let prelayout = lievisual::text::layout_text(std::slice::from_ref(&span), None);
@@ -317,7 +328,7 @@ impl SceneBuilder {
                 let family = &style.font_family;
                 let mut ly = y;
                 for line in lines {
-                    self.text_line(line, x, ly, family);
+                    self.text_line(line, x, ly, family, resolved_line_height(style));
                     ly += style.line_height_pt as f64;
                 }
             }
@@ -330,7 +341,13 @@ impl SceneBuilder {
                 let family = &style.font_family;
                 let mut ly = y + CODE_PADDING;
                 for line in lines {
-                    self.text_line(line, x + CODE_PADDING, ly, family);
+                    self.text_line(
+                        line,
+                        x + CODE_PADDING,
+                        ly,
+                        family,
+                        resolved_line_height(style),
+                    );
                     ly += style.line_height_pt as f64;
                 }
             }
@@ -605,6 +622,10 @@ impl SceneBuilder {
 }
 
 /// 构造一个 `lievisual::TextStyle`。
+///
+/// `line_height` 为绝对行高（pt）；`None` 表示未声明（字体默认行高）。
+/// 必须与 `draw_block` 的垂直步进（`style.line_height_pt`）同源，否则
+/// CSS 行高只改变行距、字形盒却保持字体默认，视觉上「行距松了字还挤在一起」。
 #[allow(clippy::too_many_arguments)]
 fn text_style(
     family: &str,
@@ -616,6 +637,7 @@ fn text_style(
     baseline: TextBaseline,
     baseline_shift: f64,
     _default_color: LColor,
+    line_height: Option<f64>,
 ) -> LTextStyle {
     let (underline, strikethrough) = match decoration {
         lievisual::text::TextDecoration::None => (false, false),
@@ -633,7 +655,7 @@ fn text_style(
             FontStyle::Normal
         },
         font_width: FontWidth::Normal,
-        line_height: None,
+        line_height,
         letter_spacing: 0.0,
         underline,
         underline_color: None,
@@ -647,6 +669,11 @@ fn text_style(
         align: TextAlign::Left,
         baseline,
     }
+}
+
+/// 从投影样式的 `line_height_pt` 取排版行高（0 = 未声明 → 字体默认）。
+fn resolved_line_height(style: &ResolvedStyle) -> Option<f64> {
+    (style.line_height_pt > 0.0).then_some(style.line_height_pt as f64)
 }
 
 /// 估算单行文本宽度（pt）。
