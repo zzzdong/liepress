@@ -58,6 +58,10 @@ pub fn markdown_to_dom_with_resolver(
 
     let mut style_sheets: Vec<String> = Vec::new();
 
+    // `<style>` 块累积缓冲区：pulldown-cmark 0.13 把 `<style>` 块按行拆分为多个
+    // 独立 `Html` 事件逐行输出，需在接收到 `</style>` 前持续累积各行。
+    let mut style_buffer: Option<String> = None;
+
     for event in parser {
         match event {
             Event::Start(tag) => {
@@ -172,24 +176,72 @@ pub fn markdown_to_dom_with_resolver(
                 attach(&mut stack, &mut root, &mut el);
             }
             Event::Html(raw) => {
-                // 内嵌原始 HTML：用片段解析器递归成节点，回退到文本。
-                let frag = crate::dom::parse_html_fragment(&raw);
-                for node in frag {
-                    if let HtmlNode::Element(ref e) = node
-                        && e.tag == HtmlTag::Style
-                        && let Some(css) = e.children.first().and_then(|c| match c {
-                            HtmlNode::Text(t) => Some(t.clone()),
-                            _ => None,
-                        })
-                    {
-                        style_sheets.push(css);
+                // 块级原始 HTML。pulldown-cmark 0.13 把 `<style>` 块按行拆成多个独立的
+                // `Html` 事件逐行输出，而非整块一次给出。因此遇到 `<style>` 开端须持续
+                // 累积各行到缓冲区，直到 `</style>` 出现，再抽取其中的 CSS 文本。
+                // 否则每行被单独 parse_html_fragment，只会把首行 `<style>\n` 误抽成空串、
+                // 其余规则作为游离文本混入正文。
+                let t = raw.trim();
+                let is_style_open = t.starts_with("<style") && !t.starts_with("</style");
+                let is_style_close = t.contains("</style");
+                if is_style_open {
+                    if style_buffer.is_none() {
+                        if is_style_close {
+                            // 单行完整 `<style>...</style>`：直接抽取 CSS 即可。
+                            if let Some(css) = extract_style_content(&raw) {
+                                style_sheets.push(css);
+                            }
+                            continue;
+                        }
+                        // 开标签且无闭标签：开始累积，等待 `</style>`。
+                        style_buffer = Some(raw.to_string());
                         continue;
                     }
-                    if let Some(parent) = stack.last_mut() {
-                        parent.children.push(node);
-                    } else {
-                        root.children.push(node);
+                }
+                if let Some(buf) = style_buffer.as_mut() {
+                    buf.push_str(&raw);
+                    if is_style_close {
+                        if let Some(css) = extract_style_content(buf) {
+                            style_sheets.push(css);
+                        }
+                        style_buffer = None;
                     }
+                    continue;
+                }
+                // 普通块级原始 HTML：片段自包含，直接解析插入父节点。
+                push_raw_html(&mut stack, &mut root, &mut style_sheets, &raw);
+            }
+            Event::InlineHtml(raw) => {
+                // 行内原始 HTML：pulldown-cmark 0.13 会把 `<span>x</span>` 拆成三个事件
+                // `InlineHtml("<span>")` + `Text(x)` + `InlineHtml("</span>")`。
+                // 因此必须像 Start/End 一样处理：开标签压栈（后续内容落入其中），
+                // 闭标签出栈并挂回父节点；自包含元素（如 `<b>x</b>`）或 void 元素
+                // （如 `<br>`）则作为整体直接插入父节点。
+                let t = raw.trim();
+                if t.starts_with("</") {
+                    // 闭标签：弹出栈顶元素并挂回父节点（与 Event::End 逻辑一致）。
+                    if stack.len() > 1 {
+                        if let Some(closed) = stack.pop() {
+                            let node = HtmlNode::Element(closed);
+                            if let Some(parent) = stack.last_mut() {
+                                parent.children.push(node);
+                            } else {
+                                root.children.push(node);
+                            }
+                        }
+                    }
+                } else if raw_is_opening_tag(t) {
+                    // 开标签：解析为元素并压栈，使后续事件落入其中。
+                    let frag = crate::dom::parse_html_fragment(t);
+                    for node in frag {
+                        if let HtmlNode::Element(e) = node {
+                            stack.push(e);
+                            break;
+                        }
+                    }
+                } else {
+                    // 自包含片段（如 `<b>粗体</b>`）或 void 元素：整体插入父节点。
+                    push_raw_html(&mut stack, &mut root, &mut style_sheets, &raw);
                 }
             }
             Event::SoftBreak => push_text(&mut stack, &mut root, "\n"),
@@ -242,6 +294,71 @@ pub fn markdown_to_dom_with_resolver(
     // 统一内嵌图片（本地路径 → data URI；data URI 保留；网络 URL 不处理）
     super::resource::embed_images(&mut doc, resolver);
     doc
+}
+
+/// 将一段原始 HTML（块级或行内）解析为片段节点，插入到当前父元素（或根）。
+///
+/// 片段内的 `<style>` 会被抽取为样式表（`style_sheets`），其余节点按原样挂载。
+/// 行内 `<span class="x">…</span>` 经此解析后保留标签与 `class`，下游 CSS 引擎
+/// 即可命中对应样式（如 `.highlight` / `.warning` / `.tagline`）。
+fn push_raw_html(
+    stack: &mut [HtmlElement],
+    root: &mut HtmlElement,
+    style_sheets: &mut Vec<String>,
+    raw: &str,
+) {
+    let frag = crate::dom::parse_html_fragment(raw);
+    for node in frag {
+        if let HtmlNode::Element(ref e) = node
+            && e.tag == HtmlTag::Style
+            && let Some(css) = e.children.first().and_then(|c| match c {
+                HtmlNode::Text(t) => Some(t.clone()),
+                _ => None,
+            })
+        {
+            style_sheets.push(css);
+            continue;
+        }
+        if let Some(parent) = stack.last_mut() {
+            parent.children.push(node);
+        } else {
+            root.children.push(node);
+        }
+    }
+}
+
+/// 判断一段行内原始 HTML 是否为「开标签」（如 `<span class="x">`）。
+///
+/// 仅当形如 `<tag ...>`（以 `<` 起、`>` 止，非 `</` 闭标签、非 `/>` 自闭合、
+/// 非 void 元素、且不含 `</` 闭合部分）时返回 `true`，应作为打开容器压栈。
+/// 自包含元素（如 `<b>x</b>`）、`</tag>` 闭标签、void 元素（如 `<br>`）均返回 `false`。
+fn raw_is_opening_tag(t: &str) -> bool {
+    if !(t.starts_with('<') && t.ends_with('>')) {
+        return false;
+    }
+    if t.starts_with("</") || t.ends_with("/>") || t.contains("</") {
+        return false;
+    }
+    let tag = t
+        .trim_start_matches('<')
+        .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .next()
+        .unwrap_or("");
+    const VOID: &[&str] = &[
+        "br", "hr", "img", "input", "meta", "link", "col", "area", "base", "source", "wbr",
+        "embed", "param", "track",
+    ];
+    !VOID.contains(&tag)
+}
+
+/// 从累积的 `<style>…</style>` 原始文本中提取 CSS 内容（即开标签与闭标签之间的部分）。
+fn extract_style_content(raw: &str) -> Option<String> {
+    let open = raw.find("<style")?;
+    // 找到 `<style` 之后第一个 `>`，作为 CSS 起始。
+    let css_start = open + raw[open..].find('>')? + 1;
+    // 找到 `</style` 的起始作为 CSS 结束。
+    let css_end = raw[css_start..].find("</style")? + css_start;
+    Some(raw[css_start..css_end].to_string())
 }
 
 fn event_text(event: &Event) -> Option<String> {

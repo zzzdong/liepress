@@ -20,7 +20,7 @@
 
 use lievisual::FontWeight;
 
-use crate::ast::{Node, NodeKind, computed_style_to_text_style};
+use crate::ast::{Node, NodeKind, Style, computed_style_to_text_style};
 use crate::document::ext_render::{RenderOpts, find_renderer, parse_info_string};
 use crate::document::highlight::highlight_code;
 use crate::document::layout::{
@@ -732,6 +732,9 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
             | NodeKind::Span { children: inner } => {
                 let mut merged = inherited.clone();
                 apply_node_semantic_style(&child.kind, &mut merged);
+                // 叠加该节点经 CSS 解析的样式（class/id/标签选择器，如 `.highlight`
+                // 的背景色、`mark` 的底色、`<span style="...">` 内联样式），使后代文本继承。
+                merge_css_style(&mut merged, &child.style);
                 if let NodeKind::Link { url, title, .. } = &child.kind {
                     // 链接正文的「蓝色 + 下划线」来自 CSS 的 `a` 选择器（写在节点的
                     // `style` 上，而非 NodeKind 语义），必须显式叠加到正文样式，
@@ -776,7 +779,10 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
                         child.style.font_family.join(", ")
                     };
                     style.color = child.style.color;
-                    style.background_color = child.style.background_color;
+                    // 背景色以 CSS `code` 选择器为准；若 CSS 未指定（如直接构造的节点），
+                    // 回退到与默认样式表一致的浅灰底 #f6f8fa，保证行内代码始终与正文区分。
+                    style.background_color =
+                        child.style.background_color.or_else(|| Some(Color::rgb(246, 248, 250)));
                     segments.push((code.clone(), style));
                 }
             }
@@ -809,6 +815,27 @@ fn apply_node_semantic_style(kind: &NodeKind, style: &mut TextStyle) {
         NodeKind::Superscript { .. } => style.baseline_shift = style.font_size * 0.3,
         _ => {}
     }
+}
+
+/// 把节点经 CSS 解析得到的样式（`child.style`，含 class/id/标签选择器，
+/// 如 `.highlight` 的背景色、`mark` 的底色）叠加到文本样式上，使后代文本继承。
+///
+/// 仅当 CSS 提供了「区别于继承默认值」的具体值才覆盖，避免把继承的颜色/字体等
+/// 清零。`background_color` / `font_family` 为可选/可空，仅在有值时覆盖；
+/// `color` / `font_style` / `font_weight` / `text_decoration` / `font_size` 虽在
+/// `ast::Style` 上始终有默认值，但该默认已是 CSS 继承后的结果，故直接采用即可。
+fn merge_css_style(merged: &mut TextStyle, css: &Style) {
+    merged.color = css.color;
+    if let Some(bg) = css.background_color {
+        merged.background_color = Some(bg);
+    }
+    merged.font_style = css.font_style;
+    merged.font_weight = css.font_weight;
+    set_decoration(merged, css.text_decoration);
+    if !css.font_family.is_empty() {
+        merged.font_family = css.font_family.join(", ");
+    }
+    merged.font_size = css.font_size_pt as f64;
 }
 
 /// 对展平后的文本段序列做 CSS 空白折叠与合并（`white-space: normal`）。

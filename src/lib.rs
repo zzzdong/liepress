@@ -855,14 +855,21 @@ fn html_to_styled_node(
     let builtin_css = ast::presets::DEFAULT_CSS;
     let mut engine =
         css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
+
+    // 合并所有「用户级」CSS 到单次 with_user_css 调用，避免文档 <style> 规则被 user_css 覆盖。
+    // 优先级：文档 <style> < 用户 CSS（用户级覆盖文档级），故 user_css 置于末尾。
+    let mut merged_user_css = String::new();
     for sheet in &doc.style_sheets {
-        engine = engine
-            .with_user_css(sheet)
-            .map_err(crate::error::Error::CssParseError)?;
+        merged_user_css.push_str(sheet);
+        merged_user_css.push('\n');
     }
     if let Some(css) = user_css.filter(|c| !c.is_empty()) {
+        merged_user_css.push_str(css);
+        merged_user_css.push('\n');
+    }
+    if !merged_user_css.trim().is_empty() {
         engine = engine
-            .with_user_css(css)
+            .with_user_css(&merged_user_css)
             .map_err(crate::error::Error::CssParseError)?;
     }
     if strict {
@@ -923,15 +930,22 @@ fn html_to_layout(
     let mut engine =
         css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
 
+    // 合并所有「用户级」CSS 到单次 with_user_css 调用：
+    // `with_user_css` 会整体替换 user_rules，循环/分次调用会互相覆盖，
+    // 导致文档内 <style> 规则被后续 user_css 覆盖而失效。
+    // 优先级：文档 <style> < 用户 CSS（用户级覆盖文档级），故 user_css 置于末尾。
+    let mut merged_user_css = String::new();
     for sheet in &doc.style_sheets {
-        engine = engine
-            .with_user_css(sheet)
-            .map_err(crate::error::Error::CssParseError)?;
+        merged_user_css.push_str(sheet);
+        merged_user_css.push('\n');
     }
-
     if let Some(css) = user_css.filter(|c| !c.is_empty()) {
+        merged_user_css.push_str(css);
+        merged_user_css.push('\n');
+    }
+    if !merged_user_css.trim().is_empty() {
         engine = engine
-            .with_user_css(css)
+            .with_user_css(&merged_user_css)
             .map_err(crate::error::Error::CssParseError)?;
     }
 
