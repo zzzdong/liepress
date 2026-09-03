@@ -43,12 +43,16 @@ const FONTS_TO_LOAD = [
     {
         name: 'Noto Serif SC',
         family: 'serif',
+        // 同时注册到 monospace：代码块（generic family=monospace）遇到中文时
+        // 由 fontique 在该通用族内的 CJK 字体回退，从而正常显示中文。
+        families: ['serif', 'monospace'],
         url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf',
     },
     // 中文无衬线字体（Noto Sans SC）
     {
         name: 'Noto Sans SC',
         family: 'sans-serif',
+        families: ['sans-serif', 'monospace'],
         url: 'https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf',
     },
 ];
@@ -201,9 +205,14 @@ async function loadFonts() {
             console.log('Font registered with WASM:', font.name);
 
             // 2. 以通用族名注册到 WASM（供 CSS generic family 关键字 serif/sans-serif/monospace 使用）
-            //    同一个字体字节可以注册多次到不同名称下，parley 的 fontdb 会共享数据
-            wasmModule.register_font_bytes(font.family, bytes);
-            console.log('Font registered with WASM as generic family:', font.family);
+            //    同一个字体字节可以注册多次到不同名称下，parley 的 fontdb 会共享数据。
+            //    优先使用 families（支持同时注册到多个通用族，如 CJK 字体额外注册到 monospace），
+            //    否则回退到单个 family。
+            const families = font.families || [font.family];
+            for (const fam of families) {
+                wasmModule.register_font_bytes(fam, bytes);
+                console.log('Font registered with WASM as generic family:', fam);
+            }
 
             // 3. 注册到浏览器中（用于编辑器等 HTML 渲染）
             try {

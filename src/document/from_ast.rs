@@ -764,11 +764,19 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
             NodeKind::InlineCode { code } => {
                 if !code.is_empty() {
                     let mut style = inherited.clone();
-                    style.font_family = "monospace".to_string();
-                    // 行内代码用灰色背景框区分（PDF/PNG 由 draw_text_run 依据
-                    // background_color 绘制矩形；SVG/HTML 由样式输出）。
-                    style.background_color = Some(Color::rgb(238, 240, 244));
-                    style.color = Color::rgb(199, 52, 29);
+                    // 行内代码字体与配色尊重 CSS 中 `code` 选择器的设定
+                    // （默认 default.css 为 monospace, sans-serif + 浅灰底深字）；
+                    // 用户可在自定义 CSS 中覆盖。CSS 未指定字体时回退 monospace，
+                    // 避免回退到继承的段落字体。
+                    // 注意：这里的 child.style 是 <code> 节点经 CSS 解析后的样式
+                    // （to_ast.rs 已按 `code` 选择器写入），并非来自 inherited 推断。
+                    style.font_family = if child.style.font_family.is_empty() {
+                        "monospace".to_string()
+                    } else {
+                        child.style.font_family.join(", ")
+                    };
+                    style.color = child.style.color;
+                    style.background_color = child.style.background_color;
                     segments.push((code.clone(), style));
                 }
             }
