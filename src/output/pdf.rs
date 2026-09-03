@@ -26,7 +26,7 @@ use krilla::text::Font;
 use crate::ast::PageBreak;
 use crate::document::layout::{Block, BlockKind, Document, TableRow};
 use crate::document::text::{
-    TextAlign as LayoutAlign, TextDecoration, TextLine, TextRun, layout_text,
+    LineMetrics, TextAlign as LayoutAlign, TextDecoration, TextLine, TextRun, layout_text,
 };
 use crate::document::types::page::PageSettings;
 use crate::document::types::{ResolvedStyle, TextAlign};
@@ -35,7 +35,7 @@ use lievisual::{Color, geometry::Point};
 
 use super::common::{
     BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, apply_heading_style, block_height, blockquote_content_height,
-    heading_font_size, text_style, text_style_from_resolved,
+    heading_font_size, lines_visual_height, text_style, text_style_from_resolved,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -511,7 +511,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             crate::document::text::layout_text(&segments, None, crate::ast::TextAlign::Left);
         if let Some(tl) = layout.lines.last() {
             for run in &tl.runs {
-                self.draw_text_run(run, Point::new(x, y));
+                self.draw_text_run(run, Point::new(x, y), &tl.metrics);
             }
         }
     }
@@ -548,7 +548,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             _ => x,
         };
         for run in &line.runs {
-            self.draw_text_run(run, Point::new(tx, y));
+            self.draw_text_run(run, Point::new(tx, y), &line.metrics);
         }
     }
 
@@ -623,7 +623,10 @@ impl<'a, 's> PdfRenderer<'a, 's> {
     }
 
     /// 绘制文本 run（接受 [`TextRun`]，自闭环类型，可直接消费）。
-    fn draw_text_run(&mut self, run: &TextRun, position: Point) {
+    ///
+    /// `metrics` 为所属行的 [`LineMetrics`]（行内背景矩形的垂直定位需要
+    /// ascent / descent，使背景对齐文本 em 盒而非行顶）。
+    fn draw_text_run(&mut self, run: &TextRun, position: Point, metrics: &LineMetrics) {
         use krilla::text::GlyphId;
 
         if run.glyphs.is_empty() {
@@ -633,9 +636,12 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         if let Some(bg) = run.background_color {
             let pad = run.font_size * 0.1;
             let rx = position.x as f32 + run.baseline_x - pad;
-            let ry = position.y as f32;
+            // 背景矩形垂直对齐文本 em 盒：em 盒顶 = 基线 - ascent。
+            // 行高 > 字号时行顶到 em 盒顶有半个 leading，若从行顶起画
+            // 背景会整体偏上、底部盖不住字形。
+            let ry = position.y as f32 + run.baseline_y - metrics.ascent - pad * 0.5;
             let rw = run.advance + pad * 2.0;
-            let rh = run.font_size * 1.25;
+            let rh = metrics.ascent + metrics.descent + pad;
             let mut pb = PathBuilder::new();
             pb.move_to(rx, ry);
             pb.line_to(rx + rw, ry);
@@ -782,7 +788,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             let line_x = x + line.bounds.x0;
             let line_y = y + line.bounds.y0;
             for run in &line.runs {
-                self.draw_text_run(run, Point::new(line_x, line_y));
+                self.draw_text_run(run, Point::new(line_x, line_y), &line.metrics);
             }
         }
     }
@@ -813,8 +819,9 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 } else {
                     18.0
                 };
-                let n = lines.len().max(1);
-                let h = n as f64 * lh + 8.0;
+                // 背景高度取末行 bounds.y1（含空行占位与每行真实行高），
+                // 与 block_height 一致；`行数 × 行高` 会少计空行导致末行溢出背景。
+                let h = lines_visual_height(lines, lh) + 8.0;
                 self.draw_rect(x, y, self.content_w, h, Some(bg), None);
                 self.draw_doc_lines(lines, x + 4.0, y + 4.0);
             }
@@ -853,7 +860,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     let layout = layout_text(&segments, None, LayoutAlign::Left);
                     if let Some(tl) = layout.lines.last() {
                         for run in &tl.runs {
-                            self.draw_text_run(run, Point::new(x, y));
+                            self.draw_text_run(run, Point::new(x, y), &tl.metrics);
                         }
                     }
                 }
@@ -1212,27 +1219,20 @@ fn paginate_layout(document: &Document, settings: &PageSettings) -> Vec<PdfPage>
             // 自然跨页；仅当确实放不下一页时才按行切分，避免对短块引入克隆开销。
             if block.splittable && h > content_h {
                 let line_block = match &block.kind {
-                    BlockKind::Paragraph { lines } if lines.len() > 1 => Some((
-                        lines.as_slice(),
-                        (block.style.line_height_pt as f64).max(1.0),
-                        0.0,
-                    )),
+                    BlockKind::Paragraph { lines } if lines.len() > 1 => {
+                        Some((lines.as_slice(), 0.0))
+                    }
                     BlockKind::CodeBlock { lines, .. } if lines.len() > 1 => {
-                        let lh = if block.style.line_height_pt > 0.0 {
-                            block.style.line_height_pt as f64
-                        } else {
-                            18.0
-                        };
-                        Some((lines.as_slice(), lh, 4.0))
+                        Some((lines.as_slice(), 4.0))
                     }
                     _ => None,
                 };
-                if let Some((lines, line_h, pad_v)) = line_block {
+                if let Some((lines, pad_v)) = line_block {
                     if force_break_before {
                         ctx.push_page();
                     }
                     paginate_lines_block(
-                        block, lines, line_h, pad_v, &mut ctx, content_x, content_y, content_h,
+                        block, lines, pad_v, &mut ctx, content_x, content_y, content_h,
                     );
                     if block.style.page_break_after == PageBreak::Always {
                         ctx.push_page();
@@ -1402,15 +1402,15 @@ fn rebase_lines(lines: &[TextLine], base_y: f64) -> Vec<TextLine> {
 
 /// 对带 `lines` 的可分割块（段落 / 代码块）按行分页。
 ///
-/// 与 [`paginate_table`] 同理，但以「文本行」为切分单位：行高按 `line_h` 固定步进
-/// （与 `block_height` 对 Paragraph/CodeBlock 的度量一致），首片段预留 `margin_top`、
+/// 与 [`paginate_table`] 同理，但以「文本行」为切分单位：每页能容纳的行数按行的
+/// 真实 `bounds` 跨度计算（空行不产出 `TextLine`，但其占位已体现在相邻行的
+/// `bounds` 间距中，不能按 `行数 × line_height` 估高），首片段预留 `margin_top`、
 /// 末片段追加 `margin_bottom`，中间片段零外边距。每个页面片段通过 [`rebase_lines`]
 /// 重新基准化，保证跨页后各片段仍从自身原点正确绘制。
 #[allow(clippy::too_many_arguments)]
 fn paginate_lines_block(
     block: &Block,
     lines: &[TextLine],
-    line_h: f64,
     pad_v: f64,
     ctx: &mut PaginateCtx,
     content_x: f64,
@@ -1430,12 +1430,15 @@ fn paginate_lines_block(
         let leading = if i == 0 { margin_top } else { 0.0 };
         let avail = (content_h - *ctx.used).max(0.0);
         let usable = (avail - leading - overhead).max(0.0);
-        let mut fit = if line_h > 0.0 {
-            (usable / line_h).floor() as usize
-        } else {
-            n - i
-        };
-        fit = fit.min(n - i);
+        // 以首行 bounds.y0 为基准，找能放进 usable 的最大行数（按真实 bounds 跨度）。
+        let mut fit = 0usize;
+        while i + fit < n {
+            let span = lines[i + fit].bounds.y1 - lines[i].bounds.y0;
+            if span > usable {
+                break;
+            }
+            fit += 1;
+        }
 
         if fit == 0 {
             // 当前页连一行（含外边距/内边距）都放不下：换页重试。
@@ -1444,16 +1447,19 @@ fn paginate_lines_block(
             }
             // 换页后仍放不下（单行比整页还高）时至少放一行，宁可溢出也不丢内容。
             let usable = (content_h - leading - overhead).max(0.0);
-            fit = if line_h > 0.0 {
-                ((usable / line_h).floor() as usize).max(1)
-            } else {
-                (n - i).max(1)
-            };
-            fit = fit.min(n - i);
+            fit = 1;
+            while i + fit < n {
+                let span = lines[i + fit].bounds.y1 - lines[i].bounds.y0;
+                if span > usable {
+                    break;
+                }
+                fit += 1;
+            }
         }
 
         let seg = rebase_lines(&lines[i..i + fit], lines[i].bounds.y0);
-        let seg_h = fit as f64 * line_h + overhead;
+        // 片段高度按重定基后的末行底边计算（含空行占位），与 block_height 一致。
+        let seg_h = lines_visual_height(&seg, 0.0) + overhead;
         let kind = match &block.kind {
             BlockKind::Paragraph { .. } => BlockKind::Paragraph { lines: seg },
             BlockKind::CodeBlock { code, lang, .. } => BlockKind::CodeBlock {

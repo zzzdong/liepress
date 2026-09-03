@@ -16,6 +16,20 @@ pub const BQ_PAD_X: f64 = 8.0;
 /// 引用块上下内边距（pt）。文本在引用块内垂直居中，此值即上下均分留白的一半。
 pub const BQ_PAD_Y: f64 = 6.0;
 
+/// 带行文本块（段落 / 代码块）的视觉高度（pt，不含上下 padding）。
+///
+/// 以最后一行的 `bounds.y1` 为准。lievisual 对空行不产出 `TextLine`
+/// （仅推进行位置），故 `lines.len() × line_height` 会少计空行占位——
+/// 表现为代码块背景比正文矮、末行文字溢出背景。`bounds` 的累计偏移
+/// 已包含空行推进与每行真实行高，直接取末行底边即为准确高度。
+/// `lines` 为空时回退为单行高度。
+pub fn lines_visual_height(lines: &[TextLine], fallback_line_h: f64) -> f64 {
+    lines
+        .last()
+        .map(|l| l.bounds.y1.max(fallback_line_h))
+        .unwrap_or(fallback_line_h)
+}
+
 /// 块高度（含上下外边距）。
 ///
 /// 使不同元素之间产生垂直间距。容器块（List/Blockquote/Document 等）先累加
@@ -26,9 +40,11 @@ pub fn block_height(block: &Block, settings: &PageSettings, x: f64) -> f64 {
         BlockKind::Heading { children, .. } => {
             children.iter().map(|c| block_height(c, settings, x)).sum()
         }
-        BlockKind::Paragraph { lines } => (lines.len().max(1) as f64) * style.line_height_pt as f64,
+        BlockKind::Paragraph { lines } => {
+            lines_visual_height(lines, style.line_height_pt as f64)
+        }
         BlockKind::CodeBlock { lines, .. } => {
-            (lines.len().max(1) as f64) * style.line_height_pt as f64 + 8.0
+            lines_visual_height(lines, style.line_height_pt as f64) + 8.0
         }
         BlockKind::ThematicBreak => 4.0,
         BlockKind::Image(img) => {

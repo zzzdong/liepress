@@ -178,17 +178,22 @@ impl SceneBuilder {
         let family_str = family.join(", ");
 
         // 行内背景：逐 run 测量宽度并绘制矩形（顺序累积 x 偏移）。
+        // 垂直对齐文本 em 盒（基线 - ascent 到基线 + descent），与 PDF 后端一致；
+        // 从行顶起画会因行高 leading 使背景整体偏上。
+        let asc = line.metrics.ascent as f64;
+        let desc = line.metrics.descent as f64;
         let mut cursor = 0.0_f64;
         for run in &line.runs {
             let fs = run.font_size as f64;
             if let Some(bg) = run.background_color {
                 let w = measure_width(&run.text, &family_str, fs, default_color);
                 let pad = fs * 0.1;
+                let bg_top = line_top + run.baseline_y as f64 - asc - pad * 0.5;
                 self.rect(
                     line_left + cursor - pad,
-                    line_top - pad,
+                    bg_top,
                     w + 2.0 * pad,
-                    fs * 1.25,
+                    asc + desc + pad,
                     Some(bg),
                     None,
                 );
@@ -326,10 +331,10 @@ impl SceneBuilder {
                     );
                 }
                 let family = &style.font_family;
-                let mut ly = y;
+                // 行垂直位置由 line.bounds.y0 携带（含累计行距与空行占位），
+                // 这里传入块顶 y 即可，切勿再按行步进累加（会双重计数）。
                 for line in lines {
-                    self.text_line(line, x, ly, family, resolved_line_height(style));
-                    ly += style.line_height_pt as f64;
+                    self.text_line(line, x, y, family, resolved_line_height(style));
                 }
             }
             BlockKind::CodeBlock { lines, .. } => {
@@ -339,16 +344,14 @@ impl SceneBuilder {
                     .unwrap_or_else(|| lievisual::Color::rgb(245, 245, 245));
                 self.rect(x, y, content_w, h, Some(code_bg), None);
                 let family = &style.font_family;
-                let mut ly = y + CODE_PADDING;
                 for line in lines {
                     self.text_line(
                         line,
                         x + CODE_PADDING,
-                        ly,
+                        y + CODE_PADDING,
                         family,
                         resolved_line_height(style),
                     );
-                    ly += style.line_height_pt as f64;
                 }
             }
             BlockKind::ThematicBreak => {
