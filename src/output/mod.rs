@@ -10,7 +10,11 @@
 //! / `embed_local_images`）属于**输入侧**，位于 [`crate::dom::md_converter`]，
 //! 不属于本输出层。
 
-pub use pdf::PdfDocumentGenerator;
+pub use docx::DocxGenerator;
+pub use html::HtmlGenerator;
+pub use pdf::PdfGenerator;
+pub use png::PngGenerator;
+pub use svg::SvgGenerator;
 
 pub mod common;
 pub mod docx;

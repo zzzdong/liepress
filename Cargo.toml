@@ -48,6 +48,8 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 [dev-dependencies]
 lopdf = "0.44"
 zip = "8"
+image = "0.25"
+base64 = "0.23"
 
 [profile.release]
 lto = "thin"

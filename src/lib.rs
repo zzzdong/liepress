@@ -19,7 +19,7 @@ pub use document::types::page::PageSettings;
 pub use dom::md_converter::{embed_local_images, markdown_to_html, markdown_to_html_document};
 pub use dom::parse_html;
 pub use output::html::node_to_html;
-pub use output::pdf::PdfDocumentGenerator;
+pub use output::pdf::PdfGenerator;
 
 /// Markdown 转换配置
 ///
@@ -223,7 +223,7 @@ impl Default for ConvertOptions {
 // ─── 内部渲染辅助函数 ─────────────────────────────────────
 
 fn render_pdf(document: &Document, settings: &PageSettings) -> crate::error::Result<Vec<u8>> {
-    let generator = PdfDocumentGenerator::from_layout(document.clone(), settings.clone());
+    let generator = PdfGenerator::from_layout(document.clone(), settings.clone());
     generator.generate()
 }
 
@@ -766,7 +766,7 @@ pub fn markdown_to_docx(markdown: &str, options: &ConvertOptions) -> crate::erro
     let user_css = resolve_user_css(options, Some(markdown))?;
     let resolver = dom::ResourceResolver::new(None);
     let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
-    let node = html_to_styled_node(
+    let (node, page_settings) = html_to_styled_node(
         &doc,
         if user_css.is_empty() {
             None
@@ -776,7 +776,7 @@ pub fn markdown_to_docx(markdown: &str, options: &ConvertOptions) -> crate::erro
         options.strict,
         options.page_config.as_ref(),
     )?;
-    output::docx::node_to_docx(&node)
+    output::docx::node_to_docx(&node, &page_settings)
 }
 
 /// Markdown 文件 → DOCX（自动将本地图片嵌入为 base64）。
@@ -788,7 +788,7 @@ pub fn markdown_file_to_docx(
     let user_css = resolve_user_css(options, Some(&markdown))?;
     let resolver = dom::ResourceResolver::new(base_dir);
     let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
-    let node = html_to_styled_node(
+    let (node, page_settings) = html_to_styled_node(
         &doc,
         if user_css.is_empty() {
             None
@@ -798,7 +798,7 @@ pub fn markdown_file_to_docx(
         options.strict,
         options.page_config.as_ref(),
     )?;
-    output::docx::node_to_docx(&node)
+    output::docx::node_to_docx(&node, &page_settings)
 }
 
 /// HTML → DOCX（消费 Styled AST，保留语义）。
@@ -809,7 +809,7 @@ pub fn html_to_docx(html: &str, options: &ConvertOptions) -> crate::error::Resul
     let user_css = resolve_user_css(options, None)?;
     let resolver = dom::ResourceResolver::new(None);
     let doc = dom::parse_html_with_resolver(html, &resolver);
-    let node = html_to_styled_node(
+    let (node, page_settings) = html_to_styled_node(
         &doc,
         if user_css.is_empty() {
             None
@@ -819,7 +819,7 @@ pub fn html_to_docx(html: &str, options: &ConvertOptions) -> crate::error::Resul
         options.strict,
         options.page_config.as_ref(),
     )?;
-    output::docx::node_to_docx(&node)
+    output::docx::node_to_docx(&node, &page_settings)
 }
 
 /// HTML 文件 → DOCX（自动将本地图片嵌入为 base64）。
@@ -829,7 +829,7 @@ pub fn html_file_to_docx(path: &Path, options: &ConvertOptions) -> crate::error:
     let resolver = dom::ResourceResolver::new(base_dir);
     let doc = dom::parse_html_with_resolver(&html, &resolver);
     let user_css = resolve_user_css(options, None)?;
-    let node = html_to_styled_node(
+    let (node, page_settings) = html_to_styled_node(
         &doc,
         if user_css.is_empty() {
             None
@@ -839,7 +839,7 @@ pub fn html_file_to_docx(path: &Path, options: &ConvertOptions) -> crate::error:
         options.strict,
         options.page_config.as_ref(),
     )?;
-    output::docx::node_to_docx(&node)
+    output::docx::node_to_docx(&node, &page_settings)
 }
 
 // ─── 内部：HTML → Document 公共逻辑 ──────────────────────────────
@@ -854,7 +854,7 @@ fn html_to_styled_node(
     user_css: Option<&str>,
     strict: bool,
     page_config: Option<&PageConfig>,
-) -> crate::error::Result<crate::ast::Node> {
+) -> crate::error::Result<(crate::ast::Node, PageSettings)> {
     let builtin_css = ast::presets::DEFAULT_CSS;
     let mut engine =
         css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
@@ -889,7 +889,7 @@ fn html_to_styled_node(
     let page_settings =
         PageSettings::from(merged_page_config(engine.page_config(), page_config));
     enrich::enrich_ast(&mut node, &page_settings);
-    Ok(node)
+    Ok((node, page_settings))
 }
 
 /// 依据页面配置设定 CSS 引擎的包含块宽度（盒模型 `%` 的基准）。

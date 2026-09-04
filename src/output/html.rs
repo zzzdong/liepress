@@ -9,14 +9,299 @@
 //! 序列化结果以 `<td>` 表达单元格，表头语义由 CSS 行首样式近似。这是
 //! 当前 `NodeKind` 设计的已知限制，未来可在 `NodeKind` 引入 `TableCell`
 //! 节点以精确还原 `<th>`/`<td>`。
+//!
+//! ## 生成器模式
+//!
+//! 与 [`crate::output::PdfGenerator`] / [`crate::output::DocxGenerator`]
+//! 一致：输出缓冲持有为生成器字段，遍历以 `&mut self` 方法渐进写入，
+//! 替代裸函数 + 外置 `&mut String` 缓冲的形式参数写法。
 
 use crate::ast::{Node, NodeKind, Style, TextAlign};
 
+/// HTML 生成器：持有输出缓冲，以 `&mut self` 方法渐进序列化 AST 节点。
+pub struct HtmlGenerator {
+    out: String,
+}
+
+impl Default for HtmlGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HtmlGenerator {
+    /// 构造空的 HTML 生成器。
+    pub fn new() -> Self {
+        Self { out: String::new() }
+    }
+
+    /// 序列化 `ast::Node` 语义树为 HTML 片段（无 `<html>` 外壳）。
+    pub fn generate(&mut self, root: &Node) -> String {
+        self.serialize_node(root);
+        std::mem::take(&mut self.out)
+    }
+
+    fn serialize_node(&mut self, node: &Node) {
+        let sa = style_attr(&node.style);
+        match &node.kind {
+            NodeKind::Document { children } => {
+                for c in children {
+                    self.serialize_node(c);
+                }
+            }
+            NodeKind::Heading { level, children } => {
+                let lvl = (*level).clamp(1, 6);
+                self.out.push_str(&format!("<h{}{}>", lvl, sa));
+                self.serialize_children(children);
+                self.out.push_str(&format!("</h{}>", lvl));
+            }
+            NodeKind::Paragraph { children } => {
+                self.out.push_str(&format!("<p{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</p>");
+            }
+            NodeKind::List {
+                ordered,
+                start,
+                children,
+            } => {
+                if *ordered {
+                    match start {
+                        Some(s) if *s != 1 => {
+                            self.out.push_str(&format!("<ol start=\"{}\"{}>", s, sa))
+                        }
+                        _ => self.out.push_str(&format!("<ol{}>", sa)),
+                    }
+                } else {
+                    self.out.push_str(&format!("<ul{}>", sa));
+                }
+                for c in children {
+                    self.serialize_node(c);
+                }
+                self.out.push_str(if *ordered { "</ol>" } else { "</ul>" });
+            }
+            NodeKind::ListItem { children } => {
+                self.out.push_str(&format!("<li{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</li>");
+            }
+            NodeKind::TaskListItem { checked, children } => {
+                self.out.push_str(&format!("<li{}>", sa));
+                if *checked {
+                    self.out.push_str("<input checked=\"\" type=\"checkbox\"/> ");
+                } else {
+                    self.out.push_str("<input type=\"checkbox\"/> ");
+                }
+                self.serialize_children(children);
+                self.out.push_str("</li>");
+            }
+            NodeKind::DefinitionList { items } => {
+                self.out.push_str(&format!("<dl{}>", sa));
+                for item in items {
+                    self.out.push_str(&format!("<dt{}>", style_attr(&node.style)));
+                    for c in &item.term {
+                        self.serialize_node(c);
+                    }
+                    self.out.push_str("</dt>");
+                    for c in &item.definition {
+                        self.out.push_str(&format!("<dd{}>", style_attr(&node.style)));
+                        self.serialize_node(c);
+                        self.out.push_str("</dd>");
+                    }
+                }
+                self.out.push_str("</dl>");
+            }
+            NodeKind::FootnoteDef { id, children } => {
+                self.out
+                    .push_str(&format!("<div id=\"{}\" class=\"footnote-def\"{}>", id, sa));
+                for c in children {
+                    self.serialize_node(c);
+                }
+                self.out.push_str("</div>");
+            }
+            NodeKind::Image { src, alt, title } => {
+                self.out.push_str("<img src=\"");
+                self.out.push_str(&escape_attr(src));
+                self.out.push_str("\" alt=\"");
+                self.out.push_str(&escape_attr(alt));
+                if let Some(t) = title {
+                    self.out.push_str("\" title=\"");
+                    self.out.push_str(&escape_attr(t));
+                }
+                self.out.push_str("\"/>");
+            }
+            NodeKind::CodeBlock { code, lang, spans } => {
+                self.out.push_str(&format!("<pre{}><code", sa));
+                if let Some(l) = lang
+                    && !l.is_empty()
+                {
+                    self.out
+                        .push_str(&format!(" class=\"language-{}\"", escape_attr(l)));
+                }
+                self.out.push('>');
+                match spans {
+                    // AST 富化阶段已产出语法高亮：每段一个内联着色的 <span>。
+                    Some(lines) => {
+                        for (i, line) in lines.iter().enumerate() {
+                            if i > 0 {
+                                self.out.push('\n');
+                            }
+                            for span in line {
+                                if span.text.is_empty() {
+                                    continue;
+                                }
+                                let mut css = format!("color:{}", span.color.to_hex());
+                                if span.bold {
+                                    css.push_str(";font-weight:bold");
+                                }
+                                if span.italic {
+                                    css.push_str(";font-style:italic");
+                                }
+                                self.out.push_str(&format!(
+                                    "<span style=\"{}\">{}</span>",
+                                    css,
+                                    escape_html(&span.text)
+                                ));
+                            }
+                        }
+                    }
+                    None => self.out.push_str(&escape_html(code)),
+                }
+                self.out.push_str("</code></pre>");
+            }
+            NodeKind::Blockquote { children } => {
+                self.out.push_str(&format!("<blockquote{}>", sa));
+                for c in children {
+                    self.serialize_node(c);
+                }
+                self.out.push_str("</blockquote>");
+            }
+            NodeKind::ThematicBreak => self.out.push_str(&format!("<hr{}/>", sa)),
+            NodeKind::Table { children, align } => {
+                self.out.push_str(&format!("<table{}>", sa));
+                self.serialize_table_rows(children, align);
+                self.out.push_str("</table>");
+            }
+            NodeKind::TableRow { children } => {
+                // 由父级 Table 调用 serialize_table_rows 时处理 <tr>；
+                // 直接序列化时仍包裹 <tr> 以自洽。
+                self.out.push_str(&format!("<tr{}>", sa));
+                for c in children {
+                    self.serialize_node(c);
+                }
+                self.out.push_str("</tr>");
+            }
+            NodeKind::Text { text } => self.out.push_str(&escape_html(text)),
+            NodeKind::Strong { children } => {
+                self.out.push_str(&format!("<strong{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</strong>");
+            }
+            NodeKind::Emphasis { children } => {
+                self.out.push_str(&format!("<em{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</em>");
+            }
+            NodeKind::InlineCode { code } => {
+                self.out.push_str(&format!("<code{}>", sa));
+                self.out.push_str(&escape_html(code));
+                self.out.push_str("</code>");
+            }
+            NodeKind::Link {
+                url,
+                title,
+                children,
+            } => {
+                self.out.push_str("<a href=\"");
+                self.out.push_str(&escape_attr(url));
+                if let Some(t) = title {
+                    self.out.push_str("\" title=\"");
+                    self.out.push_str(&escape_attr(t));
+                }
+                self.out.push_str(&format!("\"{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</a>");
+                // 带标题的链接：正文之后追加「（title）」副文本（斜体灰字，不可点），
+                // 与 PDF/PNG/SVG/DOCX 三端一致（pandoc/typst 印刷风格）。
+                if let Some(t) = title
+                    && !t.trim().is_empty()
+                {
+                    self.out.push_str(&format!(
+                        "<span class=\"link-desc\">（{}）</span>",
+                        escape_html(t)
+                    ));
+                }
+            }
+            NodeKind::Delete { children } => {
+                self.out.push_str(&format!("<del{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</del>");
+            }
+            NodeKind::Subscript { children } => {
+                self.out.push_str(&format!("<sub{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</sub>");
+            }
+            NodeKind::Superscript { children } => {
+                self.out.push_str(&format!("<sup{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</sup>");
+            }
+            NodeKind::Span { children } => {
+                self.out.push_str(&format!("<span{}>", sa));
+                self.serialize_children(children);
+                self.out.push_str("</span>");
+            }
+            NodeKind::Center { children } => {
+                self.out.push_str(&format!("<center{}>", sa));
+                for c in children {
+                    self.serialize_node(c);
+                }
+                self.out.push_str("</center>");
+            }
+            NodeKind::Container { children } => {
+                self.out.push_str(&format!("<div{}>", sa));
+                for c in children {
+                    self.serialize_node(c);
+                }
+                self.out.push_str("</div>");
+            }
+            NodeKind::LineBreak => self.out.push_str("<br/>"),
+        }
+    }
+
+    /// 序列化子节点序列。
+    fn serialize_children(&mut self, children: &[Node]) {
+        for c in children {
+            self.serialize_node(c);
+        }
+    }
+
+    /// 表格行序列化：当前 `NodeKind` 把 `<th>/<td>` 都简化为 `Paragraph`，
+    /// 故统一以 `<td>` 输出；`align` 通过 `style="text-align:..."` 表达。
+    fn serialize_table_rows(&mut self, rows: &[Node], align: &[TextAlign]) {
+        for row in rows {
+            if let NodeKind::TableRow { children } = &row.kind {
+                self.out.push_str("<tr>");
+                for (i, cell) in children.iter().enumerate() {
+                    let align_attr = align.get(i).map(align_to_style).unwrap_or_default();
+                    self.out.push_str(&format!("<td{}>", align_attr));
+                    self.serialize_node(cell);
+                    self.out.push_str("</td>");
+                }
+                self.out.push_str("</tr>");
+            } else {
+                self.serialize_node(row);
+            }
+        }
+    }
+}
+
 /// 将 `ast::Node` 语义树序列化为 HTML 片段（无 `<html>` 外壳）。
+///
+/// 便捷入口：等价于 `HtmlGenerator::new().generate(node)`。
 pub fn node_to_html(node: &Node) -> String {
-    let mut out = String::new();
-    serialize_node(node, &mut out);
-    out
+    HtmlGenerator::new().generate(node)
 }
 
 /// 生成开标签上的 `style="..."` 片段（样式非空才有），例如 ` style="color: #ff0000"`。
@@ -26,257 +311,6 @@ fn style_attr(style: &Style) -> String {
         String::new()
     } else {
         format!(" style=\"{}\"", css)
-    }
-}
-
-fn serialize_node(node: &Node, out: &mut String) {
-    let sa = style_attr(&node.style);
-    match &node.kind {
-        NodeKind::Document { children } => {
-            for c in children {
-                serialize_node(c, out);
-            }
-        }
-        NodeKind::Heading { level, children } => {
-            let lvl = (*level).clamp(1, 6);
-            out.push_str(&format!("<h{}{}>", lvl, sa));
-            serialize_children(children, out);
-            out.push_str(&format!("</h{}>", lvl));
-        }
-        NodeKind::Paragraph { children } => {
-            out.push_str(&format!("<p{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</p>");
-        }
-        NodeKind::List {
-            ordered,
-            start,
-            children,
-        } => {
-            if *ordered {
-                match start {
-                    Some(s) if *s != 1 => out.push_str(&format!("<ol start=\"{}\"{}>", s, sa)),
-                    _ => out.push_str(&format!("<ol{}>", sa)),
-                }
-            } else {
-                out.push_str(&format!("<ul{}>", sa));
-            }
-            for c in children {
-                serialize_node(c, out);
-            }
-            out.push_str(if *ordered { "</ol>" } else { "</ul>" });
-        }
-        NodeKind::ListItem { children } => {
-            out.push_str(&format!("<li{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</li>");
-        }
-        NodeKind::TaskListItem { checked, children } => {
-            out.push_str(&format!("<li{}>", sa));
-            if *checked {
-                out.push_str("<input checked=\"\" type=\"checkbox\"/> ");
-            } else {
-                out.push_str("<input type=\"checkbox\"/> ");
-            }
-            serialize_children(children, out);
-            out.push_str("</li>");
-        }
-        NodeKind::DefinitionList { items } => {
-            out.push_str(&format!("<dl{}>", sa));
-            for item in items {
-                out.push_str(&format!("<dt{}>", style_attr(&node.style)));
-                for c in &item.term {
-                    serialize_node(c, out);
-                }
-                out.push_str("</dt>");
-                for c in &item.definition {
-                    out.push_str(&format!("<dd{}>", style_attr(&node.style)));
-                    serialize_node(c, out);
-                    out.push_str("</dd>");
-                }
-            }
-            out.push_str("</dl>");
-        }
-        NodeKind::FootnoteDef { id, children } => {
-            out.push_str(&format!("<div id=\"{}\" class=\"footnote-def\"{}>", id, sa));
-            for c in children {
-                serialize_node(c, out);
-            }
-            out.push_str("</div>");
-        }
-        NodeKind::Image { src, alt, title } => {
-            out.push_str("<img src=\"");
-            out.push_str(&escape_attr(src));
-            out.push_str("\" alt=\"");
-            out.push_str(&escape_attr(alt));
-            if let Some(t) = title {
-                out.push_str("\" title=\"");
-                out.push_str(&escape_attr(t));
-            }
-            out.push_str("\"/>");
-        }
-        NodeKind::CodeBlock { code, lang, spans } => {
-            out.push_str(&format!("<pre{}><code", sa));
-            if let Some(l) = lang
-                && !l.is_empty()
-            {
-                out.push_str(&format!(" class=\"language-{}\"", escape_attr(l)));
-            }
-            out.push('>');
-            match spans {
-                // AST 富化阶段已产出语法高亮：每段一个内联着色的 <span>。
-                Some(lines) => {
-                    for (i, line) in lines.iter().enumerate() {
-                        if i > 0 {
-                            out.push('\n');
-                        }
-                        for span in line {
-                            if span.text.is_empty() {
-                                continue;
-                            }
-                            let mut css = format!("color:{}", span.color.to_hex());
-                            if span.bold {
-                                css.push_str(";font-weight:bold");
-                            }
-                            if span.italic {
-                                css.push_str(";font-style:italic");
-                            }
-                            out.push_str(&format!(
-                                "<span style=\"{}\">{}</span>",
-                                css,
-                                escape_html(&span.text)
-                            ));
-                        }
-                    }
-                }
-                None => out.push_str(&escape_html(code)),
-            }
-            out.push_str("</code></pre>");
-        }
-        NodeKind::Blockquote { children } => {
-            out.push_str(&format!("<blockquote{}>", sa));
-            for c in children {
-                serialize_node(c, out);
-            }
-            out.push_str("</blockquote>");
-        }
-        NodeKind::ThematicBreak => out.push_str(&format!("<hr{}/>", sa)),
-        NodeKind::Table { children, align } => {
-            out.push_str(&format!("<table{}>", sa));
-            serialize_table_rows(children, align, out);
-            out.push_str("</table>");
-        }
-        NodeKind::TableRow { children } => {
-            // 由父级 Table 调用 serialize_table_rows 时处理 <tr>；
-            // 直接序列化时仍包裹 <tr> 以自洽。
-            out.push_str(&format!("<tr{}>", sa));
-            for c in children {
-                serialize_node(c, out);
-            }
-            out.push_str("</tr>");
-        }
-        NodeKind::Text { text } => out.push_str(&escape_html(text)),
-        NodeKind::Strong { children } => {
-            out.push_str(&format!("<strong{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</strong>");
-        }
-        NodeKind::Emphasis { children } => {
-            out.push_str(&format!("<em{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</em>");
-        }
-        NodeKind::InlineCode { code } => {
-            out.push_str(&format!("<code{}>", sa));
-            out.push_str(&escape_html(code));
-            out.push_str("</code>");
-        }
-        NodeKind::Link {
-            url,
-            title,
-            children,
-        } => {
-            out.push_str("<a href=\"");
-            out.push_str(&escape_attr(url));
-            if let Some(t) = title {
-                out.push_str("\" title=\"");
-                out.push_str(&escape_attr(t));
-            }
-            out.push_str(&format!("\"{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</a>");
-            // 带标题的链接：正文之后追加「（title）」副文本（斜体灰字，不可点），
-            // 与 PDF/PNG/SVG/DOCX 三端一致（pandoc/typst 印刷风格）。
-            if let Some(t) = title
-                && !t.trim().is_empty()
-            {
-                out.push_str(&format!(
-                    "<span class=\"link-desc\">（{}）</span>",
-                    escape_html(t)
-                ));
-            }
-        }
-        NodeKind::Delete { children } => {
-            out.push_str(&format!("<del{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</del>");
-        }
-        NodeKind::Subscript { children } => {
-            out.push_str(&format!("<sub{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</sub>");
-        }
-        NodeKind::Superscript { children } => {
-            out.push_str(&format!("<sup{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</sup>");
-        }
-        NodeKind::Span { children } => {
-            out.push_str(&format!("<span{}>", sa));
-            serialize_children(children, out);
-            out.push_str("</span>");
-        }
-        NodeKind::Center { children } => {
-            out.push_str(&format!("<center{}>", sa));
-            for c in children {
-                serialize_node(c, out);
-            }
-            out.push_str("</center>");
-        }
-        NodeKind::Container { children } => {
-            out.push_str(&format!("<div{}>", sa));
-            for c in children {
-                serialize_node(c, out);
-            }
-            out.push_str("</div>");
-        }
-        NodeKind::LineBreak => out.push_str("<br/>"),
-    }
-}
-
-/// 序列化子节点序列。
-fn serialize_children(children: &[Node], out: &mut String) {
-    for c in children {
-        serialize_node(c, out);
-    }
-}
-
-/// 表格行序列化：当前 `NodeKind` 把 `<th>/<td>` 都简化为 `Paragraph`，
-/// 故统一以 `<td>` 输出；`align` 通过 `style="text-align:..."` 表达。
-fn serialize_table_rows(rows: &[Node], align: &[TextAlign], out: &mut String) {
-    for row in rows {
-        if let NodeKind::TableRow { children } = &row.kind {
-            out.push_str("<tr>");
-            for (i, cell) in children.iter().enumerate() {
-                let align_attr = align.get(i).map(align_to_style).unwrap_or_default();
-                out.push_str(&format!("<td{}>", align_attr));
-                serialize_node(cell, out);
-                out.push_str("</td>");
-            }
-            out.push_str("</tr>");
-        } else {
-            serialize_node(row, out);
-        }
     }
 }
 

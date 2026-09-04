@@ -114,12 +114,12 @@ impl PositionedBlock {
 }
 
 /// PDF 文档生成器：消费 [`Document`]，内部分页并渲染为 PDF 字节。
-pub struct PdfDocumentGenerator {
+pub struct PdfGenerator {
     document: Document,
     settings: PageSettings,
 }
 
-impl PdfDocumentGenerator {
+impl PdfGenerator {
     /// 从源 IR（不分页的 [`Document`]）构造生成器。
     pub fn from_layout(document: Document, settings: PageSettings) -> Self {
         Self { document, settings }
