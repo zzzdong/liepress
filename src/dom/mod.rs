@@ -243,8 +243,9 @@ impl HtmlElement {
         }
 
         // 解析选择器：tag, .class, #id, tag.class, tag#id, tag#id.class, tag.class#id
+        // 以及多 class（`div.a.b`）——所有 class 都须命中。
         let mut tag_part: Option<&str> = None;
-        let mut class_part: Option<&str> = None;
+        let mut class_parts: Vec<&str> = Vec::new();
         let mut id_part: Option<&str> = None;
 
         let mut rest = selector;
@@ -258,19 +259,19 @@ impl HtmlElement {
 
         // 解析剩余的 .class 和 #id 部分
         while !rest.is_empty() {
-            if let Some(dot_pos) = rest.find('.') {
-                let cls_end = rest[dot_pos + 1..]
+            if rest.starts_with('.') {
+                let cls_end = rest[1..]
                     .find(['.', '#'])
-                    .map(|i| dot_pos + 1 + i)
+                    .map(|i| 1 + i)
                     .unwrap_or(rest.len());
-                class_part = Some(&rest[dot_pos + 1..cls_end]);
+                class_parts.push(&rest[1..cls_end]);
                 rest = &rest[cls_end..];
-            } else if let Some(hash_pos) = rest.find('#') {
-                let id_end = rest[hash_pos + 1..]
+            } else if rest.starts_with('#') {
+                let id_end = rest[1..]
                     .find(['.', '#'])
-                    .map(|i| hash_pos + 1 + i)
+                    .map(|i| 1 + i)
                     .unwrap_or(rest.len());
-                id_part = Some(&rest[hash_pos + 1..id_end]);
+                id_part = Some(&rest[1..id_end]);
                 rest = &rest[id_end..];
             } else {
                 break;
@@ -291,11 +292,12 @@ impl HtmlElement {
             return false;
         }
 
-        // 匹配 class
-        if let Some(class) = class_part
-            && !self.has_class(class)
-        {
-            return false;
+        // 匹配 class（全部命中）
+        if !class_parts.is_empty() {
+            let classes = self.classes();
+            if !class_parts.iter().all(|c| classes.iter().any(|k| k == c)) {
+                return false;
+            }
         }
 
         true
@@ -1072,6 +1074,13 @@ mod tests {
         assert!(!elem.matches_simple_selector("span"));
         assert!(!elem.matches_simple_selector("#other"));
         assert!(!elem.matches_simple_selector(".baz"));
+        // 多 class：须全部命中
+        assert!(elem.matches_simple_selector("div.foo.bar"));
+        assert!(elem.matches_simple_selector(".bar.foo"));
+        assert!(!elem.matches_simple_selector("div.foo.baz"));
+        // tag + 多 class + id 混合
+        assert!(elem.matches_simple_selector("div#myid.foo.bar"));
+        assert!(!elem.matches_simple_selector("span#myid.foo.bar"));
     }
 
     #[test]

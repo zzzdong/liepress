@@ -283,18 +283,6 @@ pub fn table_row_height(style: &ResolvedStyle, row_heights: &[f64], idx: usize) 
         .max(8.0)
 }
 
-/// 标题字号（pt）。
-pub fn heading_font_size(level: u8) -> f32 {
-    match level {
-        1 => 22.0,
-        2 => 18.0,
-        3 => 15.0,
-        4 => 13.0,
-        5 => 12.0,
-        _ => 11.0,
-    }
-}
-
 /// 构造 [`crate::document::text::TextStyle`]（用于 layout_text）。
 pub fn text_style(color: Color, family: &str, size: f32, weight: &str, style: &str) -> TextStyle {
     css_text_style(
@@ -335,21 +323,6 @@ pub fn text_style_from_resolved(style: &ResolvedStyle) -> TextStyle {
         None,
         (style.line_height_pt > 0.0).then_some(style.line_height_pt as f64),
     )
-}
-
-/// 把标题文本行套用标题字号/颜色（from_ast 产出的 Paragraph 行是正文样式）。
-pub fn apply_heading_style(lines: &[TextLine], size: f32, color: Color) -> Vec<TextLine> {
-    lines
-        .iter()
-        .map(|line| {
-            let mut nl = line.clone();
-            for r in nl.runs.iter_mut() {
-                r.font_size = size;
-                r.color = color;
-            }
-            nl
-        })
-        .collect()
 }
 
 /// 列表缩进相对字号的步长系数（em）。

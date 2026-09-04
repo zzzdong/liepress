@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+pub mod charts;
 pub mod docx;
 pub mod dom;
 pub mod html_input;

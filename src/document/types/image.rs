@@ -12,8 +12,16 @@ pub struct DocImage {
     pub position: (f64, f64),
     /// 显示尺寸（pt）
     pub size: (f64, f64),
-    /// 原始像素尺寸（宽, 高）
+    /// 原始像素尺寸（宽, 高）。
+    ///
+    /// EXIF 方向为 5–8（需旋转 90°）的图片存储**显示方向**的尺寸
+    /// （即已交换宽高），与 [`Self::orientation`] 配套。
     pub pixel_size: (u32, u32),
+    /// EXIF Orientation（1–8，默认 1 = 正常方向）。
+    ///
+    /// 5–8 需旋转 90° 渲染；各渲染端据此校正（PDF 用变换矩阵，
+    /// PNG/SVG 解码位图后 `apply_orientation`）。
+    pub orientation: u8,
     /// 图片字节
     pub data: Vec<u8>,
     /// 格式（如 "png", "jpeg"）

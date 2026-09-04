@@ -24,7 +24,7 @@ use krilla::surface::Surface;
 use krilla::text::Font;
 
 use crate::ast::PageBreak;
-use crate::document::layout::{Block, BlockKind, Document, TableRow};
+use crate::document::layout::{Block, BlockKind, DefinitionItemBlock, Document, TableRow};
 use crate::document::text::{
     LineMetrics, TextAlign as LayoutAlign, TextDecoration, TextLine, TextRun, layout_text,
 };
@@ -34,8 +34,8 @@ use crate::error::{Error, Result};
 use lievisual::{Color, geometry::Point};
 
 use super::common::{
-    BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, apply_heading_style, block_height, blockquote_content_height,
-    heading_font_size, lines_visual_height, text_style, text_style_from_resolved,
+    BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, block_height, blockquote_content_height,
+    lines_visual_height, text_style, text_style_from_resolved,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -60,6 +60,29 @@ fn to_krilla_color(color: lievisual::Color) -> krilla::color::rgb::Color {
     krilla::color::rgb::Color::new(color.r, color.g, color.b)
 }
 
+/// 计算 EXIF Orientation 对应的绘制参数：(绘制宽, 高, 附加仿射矩阵)。
+///
+/// 显示盒为 `(w, h)`（方向 5–8 时已是交换后的显示方向尺寸）；图像以
+/// **存储态**宽高比矩形 `(rw, rh)` 绘制，矩阵把该矩形映射到显示盒：
+/// - 1：无变换；
+/// - 2/4：水平/垂直镜像；3：旋转 180°；
+/// - 5/7：转置系（存储宽高与显示盒互换）；6：旋转 90° 顺时针；8：逆时针。
+///
+/// 矩阵为 tiny-skia 行序 `[sx, ky, kx, sy, tx, ty]`。
+fn exif_draw_params(orientation: u8, w: f64, h: f64) -> (f64, f64, Option<[f32; 6]>) {
+    let (fw, fh) = (w as f32, h as f32);
+    match orientation {
+        2 => (w, h, Some([-1.0, 0.0, 0.0, 1.0, fw, 0.0])),
+        3 => (w, h, Some([-1.0, 0.0, 0.0, -1.0, fw, fh])),
+        4 => (w, h, Some([1.0, 0.0, 0.0, -1.0, 0.0, fh])),
+        5 => (h, w, Some([0.0, 1.0, 1.0, 0.0, 0.0, 0.0])),
+        6 => (h, w, Some([0.0, 1.0, -1.0, 0.0, fw, 0.0])),
+        7 => (h, w, Some([0.0, -1.0, -1.0, 0.0, fw, fh])),
+        8 => (h, w, Some([0.0, -1.0, 1.0, 0.0, 0.0, fh])),
+        _ => (w, h, None),
+    }
+}
+
 /// PDF 后端分页后的单页（仅 PDF 后端内部使用，不污染 document 层）。
 #[derive(Clone, Debug, Default)]
 struct PdfPage {
@@ -82,19 +105,11 @@ struct PositionedBlock {
     x: f64,
     y: f64,
     height: f64,
-    /// 若该块是跨页表格的续页片段，需重复表头
-    repeat_table_header: bool,
 }
 
 impl PositionedBlock {
     fn new(block: Block, x: f64, y: f64, height: f64) -> Self {
-        Self {
-            block,
-            x,
-            y,
-            height,
-            repeat_table_header: false,
-        }
+        Self { block, x, y, height }
     }
 }
 
@@ -239,7 +254,7 @@ impl PdfDocumentGenerator {
                     );
                 }
                 for pb in &page.blocks {
-                    renderer.draw_block(&pb.block, pb.x, pb.y, pb.repeat_table_header);
+                    renderer.draw_block(&pb.block, pb.x, pb.y);
                 }
                 renderer.take_links()
             };
@@ -595,7 +610,13 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         (dx, dy, dw, dh)
     }
 
-    fn draw_image(&mut self, data: &[u8], format: &str, (x, y, w, h): (f64, f64, f64, f64)) {
+    fn draw_image(
+        &mut self,
+        data: &[u8],
+        format: &str,
+        (x, y, w, h): (f64, f64, f64, f64),
+        orientation: u8,
+    ) {
         use krilla::image::Image;
 
         let image = match format.to_lowercase().as_str() {
@@ -614,11 +635,25 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         self.surface
             .push_transform(&KrillaTransform::from_translate(x as f32, y as f32));
 
-        let Some(image_size) = Size::from_wh(w as f32, h as f32) else {
+        // EXIF 方向校正：krilla 不读 EXIF，按 orientation 施加旋转/翻转矩阵。
+        // 绘制矩形（rw, rh）：方向 5–8 时图像存储态宽高与显示盒互换。
+        let (rw, rh, row) = exif_draw_params(orientation, w, h);
+        if let Some([sx, ky, kx, sy, tx, ty]) = row {
+            self.surface
+                .push_transform(&KrillaTransform::from_row(sx, ky, kx, sy, tx, ty));
+        }
+
+        let Some(image_size) = Size::from_wh(rw as f32, rh as f32) else {
             self.surface.pop();
+            if row.is_some() {
+                self.surface.pop();
+            }
             return;
         };
         self.surface.draw_image(image, image_size);
+        if row.is_some() {
+            self.surface.pop();
+        }
         self.surface.pop();
     }
 
@@ -651,7 +686,9 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             if let Some(path) = pb.finish() {
                 let fill = Fill {
                     paint: Paint::from(to_krilla_color(bg)),
-                    opacity: NormalizedF32::new(bg.a as f32).unwrap_or(NormalizedF32::ONE),
+                    // krilla 要求 0..=1：alpha 为 0-255，须除以 255
+                    //（漏除会使半透明背景变不透明、alpha=0 之外的区域溢出为 1）。
+                    opacity: NormalizedF32::new(bg.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
                     rule: FillRule::NonZero,
                 };
                 self.surface.set_fill(Some(fill));
@@ -730,7 +767,8 @@ impl<'a, 's> PdfRenderer<'a, 's> {
 
         let krilla_color = to_krilla_color(run.color);
         let paint = Paint::from(krilla_color);
-        let opacity = NormalizedF32::new(run.color.a as f32).unwrap_or(NormalizedF32::ONE);
+        // krilla 要求 0..=1：alpha 为 0-255，须除以 255（同 draw_rect/draw_line）。
+        let opacity = NormalizedF32::new(run.color.a as f32 / 255.0).unwrap_or(NormalizedF32::ONE);
         let fill = Fill {
             paint,
             opacity,
@@ -794,16 +832,17 @@ impl<'a, 's> PdfRenderer<'a, 's> {
     }
 
     /// 绘制单个 `Block`（递归）。`x`/`y` 为内容区绝对坐标（pt）。
-    fn draw_block(&mut self, block: &Block, x: f64, y: f64, repeat_table_header: bool) {
+    fn draw_block(&mut self, block: &Block, x: f64, y: f64) {
         let style = &block.style;
         match &block.kind {
-            BlockKind::Heading { level, children } => {
-                let size = heading_font_size(*level);
-                let color = style.color;
+            BlockKind::Heading { level: _, children } => {
+                // 标题字号/颜色已由 from_ast 按节点 CSS 样式排版进 `lines`
+                //（与 PNG/SVG 端一致）。不再用 `heading_font_size` 硬编码覆盖——
+                // 旧覆盖使 PDF 与 CSS/PNG/SVG 字号不一致，且用户 CSS 修改标题
+                // 字号在 PDF 中完全失效（行框按 CSS 排版、字形被改成 22pt）。
                 for child in children {
                     if let BlockKind::Paragraph { lines } = &child.kind {
-                        let styled_lines = apply_heading_style(lines, size, color);
-                        self.draw_doc_lines(&styled_lines, x, y);
+                        self.draw_doc_lines(lines, x, y);
                     }
                 }
             }
@@ -852,7 +891,12 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     };
                     // 按 object_fit 计算图片在 box 内的实际绘制区域（避免强制尺寸时拉伸变形）。
                     let (dx, dy, dw, dh) = self.image_draw_rect(img, (w, h));
-                    self.draw_image(&img.data, &img.format, (align_x + dx, y + dy, dw, dh));
+                    self.draw_image(
+                        &img.data,
+                        &img.format,
+                        (align_x + dx, y + dy, dw, dh),
+                        img.orientation,
+                    );
                 } else if !img.alt.is_empty() {
                     let style =
                         text_style(Color::rgb(120, 120, 120), "serif", 11.0, "normal", "normal");
@@ -878,14 +922,14 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 let offset = ((content_h - text_h) / 2.0).max(0.0);
                 let mut cy = y + offset;
                 for child in children {
-                    self.draw_block(child, inner_x, cy, false);
+                    self.draw_block(child, inner_x, cy);
                     cy += block_height(child, &self.settings, inner_x);
                 }
             }
             BlockKind::List { children, .. } => {
                 let mut cy = y;
                 for child in children {
-                    self.draw_block(child, x, cy, false);
+                    self.draw_block(child, x, cy);
                     cy += block_height(child, &self.settings, x);
                 }
             }
@@ -895,7 +939,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 self.draw_list_marker(marker, false, false, x, y, style);
                 let mut cy = y;
                 for child in children {
-                    self.draw_block(child, x + indent, cy, false);
+                    self.draw_block(child, x + indent, cy);
                     cy += block_height(child, &self.settings, x + indent);
                 }
             }
@@ -908,14 +952,14 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 self.draw_list_marker(marker, true, *checked, x, y, style);
                 let mut cy = y;
                 for child in children {
-                    self.draw_block(child, x + indent, cy, false);
+                    self.draw_block(child, x + indent, cy);
                     cy += block_height(child, &self.settings, x + indent);
                 }
             }
             BlockKind::Container { children, .. } => {
                 let mut cy = y;
                 for child in children {
-                    self.draw_block(child, x, cy, false);
+                    self.draw_block(child, x, cy);
                     cy += block_height(child, &self.settings, x);
                 }
             }
@@ -925,11 +969,11 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 let mut cy = y;
                 for item in items {
                     for child in &item.term {
-                        self.draw_block(child, x, cy, false);
+                        self.draw_block(child, x, cy);
                         cy += block_height(child, &self.settings, x);
                     }
                     for child in &item.definition {
-                        self.draw_block(child, x + DD_INDENT, cy, false);
+                        self.draw_block(child, x + DD_INDENT, cy);
                         cy += block_height(child, &self.settings, x + DD_INDENT);
                     }
                 }
@@ -937,7 +981,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             BlockKind::FootnoteDef { children, .. } => {
                 let mut cy = y;
                 for child in children {
-                    self.draw_block(child, x, cy, false);
+                    self.draw_block(child, x, cy);
                     cy += block_height(child, &self.settings, x);
                 }
             }
@@ -947,20 +991,12 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 row_heights,
                 ..
             } => {
-                self.draw_table(
-                    rows,
-                    col_widths,
-                    row_heights,
-                    style,
-                    x,
-                    y,
-                    repeat_table_header,
-                );
+                self.draw_table(rows, col_widths, row_heights, style, x, y);
             }
             BlockKind::Document { children, .. } => {
                 let mut cy = y;
                 for child in children {
-                    self.draw_block(child, x, cy, false);
+                    self.draw_block(child, x, cy);
                     cy += block_height(child, &self.settings, x);
                 }
             }
@@ -975,11 +1011,15 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         }
     }
 
-    /// 绘制表格（含跨页续页重复表头）。
+    /// 绘制表格。
     ///
     /// 列宽与行高来自 `compute_table_layout` 的预计算值（真实度量）：
     /// - `col_widths`：每列真实宽度（pt）。
     /// - `row_heights`：每行真实高度（pt，按列宽折行后）。
+    ///
+    /// 约定：`rows[0]` **恒为表头行**（整表首片段即真实表头；跨页续页片段由
+    /// [`paginate_table`] 在头部补回原表头行），body 从 `rows[1..]` 开始，
+    /// 每行恰好绘制一次，避免首行既当表头画一遍、又在 body 循环再画一遍。
     #[allow(clippy::too_many_arguments)]
     fn draw_table(
         &mut self,
@@ -989,7 +1029,6 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         style: &ResolvedStyle,
         x: f64,
         y: f64,
-        repeat_header: bool,
     ) {
         if rows.is_empty() {
             return;
@@ -1007,11 +1046,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         };
 
         let header = rows.first();
-        let body: &[TableRow] = if repeat_header {
-            rows
-        } else {
-            &rows[1.min(rows.len())..]
-        };
+        let body: &[TableRow] = &rows[1.min(rows.len())..];
 
         let border = style.table_border_color;
         let border_w = style.table_border_width_pt as f64;
@@ -1048,7 +1083,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                 let cell_x = cx + pad_h as f64;
                 let mut ccy = cy + pad_v as f64;
                 for child in &cell.children {
-                    r.draw_block(child, cell_x, ccy, false);
+                    r.draw_block(child, cell_x, ccy);
                     ccy += block_height(child, &r.settings, cell_x) + 2.0;
                 }
                 cx += cell_w;
@@ -1062,7 +1097,7 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         if header.is_some() {
             cy += row_height_at(0);
         }
-        let body_start = if repeat_header { 0 } else { 1 };
+        let body_start = 1usize;
         for (i, row) in body.iter().enumerate() {
             let row_idx = body_start + i;
             let row_h = row_height_at(row_idx);
@@ -1241,6 +1276,31 @@ fn paginate_layout(document: &Document, settings: &PageSettings) -> Vec<PdfPage>
                 }
             }
 
+            // 容器块（List/ListItem/Blockquote/DefinitionList/Container）高过一页时
+            // 按子块边界切分：整块塞进一页会让超出页底的内容被静默裁剪（内容丢失）。
+            // 高度记用处见 `fragment_container`：片段高度与实际绘制严格一致。
+            if h > content_h && is_fragmentable_container(&block.kind) {
+                if force_break_before {
+                    ctx.push_page();
+                }
+                for frag in fragment_container(block, settings, content_x, content_h) {
+                    let fh = block_height(&frag, settings, content_x);
+                    let empty_page = ctx.cur.blocks.is_empty() && *ctx.used <= 0.0;
+                    if !empty_page && fh > content_h - *ctx.used {
+                        ctx.push_page();
+                    }
+                    let y = content_y + *ctx.used;
+                    ctx.cur
+                        .blocks
+                        .push(PositionedBlock::new(frag, content_x, y, fh));
+                    *ctx.used += fh;
+                }
+                if block.style.page_break_after == PageBreak::Always {
+                    ctx.push_page();
+                }
+                continue;
+            }
+
             if (*ctx.used + h > content_h && *ctx.used > 0.0) || force_break_before {
                 ctx.push_page();
             }
@@ -1288,10 +1348,15 @@ impl PaginateCtx<'_> {
     }
 }
 
-/// 表格分页：按整行切分，续页重复表头。
+/// 表格分页：按整行切分，续页片段在头部补回真实表头行。
 ///
 /// 行高取自 `compute_table_layout` 预计算的 `row_heights`（真实度量，非固定值）；
 /// 续页片段透传原表格列宽与对应行的行高，避免续页表格配色/内边距退回默认值。
+///
+/// 约定：片段的 `rows[0]` 恒为表头行——首片段即真实表头，续页片段把原表头
+/// 克隆到片段头部，与 [`PdfRenderer::draw_table`] 的绘制约定一致。
+/// 高度记账（`used` 增量）恒等于片段实际绘制高度（表头 + body 行高之和），
+/// 避免表头高被双计（表格从空页开始时）或漏计导致续页表格与后续块重叠/留缝。
 #[allow(clippy::too_many_arguments)]
 fn paginate_table(
     rows: &[TableRow],
@@ -1308,30 +1373,26 @@ fn paginate_table(
     if rows.is_empty() {
         return;
     }
-    // 表头行高 = 第一行行高（若无预计算值则退回行高）。
-    let header_h = row_heights.first().copied().unwrap_or(18.0);
+    // 表头行高 = 第一行行高（若无预计算值则退回固定值）。
+    let header_h = row_heights.first().copied().unwrap_or(18.0).max(8.0);
     let n = rows.len();
-    let mut i = 0usize;
+    // `i`：下一个待排 body 行的绝对索引（首片段为 1：rows[0] 是表头）。
+    let mut i = 1usize;
 
     loop {
+        let avail = (content_h - *ctx.used).max(0.0);
+        let empty_page = ctx.cur.blocks.is_empty() && *ctx.used <= 0.0;
+
+        // 本页可容纳的 body 行数：表头始终占一个 header_h，body 行从 i 起贪心装填。
         let mut fit = 0usize;
-        let mut need = if ctx.cur.blocks.is_empty() && *ctx.used == 0.0 {
-            header_h
-        } else {
-            0.0
-        };
+        let mut need = header_h;
         while i + fit < n {
-            // 首行当作表头，续页首行作为表头重复（仍需 header_h 高度）。
-            let add = if i + fit == 0 {
-                header_h
-            } else {
-                row_heights
-                    .get(i + fit)
-                    .copied()
-                    .unwrap_or(header_h)
-                    .max(8.0)
-            };
-            if need + add <= content_h - *ctx.used {
+            let add = row_heights
+                .get(i + fit)
+                .copied()
+                .unwrap_or(header_h)
+                .max(8.0);
+            if need + add <= avail {
                 need += add;
                 fit += 1;
             } else {
@@ -1339,22 +1400,43 @@ fn paginate_table(
             }
         }
 
-        if fit == 0 {
-            if !ctx.cur.blocks.is_empty() || *ctx.used > 0.0 {
-                ctx.push_page();
-            }
+        if fit == 0 && !empty_page {
+            // 当前页连「表头 + 下一行」都放不下：换页后重试。
+            ctx.push_page();
+            continue;
+        }
+        if fit == 0 && i < n {
+            // 空页仍放不下「表头 + 一行」（行本身高过整页）：强制放一行保证前进。
             fit = 1;
-            need = header_h;
         }
 
-        let page_rows: Vec<TableRow> = rows[i..i + fit].to_vec();
-        // 防御：row_heights 若与 rows 不等长（异常输入），缺省退回 header_h，避免切片越界。
-        let page_row_heights: Vec<f64> = (i..i + fit)
-            .map(|ri| row_heights.get(ri).copied().unwrap_or(header_h))
-            .collect();
-        let is_continuation = i > 0;
+        // 片段行集合：续页片段（i > 1）在头部补上真实表头行 rows[0]。
+        let end = (i + fit).min(n);
+        let page_rows: Vec<TableRow> = if i <= 1 {
+            rows[..end].to_vec()
+        } else {
+            let mut v = Vec::with_capacity(1 + (end - i));
+            v.push(rows[0].clone());
+            v.extend(rows[i..end].iter().cloned());
+            v
+        };
+        // 防御：row_heights 若与 rows 不等长（异常输入），缺省退回 header_h，避免越界。
+        let page_row_heights: Vec<f64> = if i <= 1 {
+            (0..end)
+                .map(|ri| row_heights.get(ri).copied().unwrap_or(header_h).max(8.0))
+                .collect()
+        } else {
+            let mut v = Vec::with_capacity(1 + (end - i));
+            v.push(header_h);
+            v.extend(
+                (i..end)
+                    .map(|ri| row_heights.get(ri).copied().unwrap_or(header_h).max(8.0)),
+            );
+            v
+        };
+        // 片段实际绘制高度（表头 + body 行），used 增量与之严格一致。
         let page_h: f64 = page_row_heights.iter().sum();
-        let mut pb = PositionedBlock::new(
+        let pb = PositionedBlock::new(
             Block::new(
                 BlockKind::Table {
                     rows: page_rows,
@@ -1369,16 +1451,220 @@ fn paginate_table(
             content_y + *ctx.used,
             page_h,
         );
-        pb.repeat_table_header = is_continuation;
         ctx.cur.blocks.push(pb);
-        *ctx.used += need;
+        *ctx.used += page_h;
 
-        i += fit;
+        i = end;
         if i >= n {
             break;
         }
         ctx.push_page();
     }
+}
+
+/// 判断块是否为可按子块边界切分的容器块。
+fn is_fragmentable_container(kind: &BlockKind) -> bool {
+    matches!(
+        kind,
+        BlockKind::List { .. }
+            | BlockKind::ListItem { .. }
+            | BlockKind::TaskListItem { .. }
+            | BlockKind::Blockquote { .. }
+            | BlockKind::DefinitionList { .. }
+            | BlockKind::Container { .. }
+    )
+}
+
+/// 把一个高过一页的容器块按子块边界切分为若干片段。
+///
+/// 每个片段复用原块的结构与样式（List/Blockquote/ListItem 等），使绘制端的
+/// 缩进/竖条/marker 逻辑无需感知分页；容器自身的 `margin_top`/`margin_bottom`
+/// 只保留在首/末片段上，中间片段清零，避免片段之间出现多余间距。
+///
+/// 子块若自身高过 `max_h` 且仍是容器块则递归切分；不可再分的子块（如超大图片、
+/// 超高标题）独占片段并溢出页面（与旧行为一致，内容不丢，仅可能超出页底）。
+fn fragment_container(
+    block: &Block,
+    settings: &PageSettings,
+    x: f64,
+    max_h: f64,
+) -> Vec<Block> {
+    let style = &block.style;
+    // 分组预算扣除容器自身上下外边距，保证首/末片段（含 margin）不超过 max_h。
+    let inner_max = (max_h - style.margin_top as f64 - style.margin_bottom as f64).max(1.0);
+
+    let mut frags: Vec<Block> = match &block.kind {
+        BlockKind::List {
+            ordered, start, ..
+        } => group_children(
+            block.kind.children(),
+            settings,
+            x,
+            inner_max,
+            |kids| {
+                Block::new(
+                    BlockKind::List {
+                        ordered: *ordered,
+                        start: *start,
+                        children: kids,
+                    },
+                    style.clone(),
+                    block.splittable,
+                )
+            },
+        ),
+        BlockKind::ListItem { marker, .. } => group_children(
+            block.kind.children(),
+            settings,
+            x,
+            inner_max,
+            |kids| {
+                Block::new(
+                    BlockKind::ListItem {
+                        marker: marker.clone(),
+                        children: kids,
+                    },
+                    style.clone(),
+                    block.splittable,
+                )
+            },
+        ),
+        BlockKind::TaskListItem {
+            marker, checked, ..
+        } => group_children(
+            block.kind.children(),
+            settings,
+            x,
+            inner_max,
+            |kids| {
+                Block::new(
+                    BlockKind::TaskListItem {
+                        marker: marker.clone(),
+                        checked: *checked,
+                        children: kids,
+                    },
+                    style.clone(),
+                    block.splittable,
+                )
+            },
+        ),
+        BlockKind::Blockquote { .. } => group_children(
+            block.kind.children(),
+            settings,
+            x,
+            // Blockquote 高度含上下 BQ_PAD_Y，一并预留。
+            (inner_max - 2.0 * BQ_PAD_Y).max(1.0),
+            |kids| {
+                Block::new(
+                    BlockKind::Blockquote { children: kids },
+                    style.clone(),
+                    block.splittable,
+                )
+            },
+        ),
+        BlockKind::Container { .. } => group_children(
+            block.kind.children(),
+            settings,
+            x,
+            inner_max,
+            |kids| {
+                Block::new(
+                    BlockKind::Container { children: kids },
+                    style.clone(),
+                    block.splittable,
+                )
+            },
+        ),
+        BlockKind::DefinitionList { items } => {
+            // 定义列表以 (term, definition) 项为单位切分。
+            let mut groups: Vec<Vec<DefinitionItemBlock>> = Vec::new();
+            let mut cur: Vec<DefinitionItemBlock> = Vec::new();
+            let mut cur_h = 0.0_f64;
+            for item in items {
+                let ih: f64 = item
+                    .term
+                    .iter()
+                    .chain(item.definition.iter())
+                    .map(|c| block_height(c, settings, x))
+                    .sum();
+                if !cur.is_empty() && cur_h + ih > inner_max {
+                    groups.push(std::mem::take(&mut cur));
+                    cur_h = 0.0;
+                }
+                cur_h += ih;
+                cur.push(item.clone());
+            }
+            if !cur.is_empty() {
+                groups.push(cur);
+            }
+            groups
+                .into_iter()
+                .map(|items| {
+                    Block::new(
+                        BlockKind::DefinitionList { items },
+                        style.clone(),
+                        block.splittable,
+                    )
+                })
+                .collect()
+        }
+        _ => return vec![block.clone()],
+    };
+
+    // 首片段保留 margin_top、末片段保留 margin_bottom，中间片段清零。
+    let last = frags.len().saturating_sub(1);
+    for (fi, f) in frags.iter_mut().enumerate() {
+        if fi != 0 {
+            f.style.margin_top = 0.0;
+        }
+        if fi != last {
+            f.style.margin_bottom = 0.0;
+        }
+    }
+    frags
+}
+
+/// 把子块序列按高度贪心分组为若干 ≤ `max_h` 的片段。
+///
+/// `make` 负责把一组子块装配为原容器类型的片段块。子块自身高过 `max_h` 且仍是
+/// 容器块时递归切分，其片段作为独立分组单元参与装填。
+fn group_children<F>(
+    children: &[Block],
+    settings: &PageSettings,
+    x: f64,
+    max_h: f64,
+    make: F,
+) -> Vec<Block>
+where
+    F: Fn(Vec<Block>) -> Block,
+{
+    let mut frags: Vec<Block> = Vec::new();
+    let mut cur: Vec<Block> = Vec::new();
+    let mut cur_h = 0.0_f64;
+
+    for child in children {
+        let units: Vec<Block> = {
+            let ch = block_height(child, settings, x);
+            if ch > max_h && is_fragmentable_container(&child.kind) {
+                fragment_container(child, settings, x, max_h)
+            } else {
+                vec![child.clone()]
+            }
+        };
+        for unit in units {
+            let uh = block_height(&unit, settings, x);
+            if !cur.is_empty() && cur_h + uh > max_h {
+                frags.push(make(std::mem::take(&mut cur)));
+                cur_h = 0.0;
+            }
+            cur_h += uh;
+            cur.push(unit);
+        }
+    }
+    if !cur.is_empty() {
+        frags.push(make(cur));
+    }
+    frags
 }
 
 /// 把一段文本行的坐标重新基准化到新原点（首行 y 归零），用于分页片段。
@@ -1553,5 +1839,268 @@ mod pagination_tests {
             "60 行代码块应跨多页，实际 {} 页",
             pages.len()
         );
+    }
+
+    // ─── 表格分页（H3/H5 回归）────────────────────────────────
+
+    fn text_block(t: &str) -> Block {
+        Block::new(
+            BlockKind::Text {
+                text: t.to_string(),
+            },
+            ResolvedStyle::default(),
+            true,
+        )
+    }
+
+    fn labeled_row(label: &str) -> TableRow {
+        TableRow {
+            cells: vec![crate::document::layout::TableCell {
+                children: vec![text_block(label)],
+            }],
+        }
+    }
+
+    /// 按 `row_heights` 构造表格并运行分页，返回（页面列表，used 总量）。
+    fn paginate_rows(row_heights: &[f64], content_h: f64) -> (Vec<PdfPage>, f64) {
+        let n = row_heights.len();
+        let rows: Vec<TableRow> = (0..n)
+            .map(|i| labeled_row(&format!("row{i}")))
+            .collect();
+        let style = ResolvedStyle::default();
+        let mut pages = Vec::new();
+        let mut cur = PdfPage::default();
+        let mut used = 0.0_f64;
+        let mut ctx = PaginateCtx {
+            pages: &mut pages,
+            cur: &mut cur,
+            used: &mut used,
+            header: &None,
+            footer: &None,
+        };
+        paginate_table(
+            &rows,
+            &[],
+            &vec![50.0; n],
+            row_heights,
+            &style,
+            &mut ctx,
+            0.0,
+            0.0,
+            content_h,
+        );
+        // 模拟 paginate_layout 的收尾：把最后一张未满页的 cur 推入 pages 并记账。
+        drop(ctx);
+        if !cur.blocks.is_empty() || pages.is_empty() {
+            cur.used_h = used;
+            pages.push(cur);
+        }
+        (pages, used)
+    }
+
+    #[test]
+    fn table_pagination_repeats_real_header_and_matches_height() {
+        // content_h=100，行高 [20(表头),30,40,50,60]：
+        // 页1 = 表头20+30+40=90；页2 = 表头20+50=70；页3 = 表头20+60=80。
+        let (pages, _used) = paginate_rows(&[20.0, 30.0, 40.0, 50.0, 60.0], 100.0);
+        assert_eq!(pages.len(), 3, "应切为 3 页，实际 {:?}", pages.len());
+        // 记账总量 = 表头 + 全部 body 行（无双计/漏计），且等于全部片段绘制高度。
+        let all_drawn: f64 = pages
+            .iter()
+            .flat_map(|p| p.blocks.iter())
+            .map(|b| b.height)
+            .sum();
+        let total_used: f64 = pages.iter().map(|p| p.used_h).sum();
+        assert!((total_used - 240.0).abs() < 1e-9, "used 总量应 240，实际 {total_used}");
+        assert!(
+            (total_used - all_drawn).abs() < 1e-9,
+            "used 总量 {total_used} != 片段绘制总高 {all_drawn}"
+        );
+        // 每页记账 == 该页片段实际绘制高度，且不得超过页高。
+        for p in &pages {
+            let drawn: f64 = p.blocks.iter().map(|b| b.height).sum();
+            assert!(
+                (p.used_h - drawn).abs() < 1e-9,
+                "页记账 {} != 绘制高度 {}",
+                p.used_h,
+                drawn
+            );
+            assert!(p.used_h <= 100.0 + 1e-9, "页占用 {} 超过页高", p.used_h);
+        }
+        // 续页片段头部应补回真实表头 row0（且每行只出现一次，不重复绘制）。
+        let p2 = &pages[1];
+        assert_eq!(p2.blocks.len(), 1);
+        if let BlockKind::Table { rows, row_heights, .. } = &p2.blocks[0].block.kind {
+            assert_eq!(rows.len(), row_heights.len(), "行数与行高数应一致");
+            assert_eq!(rows[0].cells_text(), "row0", "续页片段首行应为真实表头");
+            assert_eq!(rows[1].cells_text(), "row3");
+            assert_eq!(row_heights[0], 20.0, "续页表头高应取原表头行高");
+        } else {
+            panic!("续页片段应为 Table 块");
+        }
+    }
+
+    #[test]
+    fn table_starting_on_fresh_page_does_not_double_count_header() {
+        // H5 回归：表格从空页开始时 used 增量不得双计表头高。
+        // 单表头行 20 + 两行 30/40，content_h=100 → 单页 90，无分页。
+        let (pages, used) = paginate_rows(&[20.0, 30.0, 40.0], 100.0);
+        assert_eq!(pages.len(), 1);
+        assert!((used - 90.0).abs() < 1e-9, "used 应 90（无表头双计），实际 {used}");
+        if let BlockKind::Table { rows, .. } = &pages[0].blocks[0].block.kind {
+            assert_eq!(rows.len(), 3);
+            assert_eq!(rows[0].cells_text(), "row0");
+        }
+    }
+
+    #[test]
+    fn header_only_table_paginates_without_forced_row() {
+        // 只有表头一行的表格：不得触发「强制放一行」的越界/死循环路径。
+        let (pages, used) = paginate_rows(&[20.0], 100.0);
+        assert_eq!(pages.len(), 1);
+        assert!((used - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn table_row_taller_than_page_still_progresses() {
+        // 某一行高过整页：不得死循环，该行独占一页（溢出但内容保留）。
+        let (pages, used) = paginate_rows(&[20.0, 30.0, 500.0, 40.0], 100.0);
+        // 500pt 行独占一页；前后行正常切分。
+        let total_used: f64 = pages.iter().map(|p| p.used_h).sum();
+        assert!(
+            total_used >= 20.0 + 30.0 + 500.0 + 40.0,
+            "所有行高都应计入 used（含超高行），实际 {total_used}"
+        );
+        let _ = used;
+        let mut placed_rows = 0usize;
+        for p in &pages {
+            for pb in &p.blocks {
+                if let BlockKind::Table { rows, .. } = &pb.block.kind {
+                    placed_rows += rows.len() - 1.min(rows.len()); // 扣除片段表头
+                }
+            }
+        }
+        assert_eq!(placed_rows, 3, "全部 body 行都应被放置");
+    }
+
+    // ─── 容器块分页（H4 回归）────────────────────────────────
+
+    fn list_item(height: f64) -> Block {
+        let mut para_style = ResolvedStyle::default();
+        para_style.line_height_pt = height as f32;
+        Block::new(
+            BlockKind::ListItem {
+                marker: "1.".to_string(),
+                children: vec![Block::new(
+                    BlockKind::Paragraph { lines: vec![] },
+                    para_style,
+                    true,
+                )],
+            },
+            ResolvedStyle::default(),
+            true,
+        )
+    }
+
+    #[test]
+    fn long_list_fragments_at_item_boundaries() {
+        // 3 个各 60pt 的列表项，页高 100：应切成 3 个片段而不是整块溢出。
+        let list = Block::new(
+            BlockKind::List {
+                ordered: true,
+                start: None,
+                children: vec![list_item(60.0), list_item(60.0), list_item(60.0)],
+            },
+            ResolvedStyle::default(),
+            true,
+        );
+        let settings = PageSettings::default();
+        let frags = fragment_container(&list, &settings, 0.0, 100.0);
+        assert_eq!(frags.len(), 3, "每个列表项应独占一个片段");
+        // 片段保持 List > ListItem 结构（绘制端缩进/marker 逻辑无需感知分页）。
+        assert!(matches!(&frags[0].kind, BlockKind::List { children, .. } if children.len() == 1));
+        // 中间片段上下外边距清零，首/末片段保留。
+        assert_eq!(frags[1].style.margin_top, 0.0);
+        assert_eq!(frags[1].style.margin_bottom, 0.0);
+    }
+
+    #[test]
+    fn long_list_paginates_into_pages() {
+        // 端到端：60 项 × 每项约 18pt 的列表应跨多页且所有项都被放置。
+        let list = Block::new(
+            BlockKind::List {
+                ordered: false,
+                start: None,
+                children: (0..60).map(|_| list_item(18.0)).collect(),
+            },
+            ResolvedStyle::default(),
+            true,
+        );
+        let doc = Document { blocks: vec![list] };
+        let pages = paginate_layout(&doc, &PageSettings::default());
+        assert!(pages.len() >= 2, "60 项列表应跨页，实际 {} 页", pages.len());
+        let mut placed = 0usize;
+        for p in &pages {
+            for pb in &p.blocks {
+                if let BlockKind::List { children, .. } = &pb.block.kind {
+                    placed += children.len();
+                }
+            }
+        }
+        assert_eq!(placed, 60, "所有列表项都应被放置（内容不丢）");
+    }
+
+    #[test]
+    fn definition_list_fragments_at_item_boundaries() {
+        let dl = |h: f64| {
+            let mut s = ResolvedStyle::default();
+            s.line_height_pt = h as f32;
+            DefinitionItemBlock {
+                term: vec![Block::new(BlockKind::Paragraph { lines: vec![] }, s.clone(), true)],
+                definition: vec![],
+            }
+        };
+        let list = Block::new(
+            BlockKind::DefinitionList {
+                items: vec![dl(60.0), dl(60.0), dl(60.0)],
+            },
+            ResolvedStyle::default(),
+            true,
+        );
+        let settings = PageSettings::default();
+        let frags = fragment_container(&list, &settings, 0.0, 100.0);
+        assert_eq!(frags.len(), 3, "定义列表应按项切分");
+    }
+
+    // ─── EXIF 方向绘制参数（2026-09-04 审查） ───
+
+    #[test]
+    fn exif_draw_params_rotation_swaps_draw_rect() {
+        // 显示盒 200×100，方向 6（顺时针旋转 90°）：绘制矩形应为存储态 100×200，
+        // 矩阵把存储左上角映射到显示右上角（u=0,v=0 → x=w）。
+        let (rw, rh, row) = exif_draw_params(6, 200.0, 100.0);
+        assert_eq!(rw, 100.0);
+        assert_eq!(rh, 200.0);
+        let [sx, ky, kx, sy, tx, ty] = row.unwrap();
+        assert_eq!((sx, ky, kx, sy, tx, ty), (0.0, 1.0, -1.0, 0.0, 200.0, 0.0));
+        // 验证角点映射：存储 (0,0) → (200,0)；存储 (100,200) → (0,100)。
+        let map = |u: f32, v: f32| (sx * u + kx * v + tx, ky * u + sy * v + ty);
+        assert_eq!(map(0.0, 0.0), (200.0, 0.0));
+        assert_eq!(map(100.0, 200.0), (0.0, 100.0));
+    }
+
+    #[test]
+    fn exif_draw_params_identity_and_180() {
+        let (rw, rh, row) = exif_draw_params(1, 200.0, 100.0);
+        assert_eq!((rw, rh), (200.0, 100.0));
+        assert!(row.is_none());
+
+        // 方向 3（旋转 180°）：绘制矩形不变，中心对称。
+        let (rw, rh, row) = exif_draw_params(3, 200.0, 100.0);
+        assert_eq!((rw, rh), (200.0, 100.0));
+        let [sx, ky, kx, sy, tx, ty] = row.unwrap();
+        let map = |u: f32, v: f32| (sx * u + kx * v + tx, ky * u + sy * v + ty);
+        assert_eq!(map(0.0, 0.0), (200.0, 100.0));
+        assert_eq!(map(200.0, 100.0), (0.0, 0.0));
     }
 }

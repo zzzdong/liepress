@@ -485,11 +485,6 @@ fn resolve_user_css(
 
 // ─── Markdown 管线入口 ──────────────────────────────────────
 
-/// 将 [`ConvertOptions`] 中的页面设置解析为 PDF 后端用的 [`PageSettings`]。
-fn page_settings_from(options: &ConvertOptions) -> PageSettings {
-    PageSettings::from(options.page_config.clone().unwrap_or_default())
-}
-
 /// 核心转换逻辑：Markdown → PDF
 ///
 /// 管线：Markdown → HTML → HtmlDocument → Styled Node → Document → PDF
@@ -498,7 +493,7 @@ pub fn markdown_to_pdf(markdown: &str, options: &ConvertOptions) -> crate::error
     let user_css = resolve_user_css(options, Some(markdown))?;
     let resolver = dom::ResourceResolver::new(None);
     let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -508,7 +503,7 @@ pub fn markdown_to_pdf(markdown: &str, options: &ConvertOptions) -> crate::error
         options.strict,
         options.page_config.clone(),
     )?;
-    render_pdf(&document, &page_settings_from(options))
+    render_pdf(&document, &page_settings)
 }
 
 /// Markdown 文件 → PDF（自动将本地图片嵌入为 base64）
@@ -520,7 +515,7 @@ pub fn markdown_file_to_pdf(
     let user_css = resolve_user_css(options, Some(&markdown))?;
     let resolver = dom::ResourceResolver::new(base_dir);
     let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -530,7 +525,7 @@ pub fn markdown_file_to_pdf(
         options.strict,
         options.page_config.clone(),
     )?;
-    render_pdf(&document, &page_settings_from(options))
+    render_pdf(&document, &page_settings)
 }
 
 // ─── HTML → PDF ─────────────────────────────────────────────
@@ -543,7 +538,7 @@ pub fn html_to_pdf(html: &str, options: &ConvertOptions) -> crate::error::Result
     let user_css = resolve_user_css(options, None)?;
     let resolver = dom::ResourceResolver::new(None);
     let doc = dom::parse_html_with_resolver(html, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -553,7 +548,7 @@ pub fn html_to_pdf(html: &str, options: &ConvertOptions) -> crate::error::Result
         options.strict,
         options.page_config.clone(),
     )?;
-    render_pdf(&document, &page_settings_from(options))
+    render_pdf(&document, &page_settings)
 }
 
 /// HTML 文件 → PDF（自动将本地图片嵌入为 base64）
@@ -563,7 +558,7 @@ pub fn html_file_to_pdf(path: &Path, options: &ConvertOptions) -> crate::error::
     let resolver = dom::ResourceResolver::new(base_dir);
     let doc = dom::parse_html_with_resolver(&html, &resolver);
     let user_css = resolve_user_css(options, None)?;
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -573,7 +568,7 @@ pub fn html_file_to_pdf(path: &Path, options: &ConvertOptions) -> crate::error::
         options.strict,
         options.page_config.clone(),
     )?;
-    render_pdf(&document, &page_settings_from(options))
+    render_pdf(&document, &page_settings)
 }
 
 // ─── SVG 输出 ──────────────────────────────────────────────────
@@ -583,7 +578,7 @@ pub fn markdown_to_svg(markdown: &str, options: &ConvertOptions) -> crate::error
     let user_css = resolve_user_css(options, Some(markdown))?;
     let resolver = dom::ResourceResolver::new(None);
     let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -595,7 +590,7 @@ pub fn markdown_to_svg(markdown: &str, options: &ConvertOptions) -> crate::error
     )?;
     Ok(output::svg::document_to_svg(
         &document,
-        &page_settings_from(options),
+        &page_settings,
     ))
 }
 
@@ -604,7 +599,7 @@ pub fn html_to_svg(html: &str, options: &ConvertOptions) -> crate::error::Result
     let user_css = resolve_user_css(options, None)?;
     let resolver = dom::ResourceResolver::new(None);
     let doc = dom::parse_html_with_resolver(html, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -616,7 +611,7 @@ pub fn html_to_svg(html: &str, options: &ConvertOptions) -> crate::error::Result
     )?;
     Ok(output::svg::document_to_svg(
         &document,
-        &page_settings_from(options),
+        &page_settings,
     ))
 }
 
@@ -626,7 +621,7 @@ pub fn markdown_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::err
     let user_css = resolve_user_css(options, Some(&markdown))?;
     let resolver = dom::ResourceResolver::new(base_dir);
     let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -638,7 +633,7 @@ pub fn markdown_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::err
     )?;
     Ok(output::svg::document_to_svg(
         &document,
-        &page_settings_from(options),
+        &page_settings,
     ))
 }
 
@@ -648,7 +643,7 @@ pub fn html_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::error::
     let resolver = dom::ResourceResolver::new(path.parent().map(|p| p.to_path_buf()));
     let doc = dom::parse_html_with_resolver(&html, &resolver);
     let user_css = resolve_user_css(options, None)?;
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -660,7 +655,7 @@ pub fn html_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::error::
     )?;
     Ok(output::svg::document_to_svg(
         &document,
-        &page_settings_from(options),
+        &page_settings,
     ))
 }
 
@@ -680,7 +675,7 @@ pub fn markdown_to_png_dpi(
     let user_css = resolve_user_css(options, Some(markdown))?;
     let resolver = dom::ResourceResolver::new(None);
     let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -690,7 +685,7 @@ pub fn markdown_to_png_dpi(
         options.strict,
         options.page_config.clone(),
     )?;
-    output::png::document_to_png(&document, &page_settings_from(options), dpi)
+    output::png::document_to_png(&document, &page_settings, dpi)
 }
 
 /// HTML → PNG（不分页长图，默认 150 DPI，保证清晰度）
@@ -698,7 +693,7 @@ pub fn html_to_png(html: &str, options: &ConvertOptions) -> crate::error::Result
     let user_css = resolve_user_css(options, None)?;
     let resolver = dom::ResourceResolver::new(None);
     let doc = dom::parse_html_with_resolver(html, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -708,7 +703,7 @@ pub fn html_to_png(html: &str, options: &ConvertOptions) -> crate::error::Result
         options.strict,
         options.page_config.clone(),
     )?;
-    output::png::document_to_png(&document, &page_settings_from(options), 150.0)
+    output::png::document_to_png(&document, &page_settings, 150.0)
 }
 
 /// Markdown 文件 → PNG（自动内联本地图片，默认 150 DPI）。
@@ -729,7 +724,7 @@ pub fn markdown_file_to_png_dpi(
     let user_css = resolve_user_css(options, Some(&markdown))?;
     let resolver = dom::ResourceResolver::new(base_dir);
     let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -739,7 +734,7 @@ pub fn markdown_file_to_png_dpi(
         options.strict,
         options.page_config.clone(),
     )?;
-    output::png::document_to_png(&document, &page_settings_from(options), dpi)
+    output::png::document_to_png(&document, &page_settings, dpi)
 }
 
 /// HTML 文件 → PNG（自动内联本地图片，默认 150 DPI）。
@@ -748,7 +743,7 @@ pub fn html_file_to_png(path: &Path, options: &ConvertOptions) -> crate::error::
     let resolver = dom::ResourceResolver::new(path.parent().map(|p| p.to_path_buf()));
     let doc = dom::parse_html_with_resolver(&html, &resolver);
     let user_css = resolve_user_css(options, None)?;
-    let document = html_to_layout(
+    let (document, page_settings) = html_to_layout(
         &doc,
         if user_css.is_empty() {
             None
@@ -758,7 +753,7 @@ pub fn html_file_to_png(path: &Path, options: &ConvertOptions) -> crate::error::
         options.strict,
         options.page_config.clone(),
     )?;
-    output::png::document_to_png(&document, &page_settings_from(options), 150.0)
+    output::png::document_to_png(&document, &page_settings, 150.0)
 }
 
 // ─── DOCX 输出 ─────────────────────────────────────────────────
@@ -890,20 +885,31 @@ fn html_to_styled_node(
     apply_page_metrics(&mut engine, page_config);
     let mut node = dom::to_ast::html_to_styled_nodes(doc, &engine);
     // AST 富化：外绘 + 语法高亮（与 PDF 路径共享同一份产物，保证 DOCX 也有图表/高亮）。
-    let page_settings = page_config
-        .cloned()
-        .map(PageSettings::from)
-        .unwrap_or_default();
+    // 页面几何与 `%` 基准一致：取 `@page` 与显式配置的合并结果。
+    let page_settings =
+        PageSettings::from(merged_page_config(engine.page_config(), page_config));
     enrich::enrich_ast(&mut node, &page_settings);
     Ok(node)
 }
 
 /// 依据页面配置设定 CSS 引擎的包含块宽度（盒模型 `%` 的基准）。
 ///
-/// 合并优先级：显式 [`PageConfig`]（来自 [`ConvertOptions`]）> CSS `@page` 声明
-/// > 内置默认（A4）。必须在 Styled AST 转换之前调用，否则 `%` 会退回默认值。
+/// 合并优先级见 [`merged_page_config`]。必须在 Styled AST 转换之前调用，
+/// 否则 `%` 会退回默认值。
 fn apply_page_metrics(engine: &mut css::engine::CssEngine, page_config: Option<&PageConfig>) {
-    let mut pc = engine.page_config().clone();
+    let pc = merged_page_config(engine.page_config(), page_config);
+    let settings = PageSettings::from(pc);
+    engine.set_containing_block_width(settings.content_width());
+}
+
+/// 合并页面几何来源，优先级：显式 [`PageConfig`]（来自 [`ConvertOptions`]）
+/// > CSS `@page` 声明 > 内置默认（A4）。
+///
+/// 这是**唯一**的页面几何派生入口：`%` 宽度基准（`apply_page_metrics`）与
+/// 渲染端实际页尺寸（PDF/SVG/PNG/DOCX）必须消费同一份合并结果，否则
+/// 「仅通过 `@page` 设置页面」时会出现「`%` 按 @page 算、页面却是 A4」的错位。
+fn merged_page_config(engine_page: &PageConfig, page_config: Option<&PageConfig>) -> PageConfig {
+    let mut pc = engine_page.clone();
     if let Some(explicit) = page_config {
         if explicit.width.is_some() {
             pc.width = explicit.width;
@@ -923,9 +929,23 @@ fn apply_page_metrics(engine: &mut css::engine::CssEngine, page_config: Option<&
         if explicit.margin_right.is_some() {
             pc.margin_right = explicit.margin_right;
         }
+        if explicit.height_unlimited.is_some() {
+            pc.height_unlimited = explicit.height_unlimited;
+        }
+        if explicit.header.is_some() {
+            pc.header = explicit.header.clone();
+        }
+        if explicit.footer.is_some() {
+            pc.footer = explicit.footer.clone();
+        }
+        if explicit.header_font_size.is_some() {
+            pc.header_font_size = explicit.header_font_size;
+        }
+        if explicit.footer_font_size.is_some() {
+            pc.footer_font_size = explicit.footer_font_size;
+        }
     }
-    let settings = PageSettings::from(pc);
-    engine.set_containing_block_width(settings.content_width());
+    pc
 }
 
 /// HtmlDocument → Document 的核心转换逻辑
@@ -940,7 +960,7 @@ fn html_to_layout(
     user_css: Option<&str>,
     strict: bool,
     page_config: Option<PageConfig>,
-) -> crate::error::Result<Document> {
+) -> crate::error::Result<(Document, PageSettings)> {
     // 1. 合并 CSS：内置样式 + <style> 标签 + 用户 CSS
     let builtin_css = ast::presets::DEFAULT_CSS;
     let mut engine =
@@ -979,13 +999,17 @@ fn html_to_layout(
     let mut styled_node = dom::to_ast::html_to_styled_nodes(doc, &engine);
 
     // 4. Styled Node → Document（源 IR，不分页）
-    let page_settings = page_config.map(PageSettings::from).unwrap_or_default();
+    // 页面几何 = CSS `@page` 与显式 `PageConfig` 合并后的结果（与 `%` 基准一致）。
+    // 若只取显式配置，仅通过 `@page { size/margin }` 设置页面时渲染端会退回
+    // A4 默认值，导致 `%` 宽度按 @page 计算而实际页面仍是 A4。
+    let page_settings =
+        PageSettings::from(merged_page_config(engine.page_config(), page_config.as_ref()));
 
     // 3.5 AST 富化：外绘（mermaid/liecharts → 图片节点）+ 语法高亮。
     // 必须在 `ast_to_layout` 之前完成，各后端（含 DOCX/HTML）据此消费同一份产物。
     enrich::enrich_ast(&mut styled_node, &page_settings);
 
-    Ok(ast_to_layout(&styled_node, &page_settings))
+    Ok((ast_to_layout(&styled_node, &page_settings), page_settings))
 }
 
 #[cfg(test)]
@@ -1008,5 +1032,67 @@ mod pipeline_tests {
         let pdf = result.unwrap();
         assert!(!pdf.is_empty(), "PDF bytes should not be empty");
         assert!(pdf.starts_with(b"%PDF"), "Should be valid PDF");
+    }
+
+    // ─── H2：CSS @page 页面几何（2026-09-04 审查） ───
+
+    #[test]
+    fn test_at_page_css_sets_page_geometry() {
+        // 仅通过 <style> 中的 @page 设置页面（无显式 ConvertOptions::page_config）：
+        // 渲染端 PageSettings 必须采用 @page 的尺寸/边距，而非退回 A4 默认值。
+        let md = "<style>@page { size: A5; margin: 24pt; }</style>\n\n# Hi\n";
+        let resolver = dom::ResourceResolver::new(None);
+        let doc = dom::markdown_to_dom_with_resolver(md, &resolver);
+        let options = ConvertOptions::default();
+        let (_document, settings) = html_to_layout(
+            &doc,
+            None,
+            options.strict,
+            options.page_config.clone(),
+        )
+        .expect("layout");
+        // A5 = 419.53 × 595.28 pt
+        assert!(
+            (settings.width_pt - 419.53).abs() < 0.5,
+            "width 应为 A5 宽 419.53，实际 {}",
+            settings.width_pt
+        );
+        assert!(
+            (settings.height_pt - 595.28).abs() < 0.5,
+            "height 应为 A5 高 595.28，实际 {}",
+            settings.height_pt
+        );
+        assert!(
+            (settings.margin_top_pt - 24.0).abs() < 0.1,
+            "margin_top 应为 @page 的 24pt，实际 {}",
+            settings.margin_top_pt
+        );
+    }
+
+    #[test]
+    fn test_explicit_page_config_overrides_at_page() {
+        // 优先级：显式 PageConfig > @page。
+        let md = "<style>@page { size: A5; margin: 24pt; }</style>\n\n# Hi\n";
+        let resolver = dom::ResourceResolver::new(None);
+        let doc = dom::markdown_to_dom_with_resolver(md, &resolver);
+        let options =
+            ConvertOptions::default().with_page_config(PageConfig {
+                width: Some(300.0),
+                ..Default::default()
+            });
+        let (_document, settings) = html_to_layout(
+            &doc,
+            None,
+            options.strict,
+            options.page_config.clone(),
+        )
+        .expect("layout");
+        assert!(
+            (settings.width_pt - 300.0).abs() < 0.5,
+            "显式 width 应覆盖 @page，实际 {}",
+            settings.width_pt
+        );
+        // 未被显式覆盖的 margin 仍取 @page 值。
+        assert!((settings.margin_top_pt - 24.0).abs() < 0.1);
     }
 }

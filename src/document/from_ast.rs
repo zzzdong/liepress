@@ -67,10 +67,10 @@ fn measure_cell(node: &Node, style: &crate::ast::Style, padding_h: f64) -> CellM
         segments.iter().map(|(t, s)| (t.as_str(), s)).collect();
     let ideal_width =
         crate::document::text::layout_text(&combined, None, crate::ast::TextAlign::Left).width;
-    // 最宽不可断词宽度
+    // 最宽不可断词宽度（CJK 逐字可断，西文按空白分词）
     let min_width = segments
         .iter()
-        .flat_map(|(text, st)| split_words(text).into_iter().map(move |w| (w, st)))
+        .flat_map(|(text, st)| split_min_units(text).into_iter().map(move |w| (w, st)))
         .filter(|(w, _)| !w.is_empty())
         .fold(0.0_f64, |acc, (word, st)| {
             let w = crate::document::text::layout_text(
@@ -87,11 +87,43 @@ fn measure_cell(node: &Node, style: &crate::ast::Style, padding_h: f64) -> CellM
     }
 }
 
-/// 按空白把文本拆分为不可断词（连续非空白段）。
-fn split_words(text: &str) -> Vec<&str> {
-    text.split(char::is_whitespace)
-        .filter(|s| !s.is_empty())
-        .collect()
+/// 判断字符是否按 CJK 逐字可断语义处理（表意文字、假名、全角标点等）。
+fn is_cjk_breakable(c: char) -> bool {
+    matches!(c as u32,
+        0x2E80..=0x9FFF      // CJK 部首/注音/假名/CJK 统一表意文字/CJK 标点
+        | 0xF900..=0xFAFF    // CJK 兼容表意文字
+        | 0xFF00..=0xFF60    // 全角形式（全角标点、字母、数字）
+        | 0x20000..=0x2FA1F  // CJK 扩展 B–F
+    )
+}
+
+/// 把文本拆为「最小不可断单元」（供表格最小列宽测量）：
+/// - 西文连续非空白段不可断；
+/// - CJK 字符逐字可断（与排版端 `layout_text` 的逐字折行语义一致）。
+///
+/// 若不区分，中文长句被当成单个不可断词 → 单元格最小宽度 = 整句宽度，
+/// 宽表格列宽总和溢出页宽。
+fn split_min_units(text: &str) -> Vec<&str> {
+    let mut units = Vec::new();
+    let mut run_start: Option<usize> = None; // 当前西文 run 起点
+    for (i, c) in text.char_indices() {
+        if c.is_whitespace() {
+            if let Some(s) = run_start.take() {
+                units.push(&text[s..i]);
+            }
+        } else if is_cjk_breakable(c) {
+            if let Some(s) = run_start.take() {
+                units.push(&text[s..i]);
+            }
+            units.push(&text[i..i + c.len_utf8()]);
+        } else if run_start.is_none() {
+            run_start = Some(i);
+        }
+    }
+    if let Some(s) = run_start {
+        units.push(&text[s..]);
+    }
+    units
 }
 
 fn compute_table_layout(
@@ -130,7 +162,10 @@ fn compute_table_layout(
     } else {
         let total_min: f64 = min_cols.iter().sum();
         if total_min >= content_w {
-            min_cols.clone()
+            // 最小列宽总和超出页宽（如含超长 URL 等不可断内容）：
+            // 等比压缩到页宽，宁可单元格内文本微溢出也不让整表横向溢出页边距。
+            let scale = if total_min > 0.0 { content_w / total_min } else { 1.0 };
+            min_cols.iter().map(|m| m * scale).collect()
         } else {
             let extra = content_w - total_min;
             let ideal_extra: f64 = ideal_cols
@@ -542,10 +577,10 @@ fn convert_image_node(node: &Node, style: &ResolvedStyle, settings: &PageSetting
         unreachable!("convert_image_node 只接受 Image 节点");
     };
     let (data, format) = decode_image_data_uri(src);
-    let pixel = if data.is_empty() {
-        (0, 0)
+    let (pixel, orientation) = if data.is_empty() {
+        ((0, 0), 1u8)
     } else {
-        probe_image_dimensions(&data).unwrap_or((0, 0))
+        probe_image_with_orientation(&data).unwrap_or(((0, 0), 1))
     };
     let content_w = settings.content_width() as f64;
     let content_h = settings.content_height() as f64;
@@ -555,6 +590,7 @@ fn convert_image_node(node: &Node, style: &ResolvedStyle, settings: &PageSetting
             position: (0.0, 0.0),
             size,
             pixel_size: pixel,
+            orientation,
             data,
             format,
             alt: alt.clone(),
@@ -957,14 +993,41 @@ fn decode_image_data_uri(src: &str) -> (Vec<u8>, String) {
     (bytes, format)
 }
 
-/// 探测图片字节的原始像素尺寸（宽, 高）。
+/// 探测图片的**显示方向**像素尺寸（宽, 高）与 EXIF Orientation（1–8）。
 ///
-/// 仅读取文件头，不解码整图。解码失败或尺寸未知时返回 `None`。
-fn probe_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
-    let reader = image::ImageReader::new(std::io::Cursor::new(data))
-        .with_guessed_format()
+/// 仅读取文件头，不解码整图。EXIF 方向为 5–8（需旋转 90°）时交换宽高，
+/// 使返回的尺寸/宽高比与用户实际看到的显示方向一致。
+/// 解码失败或尺寸未知时返回 `None`。
+fn probe_image_with_orientation(data: &[u8]) -> Option<((u32, u32), u8)> {
+    let format = image::guess_format(data).ok()?;
+    let reader = image::ImageReader::with_format(std::io::Cursor::new(data), format);
+    let (w, h) = reader.into_dimensions().ok()?;
+
+    let orientation = if format == image::ImageFormat::Jpeg {
+        read_exif_orientation(data).unwrap_or(1)
+    } else {
+        1
+    };
+    Some((swap_dims_for_orientation((w, h), orientation), orientation))
+}
+
+/// 按显示方向调整像素尺寸（EXIF 方向 5–8 交换宽高），供测试与探测共用。
+fn swap_dims_for_orientation((w, h): (u32, u32), orientation: u8) -> (u32, u32) {
+    if (5..=8).contains(&orientation) {
+        (h, w)
+    } else {
+        (w, h)
+    }
+}
+
+/// 读取 JPEG 的 EXIF Orientation（1–8）；无 EXIF 或解析失败时返回 `None`。
+fn read_exif_orientation(data: &[u8]) -> Option<u8> {
+    let exif = exif::Reader::new()
+        .read_from_container(&mut std::io::Cursor::new(data))
         .ok()?;
-    reader.into_dimensions().ok()
+    let field = exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)?;
+    let v = field.value.get_uint(0)?;
+    (1..=8).contains(&v).then_some(v as u8)
 }
 
 /// 解析图片的显示尺寸（pt）。
@@ -1717,5 +1780,68 @@ mod tests {
             }
             _ => panic!("expected Table"),
         }
+    }
+
+    // ─── CJK 表格最小列宽（2026-09-04 审查） ───
+
+    fn text_node(t: &str) -> crate::ast::Node {
+        crate::ast::Node::new(
+            NodeKind::Text {
+                text: t.to_string(),
+            },
+            crate::ast::Style::default(),
+            false,
+        )
+    }
+
+    #[test]
+    fn cjk_cell_min_width_breaks_per_char() {
+        // 60 个无空格汉字：旧逻辑把整句当单个不可断词，min ≈ 整句宽度，
+        // 宽表格列宽总和溢出页宽。CJK 逐字可断后 min 应收缩到单字宽量级。
+        let cell = text_node(&"汉字宽度测试".repeat(12));
+        let style = crate::ast::Style::default();
+        let (col_widths, _) = compute_table_layout(&[vec![&cell]], &style, 1, 200.0);
+        assert!(
+            col_widths[0] <= 200.0 + 1e-9,
+            "CJK 单元格最小列宽应可断词收缩，实际 {}",
+            col_widths[0]
+        );
+        assert!(col_widths[0] > 10.0, "列宽不应塌缩到 0，实际 {}", col_widths[0]);
+    }
+
+    #[test]
+    fn oversize_unbreakable_min_is_scaled_to_content_width() {
+        // 100 个连续 'M'（西文不可断，min 远超页宽）：等比压缩到页宽，
+        // 保证表格不横向溢出页边距。
+        let cell = text_node(&"M".repeat(100));
+        let style = crate::ast::Style::default();
+        let (col_widths, _) = compute_table_layout(&[vec![&cell]], &style, 1, 150.0);
+        assert!(
+            (col_widths[0] - 150.0).abs() < 1e-6,
+            "不可断超宽内容应压缩到页宽，实际 {}",
+            col_widths[0]
+        );
+    }
+
+    // ─── EXIF 方向（2026-09-04 审查） ───
+
+    #[test]
+    fn exif_orientation_swaps_display_dims_for_rotated() {
+        // 方向 5–8（需旋转 90°）：显示尺寸应交换宽高；1–4 不变。
+        assert_eq!(swap_dims_for_orientation((300, 200), 1), (300, 200));
+        assert_eq!(swap_dims_for_orientation((300, 200), 4), (300, 200));
+        assert_eq!(swap_dims_for_orientation((300, 200), 6), (200, 300));
+        assert_eq!(swap_dims_for_orientation((300, 200), 8), (200, 300));
+    }
+
+    #[test]
+    fn probe_png_reports_orientation_1_and_native_dims() {
+        // 生成 3×2 PNG（无 EXIF）：显示尺寸 = 存储尺寸，方向 1。
+        let img = image::DynamicImage::new_rgb8(3, 2);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let ((w, h), o) = probe_image_with_orientation(buf.get_ref()).expect("probe");
+        assert_eq!((w, h), (3, 2));
+        assert_eq!(o, 1);
     }
 }

@@ -385,7 +385,7 @@ impl SceneBuilder {
                     };
                     // lievisual 的 SceneImage 持有已解码的 RGBA8 位图（Pixmap），
                     // 解码是调用方职责：这里用 `image` 解码原始字节为 RGBA8 再构造。
-                    if let Some(scene_img) = decode_scene_image(&img.data, fit) {
+                    if let Some(scene_img) = decode_scene_image(&img.data, fit, img.orientation) {
                         self.push(
                             Element::Image {
                                 image: scene_img,
@@ -710,8 +710,18 @@ fn measure_width(text: &str, family: &str, font_size: f64, color: LColor) -> f64
 ///
 /// lievisual 不做解码，此处用 `image` crate 解码任意常见格式（png/jpeg/gif/webp…）。
 /// 解码失败返回 `None`（调用方回退为占位框）。
-fn decode_scene_image(data: &[u8], fit: lievisual::ObjectFit) -> Option<SceneImage> {
-    let dyn_img = image::load_from_memory(data).ok()?;
+fn decode_scene_image(
+    data: &[u8],
+    fit: lievisual::ObjectFit,
+    orientation: u8,
+) -> Option<SceneImage> {
+    let mut dyn_img = image::load_from_memory(data).ok()?;
+    // EXIF 方向校正（竖拍照片等）：位图旋转/翻转到显示方向。
+    if orientation != 1
+        && let Some(o) = image::metadata::Orientation::from_exif(orientation)
+    {
+        dyn_img.apply_orientation(o);
+    }
     let rgba = dyn_img.to_rgba8();
     let (w, h) = (rgba.width(), rgba.height());
     let pixels = rgba.into_raw();

@@ -312,63 +312,64 @@ fn extract_selector_info(
 
             let mut is_first_segment = true;
 
-            for component in selector.iter() {
-                match component {
-                    Component::LocalName(local_name) => {
-                        let name = local_name.name.as_ref().to_string();
-                        specificity += 1;
-                        if is_first_segment {
-                            target_tag = Some(name);
-                        } else {
-                            current_ancestor_tag = Some(name);
+            // 注意：`Selector::iter()`（parcel_selectors）在遇到组合器时**停止**，
+            // 仅产出最右侧 compound；须用 `next_sequence()` 逐段推进才能遍历
+            // 完整的 `A B C` 链，否则祖先约束整体丢失、`div p span` 会匹配任意 span。
+            // 迭代序为匹配序（自右向左），故祖先段保存顺序为近→远。
+            let mut selector_iter = selector.iter();
+            loop {
+                for component in &mut selector_iter {
+                    match component {
+                        Component::LocalName(local_name) => {
+                            let name = local_name.name.as_ref().to_string();
+                            specificity += 1;
+                            if is_first_segment {
+                                target_tag = Some(name);
+                            } else {
+                                current_ancestor_tag = Some(name);
+                            }
                         }
-                    }
-                    Component::Class(class) => {
-                        specificity += 10;
-                        if is_first_segment {
-                            target_classes.push(class.as_ref().to_string());
-                        } else {
-                            current_ancestor_classes.push(class.as_ref().to_string());
+                        Component::Class(class) => {
+                            specificity += 10;
+                            if is_first_segment {
+                                target_classes.push(class.as_ref().to_string());
+                            } else {
+                                current_ancestor_classes.push(class.as_ref().to_string());
+                            }
                         }
-                    }
-                    Component::ID(id) => {
-                        specificity += 100;
-                        if is_first_segment {
-                            target_id = Some(id.as_ref().to_string());
-                        } else {
-                            current_ancestor_id = Some(id.as_ref().to_string());
+                        Component::ID(id) => {
+                            specificity += 100;
+                            if is_first_segment {
+                                target_id = Some(id.as_ref().to_string());
+                            } else {
+                                current_ancestor_id = Some(id.as_ref().to_string());
+                            }
                         }
-                    }
-                    Component::Combinator(_) => {
-                        // 遇到组合器，将当前祖先信息保存
-                        if current_ancestor_tag.is_some()
-                            || !current_ancestor_classes.is_empty()
-                            || current_ancestor_id.is_some()
-                        {
-                            ancestors.push(AncestorSelector {
-                                tag: current_ancestor_tag.take(),
-                                classes: std::mem::take(&mut current_ancestor_classes),
-                                id: current_ancestor_id.take(),
-                            });
+                        _ => {
+                            // 忽略通用选择器、伪类、伪元素等
                         }
-                        is_first_segment = false;
-                    }
-                    _ => {
-                        // 忽略通用选择器、伪类、伪元素等
                     }
                 }
-            }
 
-            // 处理最后一个祖先段
-            if current_ancestor_tag.is_some()
-                || !current_ancestor_classes.is_empty()
-                || current_ancestor_id.is_some()
-            {
-                ancestors.push(AncestorSelector {
-                    tag: current_ancestor_tag,
-                    classes: current_ancestor_classes,
-                    id: current_ancestor_id,
-                });
+                // 当前 compound 结束：若有祖先段内容，保存（近→远）。
+                if current_ancestor_tag.is_some()
+                    || !current_ancestor_classes.is_empty()
+                    || current_ancestor_id.is_some()
+                {
+                    ancestors.push(AncestorSelector {
+                        tag: current_ancestor_tag.take(),
+                        classes: std::mem::take(&mut current_ancestor_classes),
+                        id: current_ancestor_id.take(),
+                    });
+                }
+
+                match selector_iter.next_sequence() {
+                    Some(_combinator) => {
+                        // 后续 compound 均为祖先段（`>`/` `/`~` 统一按后代语义处理）。
+                        is_first_segment = false;
+                    }
+                    None => break,
+                }
             }
 
             SelectorInfo {
@@ -498,17 +499,29 @@ fn match_selector_info(
         return None;
     }
 
-    // 匹配祖先选择器链
+    // 匹配祖先选择器链。
+    //
+    // 两个序列的顺序约定：
+    // - `selector.ancestors` 从**近到远**（`ancestors[0]` 为紧邻 target 的祖先段，
+    //   见 `extract_selector_info`——selectors crate 按匹配序自右向左迭代）；
+    // - `ancestor_info` 从**远到近**（`ancestor_info[len-1]` 为直接父级，
+    //   见 `StyleResolver::with_ancestor` 的入栈顺序）。
+    //
+    // CSS 后代语义：`A B C` 要求 C 的某个祖先匹配 B，且该祖先的某个祖先匹配 A，
+    // 即每一段必须严格位于上一段**之上**（更远离目标）。故从最近祖先向根部
+    // 扫描 `ancestors[0]`，命中后把扫描上界压到命中位置，再为 `ancestors[1]`
+    // 扫描其上方，依此递推。（贪心自最近端匹配对纯后代组合器是正确且最优的。）
     if !selector.ancestors.is_empty() {
-        let mut ancestor_idx = ancestor_info.len();
-
-        for ancestor_sel in selector.ancestors.iter().rev() {
+        // `upper`：当前段允许匹配的祖先范围上界（不含）——后续段必须严格更远。
+        let mut upper = ancestor_info.len();
+        for ancestor_sel in &selector.ancestors {
+            let mut idx = upper;
             let found = loop {
-                if ancestor_idx == 0 {
+                if idx == 0 {
                     break false;
                 }
-                ancestor_idx -= 1;
-                let info = &ancestor_info[ancestor_idx];
+                idx -= 1;
+                let info = &ancestor_info[idx];
 
                 if let Some(ref req_tag) = ancestor_sel.tag
                     && req_tag != &info.tag
@@ -536,6 +549,7 @@ fn match_selector_info(
             if !found {
                 return None;
             }
+            upper = idx;
         }
     }
 
@@ -1614,6 +1628,63 @@ mod tests {
         assert_eq!(config.margin_top, Some(36.0));
         assert_eq!(config.margin_left, Some(54.0));
         assert_eq!(config.width, Some(595.276));
+    }
+
+    // ─── H1：多级后代选择器（组合器 ≥2）匹配方向（2026-09-04 审查） ───
+
+    fn ancestors_from(tags: &[&str]) -> Vec<AncestorInfo> {
+        tags.iter()
+            .map(|t| AncestorInfo {
+                tag: t.to_string(),
+                classes: vec![],
+                id: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_multi_level_descendant_selector_matches_correct_nesting() {
+        let engine = CssEngine::new("div p span { color: #f00; }").unwrap();
+        let parent = Style::default();
+        // 正确嵌套 <div><p><span>：ancestor_info 从远到近（末位为直接父级）。
+        let ancestors = ancestors_from(&["html", "body", "div", "p"]);
+        let style = engine.resolve_style("span", &[], None, &ancestors, &parent);
+        assert_eq!(style.color.r, 255, "div p span 应命中正确嵌套的 DOM");
+    }
+
+    #[test]
+    fn test_multi_level_descendant_selector_rejects_inverted_nesting() {
+        let engine = CssEngine::new("div p span { color: #f00; }").unwrap();
+        let parent = Style::default();
+        // 倒置嵌套 <p><div><span>：p 比 div 更远离目标，不满足链序。
+        let ancestors = ancestors_from(&["html", "body", "p", "div"]);
+        let style = engine.resolve_style("span", &[], None, &ancestors, &parent);
+        assert_ne!(style.color.r, 255, "倒置嵌套不得命中 div p span");
+        // 缺失祖先段（无 div）也不得命中。
+        let ancestors2 = ancestors_from(&["html", "body", "p"]);
+        let style2 = engine.resolve_style("span", &[], None, &ancestors2, &parent);
+        assert_ne!(style2.color.r, 255);
+    }
+
+    #[test]
+    fn test_descendant_selector_with_id_and_multi_class_ancestor() {
+        let engine = CssEngine::new("#main .note p { color: #0a0; }").unwrap();
+        let parent = Style::default();
+        // <div id=main><div class="note extra"><p>：id 段 + 多 class 段 + 目标。
+        let ancestors = vec![
+            AncestorInfo {
+                tag: "div".to_string(),
+                classes: vec![],
+                id: Some("main".to_string()),
+            },
+            AncestorInfo {
+                tag: "div".to_string(),
+                classes: vec!["extra".to_string(), "note".to_string()],
+                id: None,
+            },
+        ];
+        let style = engine.resolve_style("p", &[], None, &ancestors, &parent);
+        assert_eq!(style.color.g, 170, "#0a0 的绿分量应为 0xaa=170");
     }
 
     // ─── S-4：非有限长度拒绝（2026-09-03 审查） ───

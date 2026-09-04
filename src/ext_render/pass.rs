@@ -58,10 +58,6 @@ fn try_replace(node: &mut Node, settings: &PageSettings) {
 /// 宽度显式设为内容宽（pt），让 DOCX/HTML 与 PDF 的显示宽度一致；高度留空，
 /// 由各后端按 PNG 真实宽高比推算（PDF 侧还会按页高上限等比缩放，避免长图溢出）。
 fn image_node(img: RenderedImage, lang: &str, base_style: &Style, settings: &PageSettings) -> Node {
-    // 渲染器返回的 pixel_size 可能不准（如 liemermaid 产出「贴合内容」的尺寸），
-    // 以真实解码尺寸为准。
-    let _pixel = probe_png_size(&img.data).unwrap_or(img.pixel_size);
-
     let mut style = base_style.clone();
     style.width = Some(settings.content_width());
     style.height = None;
@@ -85,14 +81,6 @@ fn image_node(img: RenderedImage, lang: &str, base_style: &Style, settings: &Pag
         // 图片不参与跨页拆分。
         false,
     )
-}
-
-/// 探测 PNG 的原始像素尺寸（仅读文件头，不解码整图）。
-fn probe_png_size(data: &[u8]) -> Option<(u32, u32)> {
-    let reader = image::ImageReader::new(std::io::Cursor::new(data))
-        .with_guessed_format()
-        .ok()?;
-    reader.into_dimensions().ok()
 }
 
 #[cfg(test)]

@@ -33,9 +33,9 @@ const DEFAULT_DPI: f64 = 150.0;
 /// 渲染器接收的选项。
 #[derive(Debug, Clone)]
 pub struct RenderOpts {
-    /// 建议像素宽。默认由调用方按页内容宽折算（见 [`default_opts`]）。
+    /// 建议像素宽。默认由调用方按页内容宽折算（见 [`Self::for_content_width`]）。
     pub width: u32,
-    /// 建议像素高。默认按 7:12 比例（贴近常见图表 4:3 习惯）。
+    /// 建议像素高。默认按宽:高 = 12:7（≈1.71:1，接近 16:9）比例。
     pub height: u32,
     /// 主题名（"light" / "dark" / 引擎自定义）。渲染器不认识时忽略。
     pub theme: String,
@@ -80,10 +80,12 @@ impl RenderOpts {
             self.width = w.min(4000);
             has_explicit_width = true;
         }
+        let mut has_explicit_height = false;
         if let Some(h) = overrides.get("height").and_then(|v| v.parse::<u32>().ok())
             && h > 0
         {
             self.height = h.min(4000);
+            has_explicit_height = true;
         }
         if let Some(t) = overrides.get("theme")
             && !t.is_empty()
@@ -94,12 +96,16 @@ impl RenderOpts {
             && d > 0
         {
             let new_dpi = d.min(600) as f64;
-            // 未显式指定像素宽时，保持物理宽度不变，按新 DPI 重算像素宽，
+            // 未显式指定像素宽/高时，保持物理尺寸不变，按新 DPI 重算像素尺寸，
             // 让 `dpi=` 覆盖项真正生效（而非只改元数据）。
+            // 显式指定过的维度保持用户意图，不被 dpi 重算覆盖。
             if !has_explicit_width {
                 let phys_pt = self.width as f64 * 72.0 / self.dpi.max(1) as f64;
                 self.width = (phys_pt * new_dpi / 72.0).round() as u32;
-                self.height = (self.width as f64 * 7.0 / 12.0).round() as u32;
+            }
+            if !has_explicit_height {
+                let phys_pt = self.height as f64 * 72.0 / self.dpi.max(1) as f64;
+                self.height = (phys_pt * new_dpi / 72.0).round() as u32;
             }
             self.dpi = new_dpi as u32;
         }
@@ -133,7 +139,7 @@ pub enum RenderError {
 ///
 /// 实现方认领一种 `lang`（见 [`BlockRenderer::lang`]），把代码块文本渲染成图片。
 pub trait BlockRenderer: Send + Sync {
-    /// 认领的代码块语言标识（如 "liecharts"、"mermaid"）。大小写敏感。
+    /// 认领的代码块语言标识（如 "liecharts"、"mermaid"）。匹配大小写不敏感。
     fn lang(&self) -> &'static str;
 
     /// 把代码块 `code` 渲染成图片。失败返回 [`RenderError`]，由上层降级处理。
@@ -153,9 +159,11 @@ pub fn builtin_renderers() -> Vec<Box<dyn BlockRenderer>> {
     ]
 }
 
-/// 按 `lang` 查找已注册的渲染器。
+/// 按 `lang` 查找已注册的渲染器（大小写不敏感：` ```Mermaid ` 与 ` ```mermaid ` 等价）。
 pub fn find_renderer(lang: &str) -> Option<Box<dyn BlockRenderer>> {
-    builtin_renderers().into_iter().find(|r| r.lang() == lang)
+    builtin_renderers()
+        .into_iter()
+        .find(|r| r.lang().eq_ignore_ascii_case(lang))
 }
 
 /// 解析代码块 info string 为 `(lang, overrides)`。
@@ -207,5 +215,42 @@ mod tests {
         o.apply_overrides(&ov);
         assert_eq!(o.width, 1000);
         assert_eq!(o.theme, "dark");
+    }
+
+    #[test]
+    fn dpi_override_keeps_explicit_height() {
+        // `height=600 dpi=300`：显式 height 不得被 dpi 重算覆盖（审查修复）。
+        let mut o = RenderOpts {
+            width: 973,
+            height: 567,
+            dpi: 150,
+            ..Default::default()
+        };
+        let mut ov = HashMap::new();
+        ov.insert("height".into(), "600".into());
+        ov.insert("dpi".into(), "300".into());
+        o.apply_overrides(&ov);
+        assert_eq!(o.height, 600, "显式 height 不应被 dpi 重算覆盖");
+        assert_eq!(o.dpi, 300);
+        // 无显式 width 时宽度按新 DPI 重算（物理宽度不变：973pt@150dpi → 1946px@300dpi）
+        assert_eq!(o.width, 1946);
+    }
+
+    #[test]
+    fn dpi_override_without_explicit_scales_both() {
+        let mut o = RenderOpts::for_content_width(467.0, "light");
+        let before = (o.width, o.height);
+        let mut ov = HashMap::new();
+        ov.insert("dpi".into(), "300".into());
+        o.apply_overrides(&ov);
+        assert_eq!(o.width, before.0 * 2, "无显式尺寸时宽随 DPI 等比翻倍");
+        assert_eq!(o.height, before.1 * 2, "无显式尺寸时高随 DPI 等比翻倍");
+    }
+
+    #[test]
+    fn find_renderer_is_case_insensitive() {
+        assert!(find_renderer("Mermaid").is_some());
+        assert!(find_renderer("LIECHARTS").is_some());
+        assert!(find_renderer("nope").is_none());
     }
 }

@@ -261,3 +261,75 @@ fn s2_markdown_event_stack_safe() {
         "解析完成即为通过"
     );
 }
+
+// ───────────────────────── 2026-09-04 审查批次三：PDF alpha 与标题字号 ─────────────────────────
+
+/// 收集 PDF 全部内容流中的 `Tf`（字号）操作数
+fn pdf_font_sizes(pdf: &[u8]) -> Vec<f32> {
+    let doc = lopdf::Document::load_mem(pdf).expect("load pdf");
+    let mut sizes = Vec::new();
+    for (_, page_id) in doc.get_pages() {
+        let content = doc.get_page_content(page_id);
+        if let Ok(ops) = lopdf::content::Content::decode(&content) {
+            for op in &ops.operations {
+                if op.operator == "Tf"
+                    && let Some(size) = op.operands.get(1)
+                {
+                    let v = match size {
+                        lopdf::Object::Real(v) => *v as f32,
+                        lopdf::Object::Integer(v) => *v as f32,
+                        _ => continue,
+                    };
+                    sizes.push(v);
+                }
+            }
+        }
+    }
+    sizes
+}
+
+/// 标题字号应来自 CSS 排版（default.css h1 = 24pt），不得被 PDF 端硬编码 22pt 覆盖
+#[test]
+fn pdf_heading_uses_css_font_size() {
+    let md = "# 标题\n\n正文内容";
+    let pdf = liepress::markdown_to_pdf(md, &ConvertOptions::default()).expect("generate pdf");
+    let sizes = pdf_font_sizes(&pdf);
+    assert!(
+        sizes.iter().any(|s| (*s - 24.0).abs() < 0.5),
+        "h1 应按 CSS 24pt 排版，实际 Tf 字号 {sizes:?}"
+    );
+    assert!(
+        !sizes.iter().any(|s| (*s - 22.0).abs() < 0.1),
+        "不得出现旧硬编码的 22pt 标题字号，实际 {sizes:?}"
+    );
+}
+
+/// 半透明文字颜色：alpha 须除以 255 归一化（0.5 → ExtGState /ca ≈ 0.5），
+/// 旧实现直接传 0-255 值，0..=1 之外的值回退为 1（不透明）。
+#[test]
+fn pdf_text_color_alpha_is_normalized() {
+    let md = "<style>p { color: rgba(255, 0, 0, 0.5); }</style>\n\n半透明文字";
+    let pdf = liepress::markdown_to_pdf(md, &ConvertOptions::default()).expect("generate pdf");
+    let doc = lopdf::Document::load_mem(&pdf).expect("load pdf");
+    let has_half_alpha = doc.objects.values().any(|obj| {
+        if let lopdf::Object::Dictionary(dict) = obj {
+            if let Ok(v) = dict.get(b"ca") {
+                let num = match v {
+                    lopdf::Object::Real(r) => Some(*r as f32),
+                    lopdf::Object::Integer(i) => Some(*i as f32),
+                    _ => None,
+                };
+                if let Some(n) = num
+                    && (n - 0.5).abs() < 0.05
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    });
+    assert!(
+        has_half_alpha,
+        "PDF 应存在 /ca ≈ 0.5 的 ExtGState（alpha 归一化生效）"
+    );
+}
