@@ -15,7 +15,8 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
 - **输出**：PDF、HTML、SVG、PNG、DOCX。
 - **CSS 样式**：内置样式表 + 外部 CSS 文件 + Markdown 内联 `<style>`；支持选择器、简写展开、`!important`、百分比/字体相对单位、命名/十六进制/rgb/rgba 颜色。
 - **GFM**：表格、任务列表、删除线、带语言标签的代码块。
-- **图表与图示**（默认开启，可经 `--no-default-features` 关闭）：`mermaid` 代码块（经 `liemermaid`）渲染为图；`liecharts` 代码块（ECharts 风格 JSON，经 `liecharts`）渲染为图表。
+- **图表与图示**（默认开启，可经 `--no-default-features` 关闭）：`mermaid` 代码块（经 `liemermaid`）与 `liecharts` 代码块（ECharts 风格 JSON，经 `liecharts`）在 **AST 富化阶段**统一预渲染为内嵌 PNG，**五种输出后端（PDF/HTML/SVG/PNG/DOCX）均带图**。
+- **代码块语法高亮**：基于 `syntect`，同样在 AST 富化阶段完成（产出着色片段），五种后端均着色（DOCX 用带色 Run、HTML 用内联 `<span>`）。
 - **自动字体检测**：按文档语言（中文 / 日文 / 韩文 / 拉丁）推荐字体并回退。
 - **页面布局**：默认 A4，可通过 `@page` 与 CLI 配置页面尺寸与边距；自动分页，含孤行/寡行（widow/orphan）控制。
 - **页眉页脚**：可配置，支持 `{page}` / `{total}` 模板变量。
@@ -29,7 +30,7 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
 1. **Document 不知道页（Document is page-agnostic）**
    文档中间表示 `Document` 是一棵**不分页**的块树，每个节点携带已解析样式。分页是**各输出后端**的职责，不在文档层进行。这一原则让 PDF / SVG / PNG / HTML / DOCX 共用同一份 `Document`，各自决定如何切页。
 2. **三层 IR 流水线**
-   输入文本 → DOM（结构）→ 简化 AST（带样式节点）→ Document/Block（排版盒）→ 输出后端。每一层只关心自己那一级的语义，互不越层。
+   输入文本 → DOM（结构）→ 简化 AST（带样式节点，**经 enrich 富化：外绘图片 + 高亮片段**）→ Document/Block（排版盒）→ 输出后端。每一层只关心自己那一级的语义，互不越层。
 3. **样式与结构分离**
    CSS 引擎独立解析样式表并级联，生成 `ResolvedStyle` 附着在节点上；排版逻辑只读 `ResolvedStyle`，不解析 CSS。
 4. **输出后端可插拔**
@@ -64,26 +65,39 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
                     │  Layer 2：简化带样式 AST │
                     └────────────┬─────────────┘
                                │  Node 树（ast::Node）
-                               │
+                               ▼
+              ┌────────── enrich（AST 富化）──────────┐
+              │  ext_render/pass.rs:                    │
+              │    绘图代码块(mermaid/liecharts)        │
+              │    → 渲染为 PNG → 就地替换为图片节点     │
+              │    （base64 data URI）                  │
+              │  highlight.rs:                          │
+              │    CodeBlock → 语法高亮着色片段 spans    │
+              └────────────┬────────────────────────────┘
+                               │  富化后的 Node 树
+                               │  （图表已内嵌、代码块已着色）
           ┌────────────────────┴─────────────────────┐
           │                                          │
           ▼ 路径 A（经 document 层，分页/投影后端）    │ 路径 B（直接消费 ast::Node）
   ┌──────────── document ────────────┐                │
   │ from_ast.rs: ast_to_layout         │                │
+  │   （消费 spans/图片节点，不渲染）  │                │
   │ layout/mod.rs: Document/Block      │                │
   │ text.rs: 文本排版/换行              │                │
   │ types/: ResolvedStyle/PageSettings │                │
-  │ highlight.rs: 语法高亮             │                │
   └──────────────┬─────────────────────┘                │
                  │  Document（不分页块树）               │
         ┌────────┼────────┐                             │
         ▼        ▼        ▼                             ▼
    output/pdf  output/svg  output/png            output/html / output/docx
    (krilla)  (to_scene→  (to_scene→            （node_to_html / docx-rs，
-             lievisual)   lievisual)            不经 document 层）
+             lievisual)   lievisual)            消费 spans 与内嵌图片）
 ```
 
 > 说明：
+> **enrich（AST 富化）在所有后端之前统一执行一次**：外绘（mermaid/liecharts → 内嵌 PNG）
+> 与语法高亮（着色片段）都是**文档内容**而非渲染细节，产物挂在 `ast::Node` 上，
+> 路径 A 与路径 B 共享同一份富化结果——这是 DOCX/HTML 也带图表与高亮的关键。
 > 路径 A（PDF/SVG/PNG）经 `document` 层生成不分页的 `Document`，再交由后端消费（PDF后端自己做分页；SVG/PNG 不分页）。
 > 路径 B（HTML/DOCX）直接消费`ast::Node`，不经 `document` 层，也不参与分页（HTML 流式、DOCX 由 Word 自行排版）。
 
@@ -96,7 +110,10 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
 | `src/dom/` | 解析输入为 DOM（`HtmlElement` 树），并把 DOM+CSS 转换为简化 AST。 |
 | `src/css/` | CSS 解析、级联、`ResolvedStyle` 计算、内置样式表。 |
 | `src/ast/` | 简化带样式 AST（Layer 2）：`Node` / `NodeKind` / `Style`。 |
-| `src/document/` | 把简化 AST 排版为 `Document`（块树 + 文本行），含文本排版、样式类型、高亮、场景投影。 |
+| `src/enrich.rs` | AST 富化阶段编排：先外绘、后语法高亮，供三条管线入口（PDF/SVG/PNG、DOCX、HTML）统一调用。 |
+| `src/ext_render/` | 可插拔「绘图代码块 → 图片」渲染器（liecharts / liemermaid）+ AST 外绘 pass，**顶层模块**（不属于 `ast`/`document`）。 |
+| `src/highlight.rs` | 代码块语法高亮（syntect，AST 层）：产出 `CodeSpan` 着色片段。 |
+| `src/document/` | 把简化 AST 排版为 `Document`（块树 + 文本行），含文本排版、样式类型、场景投影。 |
 | `src/output/` | 五个输出后端 + 共享几何工具 `common.rs`。 |
 | `src/bin/liepress.rs` | CLI（基于 `clap`）。 |
 | `src/error.rs` | 统一错误类型 `Error` / `Result`。 |
@@ -116,7 +133,7 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
 | `syntect` | 代码块语法高亮。 |
 | `clap` | CLI 参数解析。 |
 
-> 图表（ECharts 风格，经 `liecharts`）与 Mermaid 图（经 `liemermaid`）的渲染位于 `src/document/ext_render/`，分别由 `charts` / `mermaid` feature 启用。
+> 图表（ECharts 风格，经 `liecharts`）与 Mermaid 图（经 `liemermaid`）的渲染器位于顶层 `src/ext_render/`，分别由 `charts` / `mermaid` feature 启用；它们在 AST 富化阶段（`src/enrich.rs`）被调用，产物以内嵌图片与着色片段形式挂在 `ast::Node` 上，供全部五个后端共享。
 
 ---
 
@@ -153,28 +170,40 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
 
 - **`node.rs`**：`Node { kind, style, splittable }` 与 `NodeKind` 枚举（标题、段落、列表/列表项/任务列表、定义列表、脚注、图片、代码块、引用、分隔线、表格/行、文本/加粗/斜体/行内代码/链接/删除线/上下标、Span/Center/Container/LineBreak）。
   - `splittable` 标记该节点是否可在页间拆分（段落、列表项可拆；标题、表格行不可拆）。
-  - `walk` / `collect_text` 提供遍历与文本提取工具。
+  - `CodeBlock { code, lang, spans }`：`spans: Option<Vec<Vec<CodeSpan>>>` 为语法高亮结果（外层按行、行内为着色片段），由富化阶段填充；`None` 表示未高亮（各后端退化为单色等宽）。
+  - `CodeSpan { text, color, bold, italic }`：纯语义的着色片段，不含坐标/字体信息。
+  - `walk` / `walk_mut` / `collect_text` 提供遍历（含可变改写）与文本提取工具，是富化 pass 的基础。
 - **`style.rs`**：`Style`（CSS 引擎解析得到的**最终样式值**，所有单位已解析为 pt，含字体、`color`、`line-height`、`page-break-*`、盒模型、表格字段等）与 `PageBreak` 枚举（`Auto`/`Always`/`Avoid`/`Left`/`Right`）。
 - **`PageBreak`**：`page-break-before` / `page-break-after` 的枚举，由 `output::pdf` 的分页器消费。
 
-### 4.4 `document` — 排版与中间表示
+### 4.4 `enrich` / `ext_render` / `highlight` — AST 富化（外绘与高亮）
 
-- **`layout/mod.rs`**：核心 IR `Document { blocks: Vec<Block> }`（**不分页**）。`Block { kind, style, splittable }` 与 `BlockKind`（对应 `NodeKind`，但段落持 `Vec<TextLine>`、列表项持预生成 `marker`、代码块持高亮后 `lines` 等）、`HeaderFooter`、`DefinitionItemBlock`。
+- **`enrich.rs`**：编排入口 `enrich_ast(node, settings)`，**先外绘、后高亮**（外绘失败软降级时错误注释写回代码块，随后的高亮 pass 才能对带注释的代码正确着色）。幂等，可安全重复调用。
+- **`ext_render/mod.rs`**：渲染器契约 `BlockRenderer`（`lang()` + `render(code, opts)`）、`RenderOpts`（宽/高/主题/DPI，支持 info string 的 `key=value` 覆盖）、注册表 `builtin_renderers()`（按 feature 门控）。
+  - 模块位于**顶层**（不属于 `ast`/`document`）：它做的是 AST→AST 变换，由管线入口显式调用，以维持「不在 ast/dom/document 层直接绘制」的分层红线。
+- **`ext_render/pass.rs`**：AST 外绘 pass `render_ext_blocks` —— 遍历 `Node` 树，命中已注册语言的代码块则渲染为 PNG，就地替换为 `NodeKind::Image`（base64 data URI，`style.width` 置为内容宽、居中、不可拆分）；失败则保留代码块并附注 `// render failed (...)`。
+- **`ext_render/liecharts.rs` / `liemermaid.rs`**：两种具体渲染器（`charts` / `mermaid` feature 启用）。
+- **`highlight.rs`**：`tokenize(code, lang)` 基于 syntect 把代码切分为「行 → 着色片段」，`highlight_code_blocks` 遍历填充 `CodeBlock.spans`。主题使用浅色（`InspiredGitHub`），与内置 `pre` 的浅灰底匹配；语法集/主题集为进程级单例。
+
+### 4.5 `document` — 排版与中间表示
+
+- **`layout/mod.rs`**：核心 IR `Document { blocks: Vec<Block> }`（**不分页**）。`Block { kind, style, splittable }` 与 `BlockKind`（对应 `NodeKind`，但段落持 `Vec<TextLine>`、列表项持预生成 `marker`、代码块持由 `spans` 排版得到的 `lines` 等）、`HeaderFooter`、`DefinitionItemBlock`。
 - **`from_ast.rs`**：`ast_to_layout` —— `Node` 树 → `Document`。
   - `convert_node_depth`（上限 `MAX_CONVERT_DEPTH`）把深度传递给所有递归调用，防止深树栈溢出。
   - 注入列表标记（`marker`：有序 `"1."` / 无序 `"●"` / 任务 `"☐ "`）；聚合脚注到正文末尾。
+  - 代码块：把富化阶段产出的 `spans` 排版为带色 `TextLine`（`spans_to_lines`）；未富化的节点退化为单色等宽。**本层不做外绘与高亮**。
+  - 图片：解码 data URI 为字节并探测像素尺寸，按宽高比与页高上限解析显示尺寸。
 - **`text.rs`**：文本排版核心。`css_text_style` 生成 `TextStyle`（含 `line_height`），`TextLine` 为已换行文本行；`layout_text` 负责折行与行高。
 - **`types/`**：
   - `mod.rs`：`ResolvedStyle`、`TextAlign`、默认内容宽度 `default_content_width()`。
   - `style.rs`：`ResolvedStyle` 的 `page_break_before/after`、尺寸/颜色字段。
   - `page.rs`：`PageSettings`（页面尺寸、边距、`content_width()` 等），由 `PageConfig` 与 `@page` 构建。
   - 表格样式字段（`ResolvedStyle` 上的 `table_border_*` 边框、`table_alt_row_bg` 隔行、`table_header_bg` 表头底纹等）。
-- **`highlight.rs`**：基于 `syntect` 的代码块语法高亮，产出带颜色/粗体的 `TextLine`。
 - **`to_scene.rs`**：`document_to_scene(document, settings, dpi)` —— 把 `Document` 投影成 `lievisual::Scene`（图元 IR），供 SVG/PNG 后端共用。
   - 全程在 **pt** 坐标系计算，末尾乘 `scale = dpi / 72` 归一到像素；`DEFAULT_DPI = 144`。
   - `Scene.scale` 让 SVG 后端把 `viewBox` 还原到 pt 单位，PNG 后端按 `scale` 设画布像素。
 
-### 4.5 `output` — 输出后端
+### 4.6 `output` — 输出后端
 
 - **`mod.rs`**：统一输出入口与各后端调度。
 - **`common.rs`**：后端共享几何工具——`block_height`、`blockquote_content_height`、`table_row_height`、`table_border_segments`、`list_item_indent`、`text_style` / `text_style_from_resolved`、`heading_font_size`、`apply_heading_style` 等。避免各后端重复排版逻辑。
@@ -185,10 +214,9 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
   - 跨页表格：续页通过 `repeat_table_header` 重复表头。
   - 超链接：`Annotation` + `LinkAction` + `Destination`，支持跨换行连续。
   - 字体缓存 `FontCacheKey`（按数据指针/长度/索引）避免重复加载。
-- **`html.rs`**：把 `ast::Node` 序列化为 HTML 文档（`node_to_html`，保留结构与样式）。
+- **`html.rs`**：把 `ast::Node` 序列化为 HTML 文档（`node_to_html`，保留结构与样式）。代码块消费富化阶段的 `spans`（每段一个内联 `<span style="color:...">`），预渲染图表直接输出 `<img src="data:image/png;base64,...">`。
 - **`svg.rs` / `png.rs`**：经 `to_scene` 得到 `lievisual::Scene`，分别委托 `SvgRenderer` / `VelloPixmapRenderer` 生成产物。
-- **`docx.rs`**：经 `docx-rs` 生成 DOCX（从 `ast::Node` 重建语义化元素）。
-- **`ext_render/`**：`liecharts` / `liemermaid` 的嵌入渲染（由 `charts` / `mermaid` feature 启用），在外部分页前把代码块替换为图片节点。
+- **`docx.rs`**：经 `docx-rs` 生成 DOCX（从 `ast::Node` 重建语义化元素）。代码块消费 `spans`（每段一个带色 `Run` + 粗/斜体，行间 `<w:br/>`）；图片经 `emit_image` 嵌入 `Pic`（宽度优先取节点显式 `style.width`）。
 
 ---
 
@@ -249,7 +277,7 @@ mermaid = ["dep:liemermaid"]
 注意：
 
 - **输出后端（PDF / HTML / SVG / PNG / DOCX）均无条件编译**，不通过 feature 开关控制，五种格式默认全部可用。
-- 文档层 `src/document/ext_render/`（图表/图示嵌入）随 `charts`/`mermaid` feature 启用，是内外代码块替换的基础设施。
+- 顶层 `src/ext_render/`（图表/图示渲染器与 AST 外绘 pass）随 `charts`/`mermaid` feature 启用，是绘图代码块预渲染的基础设施；语法高亮（`src/highlight.rs`）不受 feature 控制，始终可用。
 - 没有 `ext-render`、`render-*`、`web`、`all` 等 feature（此前文档所述为误写）。
 
 > 如需最小构建，可显式关闭默认 feature：`cargo build --no-default-features`（仅保留核心 Markdown→PDF/HTML，不含图表/Mermaid）。
@@ -342,7 +370,12 @@ Document content here...
 
 - 集成回归测试 `tests/css_engine_fixes.rs` 覆盖 `docs/code-review-2026-09-03.md` 的 P1-3/P1-4、P2-2/2-4/2-5、S-1/S-2/S-3（line-height 透传、PDF 无限高度、GFM 表格对齐、深嵌套栈溢出保护、分页高度等）。
 - CSS 引擎的单元回归（简写展开、`!important` 胜出、`width%` 使用包含块宽度、扩展颜色、边框等）位于 `src/css/engine.rs` 的测试模块。
-- 建议改动后运行 `cargo test` 与构建（`cargo build --all-features`）确认无回归。
+- **富化阶段回归**：
+  - `src/highlight.rs`：tokenize 着色/降级/文本还原、AST pass 填充 `spans`；
+  - `src/ext_render/pass.rs`：mermaid/liecharts 代码块 → 图片节点、失败软降级、普通代码块不受影响；
+  - `tests/e2e/pipeline/docx.rs`：DOCX 内 `word/media/*` 嵌入、代码块高亮多色 `<w:color>`、`<w:br/>` 换行；
+  - `tests/e2e/pipeline/html_output.rs`：HTML 内嵌 PNG data URI、高亮 `<span>`。
+- 建议改动后运行 `cargo test` 与构建（`cargo build --all-features`，另验证 `--no-default-features`）确认无回归。
 
 ---
 
@@ -350,9 +383,10 @@ Document content here...
 
 ### 12.1 新增一个块级/行内元素
 
-1. 在 `ast/node.rs` 的 `NodeKind` 增加变体（如需要），保持 `walk` / `text_content` 同步。
+1. 在 `ast/node.rs` 的 `NodeKind` 增加变体（如需要），保持 `walk` / `walk_mut` / `text_content` 同步。
 2. 在 `dom/to_ast.rs` 增加 `HtmlElement` → `Node` 的映射，并注入 `ResolvedStyle`。
-3. 在 `document/layout/mod.rs` 的 `BlockKind`（及 `document/from_ast.rs` 的 `ast_to_layout`）增加对应排版逻辑，决定 `splittable`。
+3. 若新元素需要富化产物（高亮/图片），在 `enrich` / `highlight` / `ext_render::pass` 中补充处理。
+4. 在 `document/layout/mod.rs` 的 `BlockKind`（及 `document/from_ast.rs` 的 `ast_to_layout`）增加对应排版逻辑，决定 `splittable`。
 4. 在各输出后端（`output/*`）按 `BlockKind` 实现绘制；SVG/PNG 走 `to_scene.rs`。
 5. 如涉及 CSS 默认表现，在 `src/ast/presets.rs` 的 `DEFAULT_CSS`（内嵌 `presets/default.css`）补充样式。
 
@@ -372,6 +406,6 @@ Document content here...
 ### 12.4 稳定性红线
 
 - 不在 `document` 层引入分页概念。
-- 不在 `ast`/`dom` 层直接绘制。
+- 不在 `ast`/`dom` 层直接绘制：外绘（绘图代码块 → 图片）与语法高亮统一收敛在**富化阶段**（`src/enrich.rs` 编排、`src/ext_render/` 与 `src/highlight.rs` 实现），由 `lib.rs` 管线入口显式调用；`ast`/`dom`/`document` 层只消费富化产物（`Image` 节点、`CodeBlock.spans`），不感知具体绘图/高亮引擎。
 - 资源加载默认拒绝远程/越界，安全开关需显式开启。
 - 深递归路径必须带深度守卫或改为迭代式，防止栈溢出。

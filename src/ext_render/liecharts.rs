@@ -1,6 +1,6 @@
 //! liecharts 渲染器：把 ` ```liecharts ` 代码块（echarts 风格 JSON 配置）渲染为 PNG。
 
-use crate::document::ext_render::{BlockRenderer, RenderError, RenderOpts, RenderedImage};
+use crate::ext_render::{BlockRenderer, RenderError, RenderOpts, RenderedImage};
 
 /// 把 JSON 配置交给 [`liecharts`] 渲染为 PNG 的渲染器。
 pub struct LieChartsRenderer;

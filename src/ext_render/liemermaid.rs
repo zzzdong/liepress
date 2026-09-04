@@ -1,6 +1,6 @@
 //! liemermaid 渲染器：把 ` ```mermaid ` 代码块（Mermaid DSL 文本）渲染为 PNG。
 
-use crate::document::ext_render::{BlockRenderer, RenderError, RenderOpts, RenderedImage};
+use crate::ext_render::{BlockRenderer, RenderError, RenderOpts, RenderedImage};
 
 /// 把 Mermaid DSL 文本交给 [`liemermaid`] 渲染为 PNG 的渲染器。
 pub struct LieMermaidRenderer;

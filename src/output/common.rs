@@ -40,9 +40,7 @@ pub fn block_height(block: &Block, settings: &PageSettings, x: f64) -> f64 {
         BlockKind::Heading { children, .. } => {
             children.iter().map(|c| block_height(c, settings, x)).sum()
         }
-        BlockKind::Paragraph { lines } => {
-            lines_visual_height(lines, style.line_height_pt as f64)
-        }
+        BlockKind::Paragraph { lines } => lines_visual_height(lines, style.line_height_pt as f64),
         BlockKind::CodeBlock { lines, .. } => {
             lines_visual_height(lines, style.line_height_pt as f64) + 8.0
         }

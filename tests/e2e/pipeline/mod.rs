@@ -8,6 +8,7 @@
 pub mod docx;
 pub mod dom;
 pub mod html_input;
+pub mod html_output;
 pub mod layout;
 pub mod pdf;
 pub mod png;

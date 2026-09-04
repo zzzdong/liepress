@@ -116,7 +116,8 @@ pub enum BlockKind {
 
     /// 代码块
     ///
-    /// `lines` 为语法高亮后的预排版文本行（来自 [`crate::document::highlight`]），
+    /// `lines` 为语法高亮后的预排版文本行（由 `spans` 经 `from_ast::spans_to_lines`
+    /// 排版得到；`spans` 来自富化阶段 [`crate::highlight`]），
     /// 前端/后端应优先消费 `lines` 而非重新排版 `code`。
     CodeBlock {
         code: String,

@@ -1,15 +1,23 @@
 //! 可插拔「代码块 → 图片」渲染器。
 //!
 //! 用于把特定语言的标记代码块（如 ` ```liecharts `、` ```mermaid `）渲染成图片，
-//! 再作为 [`crate::document::types::DocImage`] 嵌入文档。
+//! 再作为图片节点（base64 data URI）嵌入 AST。
 //!
 //! 设计目标：核心只定义契约（[`BlockRenderer`]），具体渲染引擎可插拔、可缺省。
 //! 新增一种绘图语言（mermaid / vega-lite / plantuml 等）只需：
 //! 1. 实现 [`BlockRenderer`]（放在本模块子文件）；
 //! 2. 在 [`builtin_renderers`] 注册表中登记（通常按 feature 门控）。
-//! 主转换流程（[`crate::document::from_ast`]）不感知具体引擎。
+//!
+//! 主转换流程（[`crate::enrich`]）不感知具体引擎。
 //!
 //! 这与主流文档工具的做法一致：图表引擎作为独立组件，通过统一契约接入。
+//!
+//! ## 模块位置
+//! 本模块位于顶层（不属于 `document` / `ast`），因为它做的是 **AST→AST 的变换**：
+//! 由 [`crate::enrich`] 在 AST 建好后、交给任何后端之前统一调用，
+//! 使 PDF / SVG / PNG / HTML / DOCX 五个后端都能拿到同一份预渲染图片。
+
+pub mod pass;
 
 #[cfg(feature = "charts")]
 pub mod liecharts;
@@ -139,9 +147,9 @@ pub trait BlockRenderer: Send + Sync {
 pub fn builtin_renderers() -> Vec<Box<dyn BlockRenderer>> {
     vec![
         #[cfg(feature = "charts")]
-        Box::new(crate::document::ext_render::liecharts::LieChartsRenderer),
+        Box::new(crate::ext_render::liecharts::LieChartsRenderer),
         #[cfg(feature = "mermaid")]
-        Box::new(crate::document::ext_render::liemermaid::LieMermaidRenderer),
+        Box::new(crate::ext_render::liemermaid::LieMermaidRenderer),
     ]
 }
 

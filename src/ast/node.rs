@@ -87,7 +87,15 @@ pub enum NodeKind {
     },
 
     /// 代码块
-    CodeBlock { code: String, lang: Option<String> },
+    ///
+    /// `spans` 为语法高亮结果：外层按行、行内为若干着色片段，由
+    /// [`crate::highlight::highlight_code_blocks`]（AST 富化 pass）填充。
+    /// `None` 表示尚未经过高亮 pass，各后端退化为单色等宽文本。
+    CodeBlock {
+        code: String,
+        lang: Option<String>,
+        spans: Option<Vec<Vec<CodeSpan>>>,
+    },
 
     /// 引用块
     Blockquote { children: Vec<Node> },
@@ -142,6 +150,23 @@ pub enum NodeKind {
 
     /// 行内换行 (<br>)
     LineBreak,
+}
+
+/// 代码块内一段同色文本（语法高亮产物，见 [`crate::highlight`]）。
+///
+/// 与布局层的 `TextRun` 不同，这里是**纯语义**的着色片段：只携带文本、前景色与
+/// 粗/斜体标记，不含任何坐标或字体信息。各后端据此自行渲染：
+/// - PDF/SVG/PNG：`document::from_ast` 把 spans 排版成 `TextLine`；
+/// - DOCX：每段一个 `Run`（`Run::color` + `bold`/`italic`）；
+/// - HTML：每段一个 `<span style="color:...">`。
+#[derive(Debug, Clone)]
+pub struct CodeSpan {
+    /// 片段文本（不含换行）。
+    pub text: String,
+    /// 前景色。
+    pub color: lievisual::Color,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 /// 定义列表项（<dt> 术语 + <dd> 定义）
@@ -255,6 +280,57 @@ where
         NodeKind::FootnoteDef { children, .. } => {
             for child in children {
                 walk(child, callback);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 可变遍历 Node 树，对每个节点执行回调函数（可就地改写节点，如 AST 富化 pass）。
+///
+/// 与 [`walk`] 同序（先自身、后子节点）。回调替换了父节点后，递归会作用于
+/// **替换后的**节点，因此「代码块 → 图片」这类改写是安全的。
+pub fn walk_mut<F>(node: &mut Node, callback: &mut F)
+where
+    F: FnMut(&mut Node),
+{
+    callback(node);
+    match &mut node.kind {
+        NodeKind::Document { children }
+        | NodeKind::Heading { children, .. }
+        | NodeKind::Paragraph { children }
+        | NodeKind::List { children, .. }
+        | NodeKind::ListItem { children }
+        | NodeKind::TaskListItem { children, .. }
+        | NodeKind::Blockquote { children }
+        | NodeKind::Table { children, .. }
+        | NodeKind::TableRow { children }
+        | NodeKind::Strong { children }
+        | NodeKind::Emphasis { children }
+        | NodeKind::Link { children, .. }
+        | NodeKind::Delete { children }
+        | NodeKind::Span { children }
+        | NodeKind::Center { children }
+        | NodeKind::Container { children }
+        | NodeKind::Subscript { children }
+        | NodeKind::Superscript { children } => {
+            for child in children.iter_mut() {
+                walk_mut(child, callback);
+            }
+        }
+        NodeKind::DefinitionList { items } => {
+            for item in items.iter_mut() {
+                for child in item.term.iter_mut() {
+                    walk_mut(child, callback);
+                }
+                for child in item.definition.iter_mut() {
+                    walk_mut(child, callback);
+                }
+            }
+        }
+        NodeKind::FootnoteDef { children, .. } => {
+            for child in children.iter_mut() {
+                walk_mut(child, callback);
             }
         }
         _ => {}

@@ -115,7 +115,7 @@ fn serialize_node(node: &Node, out: &mut String) {
             }
             out.push_str("\"/>");
         }
-        NodeKind::CodeBlock { code, lang } => {
+        NodeKind::CodeBlock { code, lang, spans } => {
             out.push_str(&format!("<pre{}><code", sa));
             if let Some(l) = lang
                 && !l.is_empty()
@@ -123,7 +123,34 @@ fn serialize_node(node: &Node, out: &mut String) {
                 out.push_str(&format!(" class=\"language-{}\"", escape_attr(l)));
             }
             out.push('>');
-            out.push_str(&escape_html(code));
+            match spans {
+                // AST 富化阶段已产出语法高亮：每段一个内联着色的 <span>。
+                Some(lines) => {
+                    for (i, line) in lines.iter().enumerate() {
+                        if i > 0 {
+                            out.push('\n');
+                        }
+                        for span in line {
+                            if span.text.is_empty() {
+                                continue;
+                            }
+                            let mut css = format!("color:{}", span.color.to_hex());
+                            if span.bold {
+                                css.push_str(";font-weight:bold");
+                            }
+                            if span.italic {
+                                css.push_str(";font-style:italic");
+                            }
+                            out.push_str(&format!(
+                                "<span style=\"{}\">{}</span>",
+                                css,
+                                escape_html(&span.text)
+                            ));
+                        }
+                    }
+                }
+                None => out.push_str(&escape_html(code)),
+            }
             out.push_str("</code></pre>");
         }
         NodeKind::Blockquote { children } => {

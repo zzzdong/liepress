@@ -29,10 +29,8 @@ pub mod layout;
 pub mod to_scene;
 
 /// AST → `Document` 转换（源 IR 构建）
+///
+/// 语法高亮与外绘图（mermaid / liecharts）**不在本层**：二者已在 AST 富化阶段
+/// （[`crate::enrich`]）完成，本层只消费 `NodeKind::CodeBlock::spans`
+/// 与 `NodeKind::Image`（data URI）。
 pub mod from_ast;
-
-/// 代码块语法高亮（基于 syntect），预排版为带色文本行
-pub mod highlight;
-
-/// 可插拔「代码块 → 图片」渲染器（liecharts / mermaid 等）
-pub mod ext_render;

@@ -45,7 +45,15 @@ pub fn markdown_to_html_document(
     // 再据此序列化出 HTML。每个节点的 computed style 通过 `Style::to_inline_css`
     // 写成 `style="..."` 内联属性，导出的是自包含、带样式的 HTML。
     let body = match crate::ast::parse_markdown_with_css(markdown, user_css.unwrap_or("")) {
-        Ok((node, _page_config)) => crate::output::html::node_to_html(&node),
+        Ok((mut node, page_config)) => {
+            // AST 富化：外绘（mermaid/liecharts → 内嵌图片）+ 语法高亮，
+            // 与 PDF/DOCX 路径共享同一份产物，保证各后端表现一致。
+            crate::enrich::enrich_ast(
+                &mut node,
+                &crate::document::types::PageSettings::from(page_config),
+            );
+            crate::output::html::node_to_html(&node)
+        }
         // 解析失败（如 CSS 引擎异常）降级回 pulldown-cmark 直接渲染
         Err(_) => markdown_to_html(markdown),
     };

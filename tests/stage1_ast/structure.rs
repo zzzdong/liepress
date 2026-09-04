@@ -76,7 +76,7 @@ fn test_parse_code_block() {
         NodeKind::Document { children } => {
             assert_eq!(children.len(), 1);
             match &children[0].kind {
-                NodeKind::CodeBlock { lang, code } => {
+                NodeKind::CodeBlock { lang, code, .. } => {
                     assert_eq!(lang.as_deref(), Some("rust"));
                     // 围栏代码块内容包含末尾换行符（CommonMark 规范）
                     assert_eq!(code, "fn main() {}\n");
@@ -95,7 +95,7 @@ fn test_parse_codeblock_without_lang() {
 
     match &node.kind {
         NodeKind::Document { children } => match &children[0].kind {
-            NodeKind::CodeBlock { lang, code } => {
+            NodeKind::CodeBlock { lang, code, .. } => {
                 assert!(lang.is_none());
                 // 围栏代码块内容包含末尾换行符（CommonMark 规范）
                 assert_eq!(code, "some code\n");
@@ -116,7 +116,7 @@ fn test_parse_code_block_preserves_newlines() {
         NodeKind::Document { children } => {
             assert_eq!(children.len(), 1);
             match &children[0].kind {
-                NodeKind::CodeBlock { lang, code } => {
+                NodeKind::CodeBlock { lang, code, .. } => {
                     assert_eq!(lang.as_deref(), Some("rust"));
                     // 必须精确保留换行和缩进
                     assert_eq!(code, "fn main() {\n    println!(\"Hello\");\n}\n");

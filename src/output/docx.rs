@@ -5,9 +5,10 @@
 //! （其 `Paragraph` 绑定 parley 字形坐标），而是从 `ast::Node` 重建，保留
 //! 标题/列表/表格等语义。
 
-use crate::ast::{FontStyle, Node, NodeKind};
+use crate::ast::{CodeSpan, FontStyle, Node, NodeKind};
 use docx_rs::{
-    Document, Docx, Paragraph, Pic, Run, Style, StyleType, Styles, Table, TableCell, TableRow,
+    BreakType, Document, Docx, Paragraph, Pic, Run, Style, StyleType, Styles, Table, TableCell,
+    TableRow,
 };
 use lievisual::Color;
 
@@ -73,7 +74,8 @@ fn run_from_style(text: &str, style: &crate::ast::Style) -> Run {
     if size_half > 0 {
         run = run.size(size_half);
     }
-    run = run.color(style.color.to_hex());
+    // docx-rs 的 `color` 需要不带 `#` 的 6 位十六进制。
+    run = run.color(style.color.to_hex().trim_start_matches('#').to_string());
     if style.font_weight == crate::ast::FontWeight::Bold {
         run = run.bold();
     }
@@ -146,21 +148,21 @@ fn emit_node(doc: Document, n: &Node) -> Document {
             doc.add_paragraph(p)
         }
         NodeKind::Blockquote { children } => emit_children(doc, children),
-        NodeKind::CodeBlock { code, .. } => {
-            let mono = || {
-                docx_rs::RunFonts::new()
-                    .ascii("Consolas")
-                    .east_asia("Consolas")
-            };
-            let mut p = Paragraph::new();
-            for (i, line) in code.lines().enumerate() {
-                if i > 0 {
-                    p = p.add_run(Run::new().add_text("\n"));
+        NodeKind::CodeBlock { code, spans, .. } => match spans {
+            // AST 富化阶段已产出语法高亮片段：每段一个带颜色的 Run。
+            Some(lines) => doc.add_paragraph(emit_code_lines(lines, &n.style)),
+            None => {
+                let mono = mono_font();
+                let mut p = Paragraph::new();
+                for (i, line) in code.lines().enumerate() {
+                    if i > 0 {
+                        p = p.add_run(Run::new().add_break(BreakType::TextWrapping));
+                    }
+                    p = p.add_run(Run::new().add_text(line).fonts(mono()));
                 }
-                p = p.add_run(Run::new().add_text(line).fonts(mono()));
+                doc.add_paragraph(p)
             }
-            doc.add_paragraph(p)
-        }
+        },
         NodeKind::ThematicBreak => doc.add_paragraph(Paragraph::new()),
         NodeKind::Table { children, .. } => emit_table(doc, children),
         NodeKind::DefinitionList { items } => {
@@ -265,7 +267,7 @@ fn emit_inline_runs(p: Paragraph, n: &Node) -> Paragraph {
         NodeKind::Paragraph { children } | NodeKind::FootnoteDef { children, .. } => {
             emit_inline_children(p, children)
         }
-        NodeKind::Image { src, alt, .. } => emit_image(p, src, alt),
+        NodeKind::Image { src, alt, .. } => emit_image(p, src, alt, &n.style),
         _ => {
             let t = n.text_content();
             if t.is_empty() {
@@ -277,19 +279,73 @@ fn emit_inline_runs(p: Paragraph, n: &Node) -> Paragraph {
     }
 }
 
+/// 高亮代码块：每行若干着色片段，片段之间不换行，行间用真实换行符分隔。
+///
+/// 字号取 CSS 投影字号（缺省 9pt，与内置 `pre` 规则一致），字体强制等宽。
+fn emit_code_lines(lines: &[Vec<CodeSpan>], style: &crate::ast::Style) -> Paragraph {
+    let mono = mono_font();
+    let size_half = ((if style.font_size_pt > 0.0 {
+        style.font_size_pt
+    } else {
+        9.0
+    }) * 2.0) as usize;
+    let mut p = Paragraph::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            p = p.add_run(Run::new().add_break(BreakType::TextWrapping));
+        }
+        for span in line {
+            if span.text.is_empty() {
+                continue;
+            }
+            let mut run = Run::new()
+                .add_text(span.text.clone())
+                .fonts(mono())
+                // docx-rs 的 `color` 需要不带 `#` 的 6 位十六进制。
+                .color(span.color.to_hex().trim_start_matches('#').to_string());
+            if span.bold {
+                run = run.bold();
+            }
+            if span.italic {
+                run = run.italic();
+            }
+            if size_half > 0 {
+                run = run.size(size_half);
+            }
+            p = p.add_run(run);
+        }
+    }
+    p
+}
+
+/// 代码块等宽字体（Consolas 西文 + 东亚回退）。
+fn mono_font() -> impl Fn() -> docx_rs::RunFonts {
+    || {
+        docx_rs::RunFonts::new()
+            .ascii("Consolas")
+            .east_asia("Consolas")
+    }
+}
+
 /// 嵌入图片：若 `src` 为 data URI（`data:image/...;base64,...`）则解码并嵌入为 `Pic`。
 ///
 /// **图片缩放（参考 PDF）**：解码原始像素尺寸，按「适合页宽」缩放 ——
-/// 目标宽度不超过内容宽（默认 A4 边距下的内容宽），高度按宽高比保持，
+/// 目标宽度不超过内容宽（优先取节点显式 `style.width`，即 AST 外绘 pass 写入的
+/// 内容宽；缺省 A4 边距下的内容宽 451pt），高度按宽高比保持，
 /// 避免大图在 Word 中按原始像素超宽显示。
-fn emit_image(p: Paragraph, src: &str, alt: &str) -> Paragraph {
+fn emit_image(p: Paragraph, src: &str, alt: &str, style: &crate::ast::Style) -> Paragraph {
     let bytes = decode_data_uri(src);
     if bytes.is_empty() {
         // 无字节时回退为 alt 文本
         return p.add_run(Run::new().add_text(alt.to_string()));
     }
     // 适合页宽缩放：内容宽（pt），默认 A4（595.3pt）减 2×1in 边距
-    const CONTENT_WIDTH_PT: f64 = 451.0;
+    const DEFAULT_CONTENT_WIDTH_PT: f64 = 451.0;
+    let content_width_pt = style
+        .width
+        .filter(|w| *w > 0.0)
+        .map(|w| w as f64)
+        .unwrap_or(DEFAULT_CONTENT_WIDTH_PT);
     // 96dpi 下 1px = 0.75pt；1pt = 12700 EMU
     let px_to_pt = 0.75;
     let pt_to_emu = 12700.0;
@@ -300,8 +356,8 @@ fn emit_image(p: Paragraph, src: &str, alt: &str) -> Paragraph {
             let (w_px, h_px) = img.dimensions();
             let w_pt = w_px as f64 * px_to_pt;
             let h_pt = h_px as f64 * px_to_pt;
-            let (tw_pt, th_pt) = if w_pt > CONTENT_WIDTH_PT {
-                (CONTENT_WIDTH_PT, h_pt * CONTENT_WIDTH_PT / w_pt)
+            let (tw_pt, th_pt) = if w_pt > content_width_pt {
+                (content_width_pt, h_pt * content_width_pt / w_pt)
             } else {
                 (w_pt, h_pt)
             };

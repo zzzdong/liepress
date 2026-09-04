@@ -2,7 +2,10 @@ pub mod ast;
 pub mod css;
 pub mod document; // 重构文档层（方案 refactor-document-layer.md）
 pub mod dom; // HTML AST（管线 Layer 1）：Markdown/HTML → HtmlDocument
+pub mod enrich; // AST 富化阶段：外绘（mermaid/liecharts）+ 语法高亮
 pub mod error;
+pub mod ext_render; // 可插拔「代码块 → 图片」渲染器（顶层模块，见 docs/design.md §2）
+pub mod highlight; // 代码块语法高亮（AST 层，基于 syntect）
 pub mod output; // 输出层：语义树/HTML → PDF/HTML 等目标格式
 
 use std::fs;
@@ -776,6 +779,7 @@ pub fn markdown_to_docx(markdown: &str, options: &ConvertOptions) -> crate::erro
             Some(&user_css)
         },
         options.strict,
+        options.page_config.as_ref(),
     )?;
     output::docx::node_to_docx(&node)
 }
@@ -797,6 +801,7 @@ pub fn markdown_file_to_docx(
             Some(&user_css)
         },
         options.strict,
+        options.page_config.as_ref(),
     )?;
     output::docx::node_to_docx(&node)
 }
@@ -817,6 +822,7 @@ pub fn html_to_docx(html: &str, options: &ConvertOptions) -> crate::error::Resul
             Some(&user_css)
         },
         options.strict,
+        options.page_config.as_ref(),
     )?;
     output::docx::node_to_docx(&node)
 }
@@ -836,6 +842,7 @@ pub fn html_file_to_docx(path: &Path, options: &ConvertOptions) -> crate::error:
             Some(&user_css)
         },
         options.strict,
+        options.page_config.as_ref(),
     )?;
     output::docx::node_to_docx(&node)
 }
@@ -851,6 +858,7 @@ fn html_to_styled_node(
     doc: &crate::dom::HtmlDocument,
     user_css: Option<&str>,
     strict: bool,
+    page_config: Option<&PageConfig>,
 ) -> crate::error::Result<crate::ast::Node> {
     let builtin_css = ast::presets::DEFAULT_CSS;
     let mut engine =
@@ -878,8 +886,16 @@ fn html_to_styled_node(
     let default_style = ast::Style::default();
     let root_style = engine.resolve_style("html", &[], None, &[], &default_style);
     engine.set_root_font_size(root_style.font_size_pt);
-    apply_page_metrics(&mut engine, None);
-    Ok(dom::to_ast::html_to_styled_nodes(doc, &engine))
+    // 百分比基准 = 页面内容宽度（显式 PageConfig 优先，与 PDF 路径一致）。
+    apply_page_metrics(&mut engine, page_config);
+    let mut node = dom::to_ast::html_to_styled_nodes(doc, &engine);
+    // AST 富化：外绘 + 语法高亮（与 PDF 路径共享同一份产物，保证 DOCX 也有图表/高亮）。
+    let page_settings = page_config
+        .cloned()
+        .map(PageSettings::from)
+        .unwrap_or_default();
+    enrich::enrich_ast(&mut node, &page_settings);
+    Ok(node)
 }
 
 /// 依据页面配置设定 CSS 引擎的包含块宽度（盒模型 `%` 的基准）。
@@ -960,10 +976,14 @@ fn html_to_layout(
     apply_page_metrics(&mut engine, page_config.as_ref());
 
     // 3. HtmlDocument → Styled Node Tree
-    let styled_node = dom::to_ast::html_to_styled_nodes(doc, &engine);
+    let mut styled_node = dom::to_ast::html_to_styled_nodes(doc, &engine);
 
     // 4. Styled Node → Document（源 IR，不分页）
     let page_settings = page_config.map(PageSettings::from).unwrap_or_default();
+
+    // 3.5 AST 富化：外绘（mermaid/liecharts → 图片节点）+ 语法高亮。
+    // 必须在 `ast_to_layout` 之前完成，各后端（含 DOCX/HTML）据此消费同一份产物。
+    enrich::enrich_ast(&mut styled_node, &page_settings);
 
     Ok(ast_to_layout(&styled_node, &page_settings))
 }

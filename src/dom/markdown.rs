@@ -184,19 +184,17 @@ pub fn markdown_to_dom_with_resolver(
                 let t = raw.trim();
                 let is_style_open = t.starts_with("<style") && !t.starts_with("</style");
                 let is_style_close = t.contains("</style");
-                if is_style_open {
-                    if style_buffer.is_none() {
-                        if is_style_close {
-                            // 单行完整 `<style>...</style>`：直接抽取 CSS 即可。
-                            if let Some(css) = extract_style_content(&raw) {
-                                style_sheets.push(css);
-                            }
-                            continue;
+                if is_style_open && style_buffer.is_none() {
+                    if is_style_close {
+                        // 单行完整 `<style>...</style>`：直接抽取 CSS 即可。
+                        if let Some(css) = extract_style_content(&raw) {
+                            style_sheets.push(css);
                         }
-                        // 开标签且无闭标签：开始累积，等待 `</style>`。
-                        style_buffer = Some(raw.to_string());
                         continue;
                     }
+                    // 开标签且无闭标签：开始累积，等待 `</style>`。
+                    style_buffer = Some(raw.to_string());
+                    continue;
                 }
                 if let Some(buf) = style_buffer.as_mut() {
                     buf.push_str(&raw);
@@ -220,14 +218,14 @@ pub fn markdown_to_dom_with_resolver(
                 let t = raw.trim();
                 if t.starts_with("</") {
                     // 闭标签：弹出栈顶元素并挂回父节点（与 Event::End 逻辑一致）。
-                    if stack.len() > 1 {
-                        if let Some(closed) = stack.pop() {
-                            let node = HtmlNode::Element(closed);
-                            if let Some(parent) = stack.last_mut() {
-                                parent.children.push(node);
-                            } else {
-                                root.children.push(node);
-                            }
+                    if stack.len() > 1
+                        && let Some(closed) = stack.pop()
+                    {
+                        let node = HtmlNode::Element(closed);
+                        if let Some(parent) = stack.last_mut() {
+                            parent.children.push(node);
+                        } else {
+                            root.children.push(node);
                         }
                     }
                 } else if raw_is_opening_tag(t) {

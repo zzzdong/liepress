@@ -378,10 +378,14 @@ fn convert_tag_block(elem: &HtmlElement, style: &Style, resolver: &mut StyleReso
             NodeKind::DefinitionList { items }
         }
 
-        // 代码块
+        // 代码块（`spans` 由 AST 富化阶段的语法高亮 pass 填充，见 crate::enrich）
         HtmlTag::Pre => {
             let (code, lang) = extract_code_block(elem);
-            NodeKind::CodeBlock { code, lang }
+            NodeKind::CodeBlock {
+                code,
+                lang,
+                spans: None,
+            }
         }
 
         // 引用

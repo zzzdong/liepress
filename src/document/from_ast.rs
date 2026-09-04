@@ -20,13 +20,13 @@
 
 use lievisual::FontWeight;
 
-use crate::ast::{Node, NodeKind, Style, computed_style_to_text_style};
-use crate::document::ext_render::{RenderOpts, find_renderer, parse_info_string};
-use crate::document::highlight::highlight_code;
+use crate::ast::{CodeSpan, Node, NodeKind, Style, computed_style_to_text_style};
 use crate::document::layout::{
     Block, BlockKind, DefinitionItemBlock, Document, TableCell, TableRow,
 };
-use crate::document::text::{FontStyle, TextStyle, set_decoration};
+use crate::document::text::{
+    FontStyle, StyleRange, TextAlign, TextLine, TextStyle, layout_text_with_ranges, set_decoration,
+};
 use crate::document::types::page::PageSettings;
 use crate::document::types::{DocImage, ResolvedStyle};
 use lievisual::Color;
@@ -402,11 +402,11 @@ fn convert_node_depth(node: &Node, settings: &PageSettings, depth: usize) -> Blo
             style,
             node.splittable,
         ),
-        NodeKind::CodeBlock { code, lang } => convert_code_block(
+        NodeKind::CodeBlock { code, lang, spans } => convert_code_block(
             code,
             lang.as_deref().unwrap_or(""),
+            spans,
             &style,
-            settings,
             node.splittable,
         ),
         NodeKind::ThematicBreak => Block::new(BlockKind::ThematicBreak, style, node.splittable),
@@ -568,74 +568,21 @@ fn convert_image_node(node: &Node, style: &ResolvedStyle, settings: &PageSetting
 
 /// 转换代码块节点。
 ///
-/// 流程：
-/// 1. 解析 info string 为 `(lang, overrides)`（如 `liecharts width=900 theme=dark`）。
-/// 2. 若 `lang` 命中已注册的外部渲染器（`ext_render::find_renderer`），则把代码块文本
-///    交给该渲染器渲染为图片，并包装成 [`BlockKind::Image`] 居中嵌入。
-/// 3. 渲染失败（JSON 非法 / 引擎错误）**软降级**：把错误信息与原始代码作为
-///    [`BlockKind::CodeBlock] 显示，不中断整篇文档渲染。
-/// 4. 未命中渲染器时，退化为普通语法高亮代码块（原行为）。
+/// 外绘（mermaid / liecharts → 图片）与语法高亮都已在 AST 富化阶段完成
+/// （见 [`crate::enrich`]）：绘图代码块此时已是 `NodeKind::Image`，
+/// 其余代码块携带 [`CodeSpan`]。这里只负责把 spans 排版成 [`TextLine`]。
 fn convert_code_block(
     code: &str,
     lang: &str,
+    spans: &Option<Vec<Vec<CodeSpan>>>,
     style: &ResolvedStyle,
-    settings: &PageSettings,
     splittable: bool,
 ) -> Block {
-    let (parsed_lang, overrides) = parse_info_string(lang);
-    if let Some(renderer) = find_renderer(&parsed_lang) {
-        let mut opts = RenderOpts::for_content_width(settings.content_width() as f64, "light");
-        opts.apply_overrides(&overrides);
-        match renderer.render(code, &opts) {
-            Ok(img) => {
-                // 渲染器返回的 `pixel_size` 可能不准确（如 liemermaid 的 PNG 是
-                // 「贴合内容」尺寸，而非请求的 width/height），这里用真实解码尺寸，
-                // 保证后续按宽高比缩放正确。
-                let pixel = if !img.data.is_empty() {
-                    probe_image_dimensions(&img.data).unwrap_or(img.pixel_size)
-                } else {
-                    img.pixel_size
-                };
-                let content_w = settings.content_width() as f64;
-                let content_h = settings.content_height() as f64;
-                let size =
-                    resolve_image_size(style.width, style.height, pixel, content_w, content_h);
-                // 图表块默认居中更合理。
-                let mut img_style = style.clone();
-                img_style.text_align = crate::ast::TextAlign::Center;
-                return Block::new(
-                    BlockKind::Image(DocImage {
-                        position: (0.0, 0.0),
-                        size,
-                        pixel_size: pixel,
-                        data: img.data,
-                        format: img.format,
-                        alt: String::new(),
-                        object_fit: style.object_fit,
-                        background: None,
-                    }),
-                    img_style,
-                    splittable,
-                );
-            }
-            Err(e) => {
-                // 软降级：保留原始代码并附注错误，方便用户定位问题。
-                let fallback = format!("// render failed ({lang}): {e}\n{code}");
-                let lines = highlight_code(&fallback, "json", style);
-                return Block::new(
-                    BlockKind::CodeBlock {
-                        code: fallback,
-                        lang: Some("json".to_string()),
-                        lines,
-                    },
-                    style.clone(),
-                    splittable,
-                );
-            }
-        }
-    }
-    // 未命中渲染器：普通语法高亮代码块。
-    let lines = highlight_code(code, lang, style);
+    let lines = match spans {
+        Some(spans) => spans_to_lines(spans, style),
+        // 未经过富化 pass（如外部直接调用 `ast_to_layout`）：退化为单色等宽排版。
+        None => plain_code_lines(code, style),
+    };
     Block::new(
         BlockKind::CodeBlock {
             code: code.to_string(),
@@ -649,6 +596,78 @@ fn convert_code_block(
         style.clone(),
         splittable,
     )
+}
+
+/// 代码块排版的基础文本样式（字体族/字号/字重来自 CSS）。
+///
+/// 代码块语义上必须使用等宽字体，因此 `font_family` 强制覆盖为 `["monospace"]`，
+/// 不受正文 CSS 字体族影响（否则比例字体会让代码错位、视觉上「挤在一起」）。
+/// 字号/字重/颜色仍来自投影样式，高亮只在其上覆盖各 token 前景色。
+fn code_base_style(style: &ResolvedStyle) -> TextStyle {
+    crate::document::text::css_text_style(
+        style.color,
+        &["monospace".to_string()],
+        style.font_size_pt as f64,
+        if style.font_weight_bold {
+            "bold"
+        } else {
+            "normal"
+        },
+        if style.font_style_italic {
+            "italic"
+        } else {
+            "normal"
+        },
+        TextAlign::Left,
+        None,
+        style.text_decoration,
+        0.0,
+        None,
+        // 代码块行高参与 parley 排版：与 draw_block 垂直步进（line_height_pt，
+        // 0 时回退 18pt）保持一致，避免字形盒与行距错位。
+        Some(if style.line_height_pt > 0.0 {
+            style.line_height_pt as f64
+        } else {
+            18.0
+        }),
+    )
+}
+
+/// 把 AST 层的语法高亮片段（行 → 片段）排版为带色文本行。
+///
+/// 把整段代码**一次**交给 parley 排版（行间以 `\n` 连接），行高与垂直偏移完全由
+/// parley 计算；各片段的颜色/粗体/斜体通过字节区间 [`StyleRange`] 叠加。
+/// 区间偏移在这里按重建过程累加，与 `full` 严格对齐。
+fn spans_to_lines(spans: &[Vec<CodeSpan>], style: &ResolvedStyle) -> Vec<TextLine> {
+    let base = code_base_style(style);
+    let mut full = String::new();
+    let mut ranges: Vec<StyleRange> = Vec::new();
+    for (i, line) in spans.iter().enumerate() {
+        if i > 0 {
+            full.push('\n');
+        }
+        for span in line {
+            if span.text.is_empty() {
+                continue;
+            }
+            let start = full.len();
+            full.push_str(&span.text);
+            ranges.push(StyleRange {
+                start,
+                end: full.len(),
+                color: span.color,
+                font_weight: if span.bold { "bold" } else { "normal" }.to_string(),
+                font_style: if span.italic { "italic" } else { "normal" }.to_string(),
+            });
+        }
+    }
+    layout_text_with_ranges(&full, &base, &ranges, None, TextAlign::Left).lines
+}
+
+/// 未高亮代码块的兜底排版：整段单色等宽。
+fn plain_code_lines(code: &str, style: &ResolvedStyle) -> Vec<TextLine> {
+    let base = code_base_style(style);
+    layout_text_with_ranges(code, &base, &[], None, TextAlign::Left).lines
 }
 
 /// 判断节点是否为内联节点（应合并进同一段落）。
@@ -781,8 +800,10 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
                     style.color = child.style.color;
                     // 背景色以 CSS `code` 选择器为准；若 CSS 未指定（如直接构造的节点），
                     // 回退到与默认样式表一致的浅灰底 #f6f8fa，保证行内代码始终与正文区分。
-                    style.background_color =
-                        child.style.background_color.or_else(|| Some(Color::rgb(246, 248, 250)));
+                    style.background_color = child
+                        .style
+                        .background_color
+                        .or_else(|| Some(Color::rgb(246, 248, 250)));
                     segments.push((code.clone(), style));
                 }
             }
@@ -1072,6 +1093,7 @@ mod tests {
             NodeKind::CodeBlock {
                 code: "let x = 1;".to_string(),
                 lang: Some("rust".to_string()),
+                spans: None,
             },
             crate::ast::Style::default(),
             true,
