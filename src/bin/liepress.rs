@@ -518,7 +518,7 @@ mod cli_tests {
     #[test]
     fn parse_length_accepts_units_and_zero() {
         assert_eq!(parse_length("36pt"), Some(36.0));
-        assert_eq!(parse_length("10mm"), Some((10.0 * 72.0 / 25.4)));
+        assert_eq!(parse_length("10mm"), Some(10.0 * 72.0 / 25.4));
         assert!((parse_length("0.5in").unwrap() - 36.0).abs() < 1e-4);
         assert_eq!(parse_length("0"), Some(0.0));
         assert_eq!(parse_length("595"), Some(595.0));

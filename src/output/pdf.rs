@@ -1912,7 +1912,6 @@ mod pagination_tests {
             content_h,
         );
         // 模拟 paginate_layout 的收尾：把最后一张未满页的 cur 推入 pages 并记账。
-        drop(ctx);
         if !cur.blocks.is_empty() || pages.is_empty() {
             cur.used_h = used;
             pages.push(cur);
@@ -2017,8 +2016,10 @@ mod pagination_tests {
     // ─── 容器块分页（H4 回归）────────────────────────────────
 
     fn list_item(height: f64) -> Block {
-        let mut para_style = ResolvedStyle::default();
-        para_style.line_height_pt = height as f32;
+        let para_style = ResolvedStyle {
+            line_height_pt: height as f32,
+            ..Default::default()
+        };
         Block::new(
             BlockKind::ListItem {
                 marker: "1.".to_string(),
@@ -2084,8 +2085,10 @@ mod pagination_tests {
     #[test]
     fn definition_list_fragments_at_item_boundaries() {
         let dl = |h: f64| {
-            let mut s = ResolvedStyle::default();
-            s.line_height_pt = h as f32;
+            let s = ResolvedStyle {
+                line_height_pt: h as f32,
+                ..Default::default()
+            };
             DefinitionItemBlock {
                 term: vec![Block::new(
                     BlockKind::Paragraph { lines: vec![] },

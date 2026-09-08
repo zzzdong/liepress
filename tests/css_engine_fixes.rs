@@ -276,7 +276,7 @@ fn pdf_font_sizes(pdf: &[u8]) -> Vec<f32> {
                     && let Some(size) = op.operands.get(1)
                 {
                     let v = match size {
-                        lopdf::Object::Real(v) => *v as f32,
+                        lopdf::Object::Real(v) => *v,
                         lopdf::Object::Integer(v) => *v as f32,
                         _ => continue,
                     };
@@ -312,18 +312,18 @@ fn pdf_text_color_alpha_is_normalized() {
     let pdf = liepress::markdown_to_pdf(md, &ConvertOptions::default()).expect("generate pdf");
     let doc = lopdf::Document::load_mem(&pdf).expect("load pdf");
     let has_half_alpha = doc.objects.values().any(|obj| {
-        if let lopdf::Object::Dictionary(dict) = obj {
-            if let Ok(v) = dict.get(b"ca") {
-                let num = match v {
-                    lopdf::Object::Real(r) => Some(*r as f32),
-                    lopdf::Object::Integer(i) => Some(*i as f32),
-                    _ => None,
-                };
-                if let Some(n) = num
-                    && (n - 0.5).abs() < 0.05
-                {
-                    return true;
-                }
+        if let lopdf::Object::Dictionary(dict) = obj
+            && let Ok(v) = dict.get(b"ca")
+        {
+            let num = match v {
+                lopdf::Object::Real(r) => Some(*r),
+                lopdf::Object::Integer(i) => Some(*i as f32),
+                _ => None,
+            };
+            if let Some(n) = num
+                && (n - 0.5).abs() < 0.05
+            {
+                return true;
             }
         }
         false
