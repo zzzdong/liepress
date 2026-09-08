@@ -497,20 +497,11 @@ fn mono_font() -> impl Fn() -> docx_rs::RunFonts {
     }
 }
 
-/// 解码 data URI 为图片字节（支持 `data:image/<fmt>;base64,<payload>`）。
-/// 前缀大小写不敏感，但 payload 保留原始大小写（base64 区分大小写）。
+/// 解码 data URI 为图片字节。
+///
+/// 复用 [`crate::document::from_ast::decode_image_data_uri`]（全项目唯一的 data URI
+/// 解码实现），保证 DOCX 与 PDF 对 base64 变体（URL-safe、无 padding）与
+/// percent-encoded data URI 的支持完全一致。
 fn decode_data_uri(src: &str) -> Vec<u8> {
-    let lower = src.to_ascii_lowercase();
-    // 定位 ";base64," 在 lower 中的字节偏移，再从原串切出 payload。
-    let b64marker = ";base64,";
-    let Some(idx) = lower.find(b64marker) else {
-        return Vec::new();
-    };
-    let payload = &src[idx + b64marker.len()..];
-    use base64::Engine;
-    use base64::engine::general_purpose::{STANDARD, URL_SAFE};
-    STANDARD
-        .decode(payload)
-        .or_else(|_| URL_SAFE.decode(payload))
-        .unwrap_or_default()
+    crate::document::from_ast::decode_image_data_uri(src).0
 }

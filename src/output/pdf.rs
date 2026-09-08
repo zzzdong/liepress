@@ -38,6 +38,22 @@ use super::common::{
     lines_visual_height, text_style, text_style_from_resolved,
 };
 
+/// 把任意 `image` 可解码格式的图片字节重新编码为 PNG。
+///
+/// krilla 原生只认 png/jpeg/gif/webp，而资源白名单里还有 bmp/ico/avif 等
+/// （见 `dom::resource::IMAGE_EXTENSIONS`）。这里统一转码，避免这些格式在 PDF 中
+/// 被静默丢弃。`image` 也无法解码的格式（典型：SVG）返回 `None`。
+fn reencode_to_png(data: &[u8]) -> Option<Vec<u8>> {
+    let img = image::ImageReader::new(std::io::Cursor::new(data))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, image::ImageFormat::Png).ok()?;
+    Some(buf.into_inner())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct FontCacheKey {
     data_ptr: *const u8,
@@ -610,26 +626,45 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         (dx, dy, dw, dh)
     }
 
+    /// 绘制图片到指定矩形，返回是否成功绘制。
+    ///
+    /// krilla 原生只支持 png/jpeg/gif/webp；其余格式（`image` 能解码的 bmp/ico/tiff
+    /// 等）先用 [`reencode_to_png`] 转码为 PNG 再嵌入，避免静默丢图。
+    /// 两者都不支持时（典型：SVG，需要矢量光栅化库）返回 `false`，由调用方
+    /// 回退为 alt 文本，而不是留下一块无提示的空白。
     fn draw_image(
         &mut self,
         data: &[u8],
         format: &str,
         (x, y, w, h): (f64, f64, f64, f64),
         orientation: u8,
-    ) {
+    ) -> bool {
         use krilla::image::Image;
 
-        let image = match format.to_lowercase().as_str() {
-            "png" => Image::from_png(krilla::Data::from(data.to_vec()), true),
-            "jpeg" | "jpg" => Image::from_jpeg(krilla::Data::from(data.to_vec()), true),
-            "gif" => Image::from_gif(krilla::Data::from(data.to_vec()), true),
-            "webp" => Image::from_webp(krilla::Data::from(data.to_vec()), true),
-            _ => return,
+        let fmt = format.to_lowercase();
+        let reencoded: Vec<u8>;
+        let (bytes, fmt): (&[u8], &str) = match fmt.as_str() {
+            "png" | "jpeg" | "jpg" | "gif" | "webp" => (data, &fmt),
+            _ => match reencode_to_png(data) {
+                Some(png) => {
+                    reencoded = png;
+                    (&reencoded, "png")
+                }
+                None => return false,
+            },
+        };
+
+        let image = match fmt {
+            "png" => Image::from_png(krilla::Data::from(bytes.to_vec()), true),
+            "jpeg" | "jpg" => Image::from_jpeg(krilla::Data::from(bytes.to_vec()), true),
+            "gif" => Image::from_gif(krilla::Data::from(bytes.to_vec()), true),
+            "webp" => Image::from_webp(krilla::Data::from(bytes.to_vec()), true),
+            _ => return false,
         };
 
         let image = match image {
             Ok(img) => img,
-            Err(_) => return,
+            Err(_) => return false,
         };
 
         self.surface
@@ -648,13 +683,29 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             if row.is_some() {
                 self.surface.pop();
             }
-            return;
+            return false;
         };
         self.surface.draw_image(image, image_size);
         if row.is_some() {
             self.surface.pop();
         }
         self.surface.pop();
+        true
+    }
+
+    /// 图片无法渲染时的兜底：绘制灰色 alt 文本（`alt` 为空则什么都不画）。
+    fn draw_image_alt(&mut self, img: &crate::document::types::DocImage, x: f64, y: f64) {
+        if img.alt.is_empty() {
+            return;
+        }
+        let style = text_style(Color::rgb(120, 120, 120), "serif", 11.0, "normal", "normal");
+        let segments = [(img.alt.as_str(), &style)];
+        let layout = layout_text(&segments, None, LayoutAlign::Left);
+        if let Some(tl) = layout.lines.last() {
+            for run in &tl.runs {
+                self.draw_text_run(run, Point::new(x, y), &tl.metrics);
+            }
+        }
     }
 
     /// 绘制文本 run（接受 [`TextRun`]，自闭环类型，可直接消费）。
@@ -891,22 +942,18 @@ impl<'a, 's> PdfRenderer<'a, 's> {
                     };
                     // 按 object_fit 计算图片在 box 内的实际绘制区域（避免强制尺寸时拉伸变形）。
                     let (dx, dy, dw, dh) = self.image_draw_rect(img, (w, h));
-                    self.draw_image(
+                    // 格式不受支持（如 SVG）时回退 alt 文本，避免静默留白。
+                    let drawn = self.draw_image(
                         &img.data,
                         &img.format,
                         (align_x + dx, y + dy, dw, dh),
                         img.orientation,
                     );
-                } else if !img.alt.is_empty() {
-                    let style =
-                        text_style(Color::rgb(120, 120, 120), "serif", 11.0, "normal", "normal");
-                    let segments = [(img.alt.as_str(), &style)];
-                    let layout = layout_text(&segments, None, LayoutAlign::Left);
-                    if let Some(tl) = layout.lines.last() {
-                        for run in &tl.runs {
-                            self.draw_text_run(run, Point::new(x, y), &tl.metrics);
-                        }
+                    if !drawn {
+                        self.draw_image_alt(img, x, y);
                     }
+                } else {
+                    self.draw_image_alt(img, x, y);
                 }
             }
             BlockKind::Blockquote { children } => {

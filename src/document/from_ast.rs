@@ -53,7 +53,22 @@ struct CellMeasure {
     min_width: f64,
 }
 
-fn measure_cell(node: &Node, style: &crate::ast::Style, padding_h: f64) -> CellMeasure {
+fn measure_cell(
+    node: &Node,
+    style: &crate::ast::Style,
+    padding_h: f64,
+    content_w: f64,
+) -> CellMeasure {
+    // 纯图片单元格：按图片自然宽度度量（`collect_inline_segments` 只能给出 alt 文本，
+    // 与真实图片宽度无关，会让图片列被压成 alt 文字的宽度）。
+    if let Some(img) = sole_image_node(node) {
+        let (nat_w, _nat_h) = image_natural_size_pt(img);
+        let ideal = nat_w.min(content_w).max(1.0);
+        return CellMeasure {
+            ideal_width: ideal + padding_h * 2.0,
+            min_width: (ideal.min(48.0) + padding_h * 2.0).max(padding_h * 2.0),
+        };
+    }
     let base = computed_style_to_text_style(style);
     let mut segments = collect_inline_segments(std::slice::from_ref(node), &base);
     fold_segments_whitespace(&mut segments);
@@ -131,6 +146,7 @@ fn compute_table_layout(
     style: &crate::ast::Style,
     n_cols: usize,
     content_w: f64,
+    content_h: f64,
 ) -> (Vec<f64>, Vec<f64>) {
     if n_cols == 0 || cell_nodes.is_empty() {
         // 空表格：返回与 rows 等长的空列宽/行高，避免下游按行数切片时越界。
@@ -148,7 +164,7 @@ fn compute_table_layout(
     for row in cell_nodes {
         for (ci, cell) in row.iter().enumerate() {
             if ci < n_cols {
-                let m = measure_cell(cell, style, padding_h);
+                let m = measure_cell(cell, style, padding_h, content_w);
                 ideal_cols[ci] = ideal_cols[ci].max(m.ideal_width);
                 min_cols[ci] = min_cols[ci].max(m.min_width);
             }
@@ -199,7 +215,7 @@ fn compute_table_layout(
             }
             let col_w = col_widths[ci];
             let inner_w = (col_w - padding_h * 2.0).max(1.0);
-            let segments = measure_cell_height(cell, style, inner_w);
+            let segments = measure_cell_height(cell, style, inner_w, content_h);
             row_heights[ri] = row_heights[ri].max(segments + padding_v * 2.0);
         }
     }
@@ -207,7 +223,12 @@ fn compute_table_layout(
 }
 
 /// 按宽度折行测量单元格高度（pt）。
-fn measure_cell_height(node: &Node, style: &crate::ast::Style, width: f64) -> f64 {
+fn measure_cell_height(node: &Node, style: &crate::ast::Style, width: f64, max_h: f64) -> f64 {
+    // 纯图片单元格：按列宽取真实显示高度，与 convert_image_node 同一套尺寸规则，
+    // 避免行高压着 alt 文本算、导致图片溢出单元格。
+    if let Some(img) = sole_image_node(node) {
+        return image_display_height_pt(img, width, max_h);
+    }
     let base = computed_style_to_text_style(style);
     let mut segments = collect_inline_segments(std::slice::from_ref(node), &base);
     fold_segments_whitespace(&mut segments);
@@ -223,8 +244,14 @@ fn measure_cell_height(node: &Node, style: &crate::ast::Style, width: f64) -> f6
 ///
 /// 与 `convert_node` 的 Paragraph 分支等价，但 `layout_inline` 使用 `col_width`
 /// 作为可用宽度，保证文本在真实列宽下正确折行、不溢出。
+///
+/// 纯图片单元格（`![alt](src)` 单独成格）与正文一致地提升为 `BlockKind::Image`，
+/// 且按 `col_width` 而非整页内容宽定尺，避免图片撑破单元格。
 fn convert_cell(node: &Node, settings: &PageSettings, col_width: f64, depth: usize) -> Block {
     let style = ResolvedStyle::from(node.style.clone());
+    if let Some(img) = sole_image_node(node) {
+        return convert_image_node(img, &style, settings, col_width);
+    }
     match &node.kind {
         NodeKind::Paragraph { children } => Block::new(
             BlockKind::Paragraph {
@@ -296,7 +323,12 @@ fn convert_node_depth(node: &Node, settings: &PageSettings, depth: usize) -> Blo
             {
                 let mut centered = style.clone();
                 centered.text_align = crate::ast::TextAlign::Center;
-                return convert_image_node(&children[0], &centered, settings);
+                return convert_image_node(
+                    &children[0],
+                    &centered,
+                    settings,
+                    settings.content_width() as f64,
+                );
             }
             Block::new(
                 BlockKind::Paragraph {
@@ -458,10 +490,11 @@ fn convert_node_depth(node: &Node, settings: &PageSettings, depth: usize) -> Blo
                 .collect();
             let n_cols = cell_nodes.iter().map(|r| r.len()).max().unwrap_or(0);
             let content_w = settings.content_width() as f64;
+            let content_h = settings.content_height() as f64;
 
             // 度量每列自然宽度与每行折行高度（参考 main 分支 generator/table.rs 算法）。
             let (col_widths, row_heights) =
-                compute_table_layout(&cell_nodes, &node.style, n_cols, content_w);
+                compute_table_layout(&cell_nodes, &node.style, n_cols, content_w, content_h);
 
             // 按真实列宽布局每个单元格（避免文本在窄列下溢出）。
             let rows = cell_nodes
@@ -498,7 +531,15 @@ fn convert_node_depth(node: &Node, settings: &PageSettings, depth: usize) -> Blo
                 node.splittable,
             )
         }
-        NodeKind::Image { .. } => convert_image_node(node, &style, settings),
+        NodeKind::Image { .. } => {
+            // 未经 `<p>` 包装的裸图片（HTML 输入 `<img ...>`、或富化 pass 由
+            // 代码块转换来的图片）：与 Markdown 纯图片段落保持一致，默认居中。
+            // 表格单元格内的图片不走这里（见 `convert_cell`）——渲染端只能按
+            // 「整页内容宽」做 text_align 居中，在窄列里会把图片推出单元格。
+            let mut centered = style.clone();
+            centered.text_align = crate::ast::TextAlign::Center;
+            convert_image_node(node, &centered, settings, settings.content_width() as f64)
+        }
         NodeKind::Center { children }
         | NodeKind::Container { children }
         | NodeKind::Span { children } => Block::new(
@@ -564,15 +605,80 @@ fn convert_list_item(node: &Node, marker: &str, settings: &PageSettings, depth: 
     }
 }
 
+/// 1px 对应的 pt 数（96dpi）。
+const PX_TO_PT: f64 = 0.75;
+
+/// 节点为「图片」或「纯图片段落」时，返回其中唯一的 `Image` 节点。
+///
+/// Markdown `![alt](src)` 经 pulldown 包在 `<p>` 内，故表格单元格等上下文中
+/// 图片通常表现为「单个 Image 子节点的 Paragraph」。
+fn sole_image_node(node: &Node) -> Option<&Node> {
+    match &node.kind {
+        NodeKind::Image { .. } => Some(node),
+        NodeKind::Paragraph { children } if children.len() == 1 => match &children[0].kind {
+            NodeKind::Image { .. } => Some(&children[0]),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// 读取图片节点按**显示方向**的像素尺寸（宽, 高）。
+///
+/// 与 [`convert_image_node`] 一致地走 [`probe_image_with_orientation`]，
+/// 使 EXIF 旋转过的 JPEG 在列宽度量/行高度量上拿到正确的宽高比。
+///
+/// `src` 非 data URI（外部路径）或探测失败时返回 `(0, 0)`，由 [`resolve_image_size`]
+/// 按 4:3 兜底。
+fn image_pixel_size(node: &Node) -> (u32, u32) {
+    let NodeKind::Image { src, .. } = &node.kind else {
+        return (0, 0);
+    };
+    let (data, _format) = decode_image_data_uri(src);
+    if data.is_empty() {
+        return (0, 0);
+    }
+    probe_image_with_orientation(&data)
+        .map(|(dim, _orientation)| dim)
+        .unwrap_or((0, 0))
+}
+
+/// 图片的自然尺寸（pt，按 96dpi 换算）。像素尺寸未知时回退 200×150。
+///
+/// 用于表格列宽度量：列宽分配需要「理想宽度」，与最终显示宽度无关。
+fn image_natural_size_pt(node: &Node) -> (f64, f64) {
+    match image_pixel_size(node) {
+        (w, h) if w > 0 && h > 0 => (w as f64 * PX_TO_PT, h as f64 * PX_TO_PT),
+        _ => (200.0, 150.0),
+    }
+}
+
+/// 图片在给定可用宽度下的显示高度（pt）。
+///
+/// 与 [`convert_image_node`] 使用同一套 [`resolve_image_size`] 规则，保证
+/// 「表格行高度度量」与「实际渲染尺寸」一致，避免图片溢出单元格。
+fn image_display_height_pt(node: &Node, avail_width: f64, max_h: f64) -> f64 {
+    let style = ResolvedStyle::from(node.style.clone());
+    let pixel = image_pixel_size(node);
+    resolve_image_size(style.width, style.height, pixel, avail_width, max_h).1
+}
+
 /// 将 `NodeKind::Image` 节点转换为独立的 `BlockKind::Image` 块。
 ///
 /// - 图片字节：若 `src` 为 data URI（`data:image/xxx;base64,...`，来自
 ///   `dom::inline_local_images` / `embed_local_images` 内联），在此解码为字节并探测
 ///   原始像素尺寸；若是普通路径则 data 留空（渲染后端按需加载，方案 §3.5.1）。
 /// - 尺寸解析：显式 width/height 优先，缺失维度按原始宽高比推算；都未指定时
-///   "适合页宽"（宽度=内容宽度，高度按宽高比），避免固定 `100×100` 造成图片失真。
+///   "适合可用宽度"（宽度 = `avail_width`，高度按宽高比），避免固定 `100×100` 失真。
+/// - `avail_width`：所在容器的可用宽度（正文取内容宽度，表格单元格取列宽），
+///   使同一张图在窄列中不会按整页宽度溢出。
 /// - `style` 可由调用方指定（纯图片段落会传入 `text_align: Center` 以居中）。
-fn convert_image_node(node: &Node, style: &ResolvedStyle, settings: &PageSettings) -> Block {
+fn convert_image_node(
+    node: &Node,
+    style: &ResolvedStyle,
+    settings: &PageSettings,
+    avail_width: f64,
+) -> Block {
     let NodeKind::Image { src, alt, .. } = &node.kind else {
         unreachable!("convert_image_node 只接受 Image 节点");
     };
@@ -582,9 +688,8 @@ fn convert_image_node(node: &Node, style: &ResolvedStyle, settings: &PageSetting
     } else {
         probe_image_with_orientation(&data).unwrap_or(((0, 0), 1))
     };
-    let content_w = settings.content_width() as f64;
     let content_h = settings.content_height() as f64;
-    let size = resolve_image_size(style.width, style.height, pixel, content_w, content_h);
+    let size = resolve_image_size(style.width, style.height, pixel, avail_width, content_h);
     Block::new(
         BlockKind::Image(DocImage {
             position: (0.0, 0.0),
@@ -843,6 +948,16 @@ fn collect_inline_segments(children: &[Node], inherited: &TextStyle) -> Vec<(Str
                     segments.push((code.clone(), style));
                 }
             }
+            NodeKind::Image { alt, .. } => {
+                // 行内上下文（文本+图片混排、表格单元格等）不排版真实图片，回退为
+                // **alt 文本占位**。必须在此显式产出：`NodeKind::Image::text_content()`
+                // 返回空串，若依赖下方 `_` 兜底分支，混排段落里的图片会被静默丢弃
+                // （既不显示图片也不显示 alt，只剩两侧文本）。
+                if !alt.is_empty() {
+                    let style = inherited.clone();
+                    segments.push((alt.clone(), style));
+                }
+            }
             NodeKind::LineBreak => {
                 let style = inherited.clone();
                 segments.push(("\n".to_string(), style));
@@ -957,38 +1072,58 @@ fn fold_segments_whitespace(segments: &mut Vec<(String, TextStyle)>) {
 
 /// 从图片 `src` 解析 data URI，返回（解码后的字节, 图片格式）。
 ///
-/// 支持 `data:image/<format>;base64,<payload>`。若 `src` 不是 data URI（如普通文件路径），
-/// 返回 `(Vec::new(), "png".to_string())`，由渲染后端按需加载（方案 §3.5.1）。
-fn decode_image_data_uri(src: &str) -> (Vec<u8>, String) {
-    // 形如 "data:image/png;base64,...."。前缀（`data:image/` 与 `;base64,`）大小写不敏感，
-    // 但 **payload 必须保留原始大小写**（base64 编码区分大小写，不能 lower）。
-    // 这里先在 lower 副本上定位各分隔符的字节偏移，再从原串切出 payload。
+/// 支持两种 data URI 编码（RFC 2397）：
+/// - `data:image/<format>;base64,<payload>` —— base64（标准 `+/` 与 URL-safe `-_` 字母表，
+///   带或不带 `=` padding 均可）。
+/// - `data:image/<format>,<payload>` —— 无 `;base64` 参数，payload 为 percent-encoded
+///   （如 `data:image/svg+xml,%3Csvg%20...%3E`），按 `%XX` 解码为原始字节。
+///
+/// 若 `src` 不是 `data:image/` URI（普通文件路径、网络 URL、其它 MIME），返回
+/// `(Vec::new(), "png".to_string())`，由渲染后端按需加载（方案 §3.5.1）。
+///
+/// 前缀（`data:` 与各参数名）大小写不敏感，但 **payload 必须保留原始大小写**
+/// （base64 区分大小写，percent 解码也依赖 `%41` 与 `%61` 的区别）。
+///
+/// 这是全项目**唯一**的 data URI 解码实现，DOCX 等其它后端复用它
+/// （见 `output::docx::emit_image`），避免各后端解码能力出现分歧。
+pub(crate) fn decode_image_data_uri(src: &str) -> (Vec<u8>, String) {
+    // 在 lower 副本上定位分隔符的字节偏移，再从原串切出 meta 与 payload。
     let lower = src.to_ascii_lowercase();
-    let prefix = match lower.strip_prefix("data:image/") {
-        Some(r) => r,
-        None => return (Vec::new(), "png".to_string()),
+    let Some(rest) = lower.strip_prefix("data:") else {
+        return (Vec::new(), "png".to_string());
     };
-    // prefix 在 lower 中从 `prefix_start` 开始；semicolon 在 lower 中的全局偏移。
-    let prefix_start = src.len() - prefix.len();
-    let semicolon_rel = match prefix.find(';') {
-        Some(i) => i,
-        None => return (Vec::new(), "png".to_string()),
+    // meta 段止于第一个逗号（data URI 的 payload 分隔符）。
+    let Some(comma_rel) = rest.find(',') else {
+        return (Vec::new(), "png".to_string());
     };
-    let semicolon = prefix_start + semicolon_rel;
-    // format 从原串按字节偏移切出（format 本身通常为字母，但保持原样更稳妥）。
-    let format = src[prefix_start..semicolon].to_string();
-    // 检查 `;` 之后是否为 `base64,`（大小写不敏感），payload 保留原串大小写。
-    let marker = lower[semicolon + 1..].strip_prefix("base64,");
-    let payload = match marker {
-        Some(_) => &src[semicolon + 1 + "base64,".len()..],
-        None => return (Vec::new(), format),
+    let comma = "data:".len() + comma_rel;
+    let meta = &src["data:".len()..comma];
+    let payload = &src[comma + 1..];
+
+    // meta = `image/<format>[;param]*`（如 `image/svg+xml;charset=utf-8;base64`）。
+    let mut parts = meta.split(';');
+    let mime = parts.next().unwrap_or("").to_ascii_lowercase();
+    // `base64` 参数可出现在任意位置（如 `;charset=utf-8;base64`）。
+    let is_base64 = parts.any(|p| p.trim().eq_ignore_ascii_case("base64"));
+    let Some(format) = mime.strip_prefix("image/") else {
+        // 非 `image/*`（如 `data:application/pdf;base64,...`）：不解码，交回渲染后端。
+        return (Vec::new(), "png".to_string());
     };
-    // base64 URL-safe 与标准两种 padding 均可解码。
+    let format = format.to_string();
+
+    if !is_base64 {
+        return (percent_decode(payload), format);
+    }
+    // 依次尝试：标准/URL-safe 字母表 × 带/不带 padding。
+    // 四个引擎的 padding 模式互斥（带 padding 的输入在 NO_PAD 引擎下会失败，
+    // 反之亦然），故按顺序回退即可覆盖全部常见写法。
     use base64::Engine;
-    use base64::engine::general_purpose::{STANDARD, URL_SAFE};
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
     let bytes = STANDARD
         .decode(payload)
         .or_else(|_| URL_SAFE.decode(payload))
+        .or_else(|_| STANDARD_NO_PAD.decode(payload))
+        .or_else(|_| URL_SAFE_NO_PAD.decode(payload))
         .unwrap_or_default();
     (bytes, format)
 }
@@ -1028,6 +1163,38 @@ fn read_exif_orientation(data: &[u8]) -> Option<u8> {
     let field = exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)?;
     let v = field.value.get_uint(0)?;
     (1..=8).contains(&v).then_some(v as u8)
+}
+
+/// 对 percent-encoded 的 data URI payload 做 `%XX` 字节解码。
+///
+/// 非法或截断的转义（如 `%zz`、`%4`）按字面保留 `%`，不因单处错误丢弃整段。
+fn percent_decode(payload: &str) -> Vec<u8> {
+    let bytes = payload.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2]))
+        {
+            out.push((hi << 4) | lo);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+/// 单个十六进制字符的数值（大小写均可），非十六进制返回 `None`。
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// 解析图片的显示尺寸（pt）。
@@ -1245,6 +1412,108 @@ mod tests {
         // 前缀大小写不敏感
         let (data, _format) = decode_image_data_uri("DATA:IMAGE/JPEG;base64,aGVsbG8=");
         assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_decode_image_data_uri_percent_encoded() {
+        // 无 `;base64` 参数 → payload 为 percent-encoded（RFC 2397），按 %XX 解码。
+        let (data, format) = decode_image_data_uri("data:image/svg+xml,%3Csvg%3E%41");
+        assert_eq!(data, b"<svg>A");
+        assert_eq!(format, "svg+xml");
+    }
+
+    #[test]
+    fn test_decode_image_data_uri_percent_encoded_keeps_bad_escape() {
+        // 非法/截断转义不应丢弃整段，按字面保留 `%`。
+        let (data, _format) = decode_image_data_uri("data:image/png,ab%zz%4");
+        assert_eq!(data, b"ab%zz%4");
+    }
+
+    #[test]
+    fn test_decode_image_data_uri_without_padding() {
+        // 无 `=` padding 的 base64（标准字母表）
+        let (data, _format) = decode_image_data_uri("data:image/png;base64,aGVsbG8");
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_decode_image_data_uri_url_safe_alphabet() {
+        // URL-safe 字母表（-_）：带 padding 与不带 padding 两种
+        let (data, _format) = decode_image_data_uri("data:image/png;base64,-_8=");
+        assert_eq!(data, &[0xFB, 0xFF]);
+        let (data, _format) = decode_image_data_uri("data:image/png;base64,-_8");
+        assert_eq!(data, &[0xFB, 0xFF]);
+        // 标准字母表（+/）同样支持，含无 padding 形式
+        let (data, _format) = decode_image_data_uri("data:image/png;base64,+/8");
+        assert_eq!(data, &[0xFB, 0xFF]);
+    }
+
+    #[test]
+    fn test_decode_image_data_uri_non_image_mime_untouched() {
+        // 非 `image/*` 的 data URI 不解码，交回渲染后端
+        let (data, _format) = decode_image_data_uri("data:application/pdf;base64,aGVsbG8=");
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_mixed_paragraph_image_falls_back_to_alt_text() {
+        // 回归：文本+图片混排段落不排版真实图片，但 alt **必须**出现。
+        // 此前 `NodeKind::Image::text_content()` 返回空串，图片（连同 alt）被静默丢弃。
+        let md = "前文 ![示意图](data:image/png;base64,aGVsbG8=) 后文";
+        let root = crate::ast::parse_markdown(md).expect("解析应成功");
+        let document = ast_to_layout(&root, &PageSettings::default());
+        let text = document
+            .blocks
+            .iter()
+            .map(|b| b.text_content())
+            .collect::<String>();
+        assert!(
+            text.contains("示意图"),
+            "混排段落中的图片应回退为 alt 文本，实际: {text}"
+        );
+    }
+
+    #[test]
+    fn test_table_cell_image_becomes_image_block() {
+        // 表格单元格内的图片应渲染为真实图片块，且宽度受**列宽**约束
+        // （此前会被降级为文字度量、图片整体丢失）。
+        let md = "| 图标 | 说明 |\n|---|---|\n| ![pic](data:image/png;base64,aGVsbG8=) | 文本 |";
+        let root = crate::ast::parse_markdown(md).expect("解析应成功");
+        let document = ast_to_layout(&root, &PageSettings::default());
+        let table = &document.blocks[0];
+        let BlockKind::Table {
+            rows, col_widths, ..
+        } = &table.kind
+        else {
+            panic!("expected Table");
+        };
+        let cell_img = &rows[1].cells[0].children[0];
+        let BlockKind::Image(img) = &cell_img.kind else {
+            panic!("单元格内应为 Image 块，实际 {:?}", cell_img.kind);
+        };
+        assert_eq!(img.data, b"hello");
+        assert!(
+            img.size.0 <= col_widths[0] + 1.0,
+            "图片宽度 {} 不应超过列宽 {}",
+            img.size.0,
+            col_widths[0]
+        );
+    }
+
+    #[test]
+    fn test_bare_html_image_is_centered() {
+        // 裸 `<img>`（不经 `<p>` 包装）应与 Markdown 纯图片段落一致，默认居中。
+        let md = "<img src=\"data:image/png;base64,aGVsbG8=\" alt=\"裸图\">";
+        let root = crate::ast::parse_markdown(md).expect("解析应成功");
+        let document = ast_to_layout(&root, &PageSettings::default());
+        let BlockKind::Image(_) = &document.blocks[0].kind else {
+            panic!("expected Image, got {:?}", document.blocks[0].kind);
+        };
+        assert_eq!(
+            document.blocks[0].style.text_align,
+            crate::ast::TextAlign::Center,
+            "裸 <img> 应默认居中"
+        );
     }
 
     #[test]
@@ -1768,7 +2037,12 @@ mod tests {
                 // 用 measure_cell_height 反推：单行 "Cell A" 内容高，加 4 应与行高一致。
                 let style = crate::ast::Style::default();
                 let cell = mk_cell("Cell A");
-                let content_h = measure_cell_height(&cell, &style, 200.0);
+                let content_h = measure_cell_height(
+                    &cell,
+                    &style,
+                    200.0,
+                    PageSettings::default().content_height() as f64,
+                );
                 let pad_v = style.table_cell_padding_v_pt as f64;
                 assert!(
                     (row_heights[0] - (content_h + 2.0 * pad_v)).abs() < 1.0,
@@ -1800,7 +2074,7 @@ mod tests {
         // 宽表格列宽总和溢出页宽。CJK 逐字可断后 min 应收缩到单字宽量级。
         let cell = text_node(&"汉字宽度测试".repeat(12));
         let style = crate::ast::Style::default();
-        let (col_widths, _) = compute_table_layout(&[vec![&cell]], &style, 1, 200.0);
+        let (col_widths, _) = compute_table_layout(&[vec![&cell]], &style, 1, 200.0, 400.0);
         assert!(
             col_widths[0] <= 200.0 + 1e-9,
             "CJK 单元格最小列宽应可断词收缩，实际 {}",
@@ -1815,7 +2089,7 @@ mod tests {
         // 保证表格不横向溢出页边距。
         let cell = text_node(&"M".repeat(100));
         let style = crate::ast::Style::default();
-        let (col_widths, _) = compute_table_layout(&[vec![&cell]], &style, 1, 150.0);
+        let (col_widths, _) = compute_table_layout(&[vec![&cell]], &style, 1, 150.0, 400.0);
         assert!(
             (col_widths[0] - 150.0).abs() < 1e-6,
             "不可断超宽内容应压缩到页宽，实际 {}",

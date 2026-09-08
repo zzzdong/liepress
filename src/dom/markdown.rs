@@ -117,6 +117,13 @@ pub fn markdown_to_dom_with_resolver(
                     _ => {}
                 }
                 stack.push(el);
+                // GFM 表头：pulldown 的 `TableHead` 直接产出单元格，中间**没有**
+                // `TableRow` 事件（表体才有）。补一层 `<tr>` 使表头与表体结构一致，
+                // 否则表头单元格会直接挂在 `<thead>`（进而是 Table）下，在
+                // `from_ast` 收集 `NodeKind::TableRow` 时被整体丢弃。
+                if matches!(tag, Tag::TableHead) {
+                    stack.push(simple(HtmlTag::Tr));
+                }
             }
             Event::End(tag_end) => {
                 if matches!(tag_end, pulldown_cmark::TagEnd::Table) {
@@ -132,6 +139,14 @@ pub fn markdown_to_dom_with_resolver(
                 let Some(mut closed) = stack.pop() else {
                     continue;
                 };
+                // 表头闭合：Start 时多压了一层 `<tr>`（见上），此处多弹一次，
+                // 先把它挂进 `<thead>`，再继续走通用的「挂回父节点」流程。
+                if matches!(tag_end, pulldown_cmark::TagEnd::TableHead)
+                    && let Some(mut thead) = stack.pop()
+                {
+                    thead.children.push(HtmlNode::Element(closed));
+                    closed = thead;
+                }
                 // 脚注定义闭合：把编号前缀 "N. " 插入 children 最前面。
                 if closed.tag == HtmlTag::Div
                     && closed
