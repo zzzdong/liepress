@@ -88,7 +88,8 @@ impl HtmlGenerator {
             NodeKind::TaskListItem { checked, children } => {
                 self.out.push_str(&format!("<li{}>", sa));
                 if *checked {
-                    self.out.push_str("<input checked=\"\" type=\"checkbox\"/> ");
+                    self.out
+                        .push_str("<input checked=\"\" type=\"checkbox\"/> ");
                 } else {
                     self.out.push_str("<input type=\"checkbox\"/> ");
                 }
@@ -98,13 +99,15 @@ impl HtmlGenerator {
             NodeKind::DefinitionList { items } => {
                 self.out.push_str(&format!("<dl{}>", sa));
                 for item in items {
-                    self.out.push_str(&format!("<dt{}>", style_attr(&node.style)));
+                    self.out
+                        .push_str(&format!("<dt{}>", style_attr(&node.style)));
                     for c in &item.term {
                         self.serialize_node(c);
                     }
                     self.out.push_str("</dt>");
                     for c in &item.definition {
-                        self.out.push_str(&format!("<dd{}>", style_attr(&node.style)));
+                        self.out
+                            .push_str(&format!("<dd{}>", style_attr(&node.style)));
                         self.serialize_node(c);
                         self.out.push_str("</dd>");
                     }

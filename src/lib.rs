@@ -588,10 +588,7 @@ pub fn markdown_to_svg(markdown: &str, options: &ConvertOptions) -> crate::error
         options.strict,
         options.page_config.clone(),
     )?;
-    Ok(output::svg::document_to_svg(
-        &document,
-        &page_settings,
-    ))
+    Ok(output::svg::document_to_svg(&document, &page_settings))
 }
 
 /// HTML → SVG（不分页长图）
@@ -609,10 +606,7 @@ pub fn html_to_svg(html: &str, options: &ConvertOptions) -> crate::error::Result
         options.strict,
         options.page_config.clone(),
     )?;
-    Ok(output::svg::document_to_svg(
-        &document,
-        &page_settings,
-    ))
+    Ok(output::svg::document_to_svg(&document, &page_settings))
 }
 
 /// Markdown 文件 → SVG（自动内联本地图片）。
@@ -631,10 +625,7 @@ pub fn markdown_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::err
         options.strict,
         options.page_config.clone(),
     )?;
-    Ok(output::svg::document_to_svg(
-        &document,
-        &page_settings,
-    ))
+    Ok(output::svg::document_to_svg(&document, &page_settings))
 }
 
 /// HTML 文件 → SVG（自动内联本地图片）。
@@ -653,10 +644,7 @@ pub fn html_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::error::
         options.strict,
         options.page_config.clone(),
     )?;
-    Ok(output::svg::document_to_svg(
-        &document,
-        &page_settings,
-    ))
+    Ok(output::svg::document_to_svg(&document, &page_settings))
 }
 
 // ─── PNG 输出 ──────────────────────────────────────────────────
@@ -886,8 +874,7 @@ fn html_to_styled_node(
     let mut node = dom::to_ast::html_to_styled_nodes(doc, &engine);
     // AST 富化：外绘 + 语法高亮（与 PDF 路径共享同一份产物，保证 DOCX 也有图表/高亮）。
     // 页面几何与 `%` 基准一致：取 `@page` 与显式配置的合并结果。
-    let page_settings =
-        PageSettings::from(merged_page_config(engine.page_config(), page_config));
+    let page_settings = PageSettings::from(merged_page_config(engine.page_config(), page_config));
     enrich::enrich_ast(&mut node, &page_settings);
     Ok((node, page_settings))
 }
@@ -1002,8 +989,10 @@ fn html_to_layout(
     // 页面几何 = CSS `@page` 与显式 `PageConfig` 合并后的结果（与 `%` 基准一致）。
     // 若只取显式配置，仅通过 `@page { size/margin }` 设置页面时渲染端会退回
     // A4 默认值，导致 `%` 宽度按 @page 计算而实际页面仍是 A4。
-    let page_settings =
-        PageSettings::from(merged_page_config(engine.page_config(), page_config.as_ref()));
+    let page_settings = PageSettings::from(merged_page_config(
+        engine.page_config(),
+        page_config.as_ref(),
+    ));
 
     // 3.5 AST 富化：外绘（mermaid/liecharts → 图片节点）+ 语法高亮。
     // 必须在 `ast_to_layout` 之前完成，各后端（含 DOCX/HTML）据此消费同一份产物。
@@ -1044,13 +1033,9 @@ mod pipeline_tests {
         let resolver = dom::ResourceResolver::new(None);
         let doc = dom::markdown_to_dom_with_resolver(md, &resolver);
         let options = ConvertOptions::default();
-        let (_document, settings) = html_to_layout(
-            &doc,
-            None,
-            options.strict,
-            options.page_config.clone(),
-        )
-        .expect("layout");
+        let (_document, settings) =
+            html_to_layout(&doc, None, options.strict, options.page_config.clone())
+                .expect("layout");
         // A5 = 419.53 × 595.28 pt
         assert!(
             (settings.width_pt - 419.53).abs() < 0.5,
@@ -1075,18 +1060,13 @@ mod pipeline_tests {
         let md = "<style>@page { size: A5; margin: 24pt; }</style>\n\n# Hi\n";
         let resolver = dom::ResourceResolver::new(None);
         let doc = dom::markdown_to_dom_with_resolver(md, &resolver);
-        let options =
-            ConvertOptions::default().with_page_config(PageConfig {
-                width: Some(300.0),
-                ..Default::default()
-            });
-        let (_document, settings) = html_to_layout(
-            &doc,
-            None,
-            options.strict,
-            options.page_config.clone(),
-        )
-        .expect("layout");
+        let options = ConvertOptions::default().with_page_config(PageConfig {
+            width: Some(300.0),
+            ..Default::default()
+        });
+        let (_document, settings) =
+            html_to_layout(&doc, None, options.strict, options.page_config.clone())
+                .expect("layout");
         assert!(
             (settings.width_pt - 300.0).abs() < 0.5,
             "显式 width 应覆盖 @page，实际 {}",

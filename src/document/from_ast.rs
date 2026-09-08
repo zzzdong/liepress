@@ -180,7 +180,11 @@ fn compute_table_layout(
         if total_min >= content_w {
             // 最小列宽总和超出页宽（如含超长 URL 等不可断内容）：
             // 等比压缩到页宽，宁可单元格内文本微溢出也不让整表横向溢出页边距。
-            let scale = if total_min > 0.0 { content_w / total_min } else { 1.0 };
+            let scale = if total_min > 0.0 {
+                content_w / total_min
+            } else {
+                1.0
+            };
             min_cols.iter().map(|m| m * scale).collect()
         } else {
             let extra = content_w - total_min;
@@ -2080,7 +2084,11 @@ mod tests {
             "CJK 单元格最小列宽应可断词收缩，实际 {}",
             col_widths[0]
         );
-        assert!(col_widths[0] > 10.0, "列宽不应塌缩到 0，实际 {}", col_widths[0]);
+        assert!(
+            col_widths[0] > 10.0,
+            "列宽不应塌缩到 0，实际 {}",
+            col_widths[0]
+        );
     }
 
     #[test]

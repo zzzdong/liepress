@@ -34,8 +34,8 @@ use crate::error::{Error, Result};
 use lievisual::{Color, geometry::Point};
 
 use super::common::{
-    BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, block_height, blockquote_content_height,
-    lines_visual_height, text_style, text_style_from_resolved,
+    BQ_BAR_WIDTH, BQ_PAD_X, BQ_PAD_Y, block_height, blockquote_content_height, lines_visual_height,
+    text_style, text_style_from_resolved,
 };
 
 /// 把任意 `image` 可解码格式的图片字节重新编码为 PNG。
@@ -125,7 +125,12 @@ struct PositionedBlock {
 
 impl PositionedBlock {
     fn new(block: Block, x: f64, y: f64, height: f64) -> Self {
-        Self { block, x, y, height }
+        Self {
+            block,
+            x,
+            y,
+            height,
+        }
     }
 }
 
@@ -1475,10 +1480,7 @@ fn paginate_table(
         } else {
             let mut v = Vec::with_capacity(1 + (end - i));
             v.push(header_h);
-            v.extend(
-                (i..end)
-                    .map(|ri| row_heights.get(ri).copied().unwrap_or(header_h).max(8.0)),
-            );
+            v.extend((i..end).map(|ri| row_heights.get(ri).copied().unwrap_or(header_h).max(8.0)));
             v
         };
         // 片段实际绘制高度（表头 + body 行），used 增量与之严格一致。
@@ -1530,25 +1532,14 @@ fn is_fragmentable_container(kind: &BlockKind) -> bool {
 ///
 /// 子块若自身高过 `max_h` 且仍是容器块则递归切分；不可再分的子块（如超大图片、
 /// 超高标题）独占片段并溢出页面（与旧行为一致，内容不丢，仅可能超出页底）。
-fn fragment_container(
-    block: &Block,
-    settings: &PageSettings,
-    x: f64,
-    max_h: f64,
-) -> Vec<Block> {
+fn fragment_container(block: &Block, settings: &PageSettings, x: f64, max_h: f64) -> Vec<Block> {
     let style = &block.style;
     // 分组预算扣除容器自身上下外边距，保证首/末片段（含 margin）不超过 max_h。
     let inner_max = (max_h - style.margin_top as f64 - style.margin_bottom as f64).max(1.0);
 
     let mut frags: Vec<Block> = match &block.kind {
-        BlockKind::List {
-            ordered, start, ..
-        } => group_children(
-            block.kind.children(),
-            settings,
-            x,
-            inner_max,
-            |kids| {
+        BlockKind::List { ordered, start, .. } => {
+            group_children(block.kind.children(), settings, x, inner_max, |kids| {
                 Block::new(
                     BlockKind::List {
                         ordered: *ordered,
@@ -1558,14 +1549,10 @@ fn fragment_container(
                     style.clone(),
                     block.splittable,
                 )
-            },
-        ),
-        BlockKind::ListItem { marker, .. } => group_children(
-            block.kind.children(),
-            settings,
-            x,
-            inner_max,
-            |kids| {
+            })
+        }
+        BlockKind::ListItem { marker, .. } => {
+            group_children(block.kind.children(), settings, x, inner_max, |kids| {
                 Block::new(
                     BlockKind::ListItem {
                         marker: marker.clone(),
@@ -1574,27 +1561,21 @@ fn fragment_container(
                     style.clone(),
                     block.splittable,
                 )
-            },
-        ),
+            })
+        }
         BlockKind::TaskListItem {
             marker, checked, ..
-        } => group_children(
-            block.kind.children(),
-            settings,
-            x,
-            inner_max,
-            |kids| {
-                Block::new(
-                    BlockKind::TaskListItem {
-                        marker: marker.clone(),
-                        checked: *checked,
-                        children: kids,
-                    },
-                    style.clone(),
-                    block.splittable,
-                )
-            },
-        ),
+        } => group_children(block.kind.children(), settings, x, inner_max, |kids| {
+            Block::new(
+                BlockKind::TaskListItem {
+                    marker: marker.clone(),
+                    checked: *checked,
+                    children: kids,
+                },
+                style.clone(),
+                block.splittable,
+            )
+        }),
         BlockKind::Blockquote { .. } => group_children(
             block.kind.children(),
             settings,
@@ -1609,19 +1590,15 @@ fn fragment_container(
                 )
             },
         ),
-        BlockKind::Container { .. } => group_children(
-            block.kind.children(),
-            settings,
-            x,
-            inner_max,
-            |kids| {
+        BlockKind::Container { .. } => {
+            group_children(block.kind.children(), settings, x, inner_max, |kids| {
                 Block::new(
                     BlockKind::Container { children: kids },
                     style.clone(),
                     block.splittable,
                 )
-            },
-        ),
+            })
+        }
         BlockKind::DefinitionList { items } => {
             // 定义列表以 (term, definition) 项为单位切分。
             let mut groups: Vec<Vec<DefinitionItemBlock>> = Vec::new();
@@ -1911,9 +1888,7 @@ mod pagination_tests {
     /// 按 `row_heights` 构造表格并运行分页，返回（页面列表，used 总量）。
     fn paginate_rows(row_heights: &[f64], content_h: f64) -> (Vec<PdfPage>, f64) {
         let n = row_heights.len();
-        let rows: Vec<TableRow> = (0..n)
-            .map(|i| labeled_row(&format!("row{i}")))
-            .collect();
+        let rows: Vec<TableRow> = (0..n).map(|i| labeled_row(&format!("row{i}"))).collect();
         let style = ResolvedStyle::default();
         let mut pages = Vec::new();
         let mut cur = PdfPage::default();
@@ -1958,7 +1933,10 @@ mod pagination_tests {
             .map(|b| b.height)
             .sum();
         let total_used: f64 = pages.iter().map(|p| p.used_h).sum();
-        assert!((total_used - 240.0).abs() < 1e-9, "used 总量应 240，实际 {total_used}");
+        assert!(
+            (total_used - 240.0).abs() < 1e-9,
+            "used 总量应 240，实际 {total_used}"
+        );
         assert!(
             (total_used - all_drawn).abs() < 1e-9,
             "used 总量 {total_used} != 片段绘制总高 {all_drawn}"
@@ -1977,7 +1955,10 @@ mod pagination_tests {
         // 续页片段头部应补回真实表头 row0（且每行只出现一次，不重复绘制）。
         let p2 = &pages[1];
         assert_eq!(p2.blocks.len(), 1);
-        if let BlockKind::Table { rows, row_heights, .. } = &p2.blocks[0].block.kind {
+        if let BlockKind::Table {
+            rows, row_heights, ..
+        } = &p2.blocks[0].block.kind
+        {
             assert_eq!(rows.len(), row_heights.len(), "行数与行高数应一致");
             assert_eq!(rows[0].cells_text(), "row0", "续页片段首行应为真实表头");
             assert_eq!(rows[1].cells_text(), "row3");
@@ -1993,7 +1974,10 @@ mod pagination_tests {
         // 单表头行 20 + 两行 30/40，content_h=100 → 单页 90，无分页。
         let (pages, used) = paginate_rows(&[20.0, 30.0, 40.0], 100.0);
         assert_eq!(pages.len(), 1);
-        assert!((used - 90.0).abs() < 1e-9, "used 应 90（无表头双计），实际 {used}");
+        assert!(
+            (used - 90.0).abs() < 1e-9,
+            "used 应 90（无表头双计），实际 {used}"
+        );
         if let BlockKind::Table { rows, .. } = &pages[0].blocks[0].block.kind {
             assert_eq!(rows.len(), 3);
             assert_eq!(rows[0].cells_text(), "row0");
@@ -2103,7 +2087,11 @@ mod pagination_tests {
             let mut s = ResolvedStyle::default();
             s.line_height_pt = h as f32;
             DefinitionItemBlock {
-                term: vec![Block::new(BlockKind::Paragraph { lines: vec![] }, s.clone(), true)],
+                term: vec![Block::new(
+                    BlockKind::Paragraph { lines: vec![] },
+                    s.clone(),
+                    true,
+                )],
                 definition: vec![],
             }
         };

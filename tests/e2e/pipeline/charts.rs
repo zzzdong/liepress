@@ -71,7 +71,10 @@ fn pdf_liecharts_block_renders() {
 #[test]
 fn svg_liecharts_block_renders() {
     let svg = markdown_to_svg(LIECHARTS_MD, &opts()).expect("含 liecharts 的 SVG 应生成成功");
-    assert!(svg.contains("<image"), "liecharts 图应以 <image> 元素嵌入 SVG");
+    assert!(
+        svg.contains("<image"),
+        "liecharts 图应以 <image> 元素嵌入 SVG"
+    );
 }
 
 #[cfg(feature = "charts")]
@@ -136,9 +139,7 @@ fn info_string_width_override_propagates() {
         None,
     );
     let marker = "data:image/png;base64,";
-    let idx = html
-        .find(marker)
-        .expect("mermaid 应渲染为内嵌 PNG");
+    let idx = html.find(marker).expect("mermaid 应渲染为内嵌 PNG");
     let b64 = &html[idx + marker.len()..];
     let b64 = &b64[..b64.find('"').unwrap_or(b64.len())];
     let png = base64_decode(b64);

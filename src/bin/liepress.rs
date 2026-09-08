@@ -545,7 +545,10 @@ mod cli_tests {
 
     #[test]
     fn resolve_page_size_unknown_is_error() {
-        assert!(resolve_page_size("A7").is_err(), "未知预设应报错而非静默回退");
+        assert!(
+            resolve_page_size("A7").is_err(),
+            "未知预设应报错而非静默回退"
+        );
     }
 
     // ─── build_page_config ───

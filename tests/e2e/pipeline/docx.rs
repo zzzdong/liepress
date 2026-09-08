@@ -167,8 +167,14 @@ fn docx_small_image_not_upscaled() {
     let xml = docx_entry(&bytes, "word/document.xml");
     let (cx, cy) = docx_first_extent(&xml);
     let (w_pt, h_pt) = (cx as f64 / 12700.0, cy as f64 / 12700.0);
-    assert!((w_pt - 75.0).abs() < 1.0, "小图宽度应保持自然尺寸 75pt，实际 {w_pt}");
-    assert!((h_pt - 150.0).abs() < 1.0, "小图高度应保持自然尺寸 150pt，实际 {h_pt}");
+    assert!(
+        (w_pt - 75.0).abs() < 1.0,
+        "小图宽度应保持自然尺寸 75pt，实际 {w_pt}"
+    );
+    assert!(
+        (h_pt - 150.0).abs() < 1.0,
+        "小图高度应保持自然尺寸 150pt，实际 {h_pt}"
+    );
 }
 
 #[test]

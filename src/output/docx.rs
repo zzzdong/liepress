@@ -201,8 +201,7 @@ impl DocxGenerator {
             if let NodeKind::TableRow { children: cells } = &row_node.kind {
                 let mut cells_out: Vec<TableCell> = Vec::new();
                 for cell in cells {
-                    let p =
-                        self.emit_inline_children(Paragraph::new(), std::slice::from_ref(cell));
+                    let p = self.emit_inline_children(Paragraph::new(), std::slice::from_ref(cell));
                     cells_out.push(TableCell::new().add_paragraph(p));
                 }
                 rows_out.push(TableRow::new(cells_out));
@@ -281,7 +280,13 @@ impl DocxGenerator {
     ///    内容宽；缺省取页内容宽），高度按宽高比保持；
     /// 2. 高度不超过页内容高——超高图（如长 flowchart）若不钳制，Word 会按完整
     ///    高度嵌入并截断超出页高的部分。
-    fn emit_image(&self, p: Paragraph, src: &str, alt: &str, style: &crate::ast::Style) -> Paragraph {
+    fn emit_image(
+        &self,
+        p: Paragraph,
+        src: &str,
+        alt: &str,
+        style: &crate::ast::Style,
+    ) -> Paragraph {
         let bytes = decode_data_uri(src);
         if bytes.is_empty() {
             // 无字节时回退为 alt 文本
