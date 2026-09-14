@@ -321,7 +321,7 @@ fn extract_selector_info(
                 for component in &mut selector_iter {
                     match component {
                         Component::LocalName(local_name) => {
-                            let name = local_name.name.as_ref().to_string();
+                            let name = local_name.name.to_string();
                             specificity += 1;
                             if is_first_segment {
                                 target_tag = Some(name);

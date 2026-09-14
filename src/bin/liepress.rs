@@ -51,7 +51,7 @@ fn infer_input_format_from_ext(path: &Path) -> Option<InputFormat> {
 
 /// Markdown/HTML to PDF/HTML converter
 #[derive(Parser, Debug)]
-#[command(name = "liepress")]
+#[command(name = "liepress", version)]
 #[command(about = "Convert Markdown or HTML to PDF or HTML")]
 struct Args {
     /// Input file path (Markdown: .md, .markdown; HTML: .html, .htm).

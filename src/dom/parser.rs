@@ -136,22 +136,19 @@ impl DomSink {
                     let cip = child
                         .element_name
                         .as_ref()
-                        .is_some_and(|n| n.local.as_ref() == "pre")
+                        .is_some_and(|n| n.local.to_string() == "pre")
                         || pip;
                     (child, cip, pip)
                 };
 
                 if let Some(ref name) = child.element_name {
                     // 元素子节点：压入新帧（完成后回填到父帧）
-                    let tag_name = name.local.as_ref().to_string();
+                    let tag_name = name.local.to_string();
                     let attr_map = {
                         let attrs = child.element_attrs.borrow();
                         let mut map = HashMap::new();
                         for attr in attrs.iter() {
-                            map.insert(
-                                attr.name.local.as_ref().to_string(),
-                                attr.value.to_string(),
-                            );
+                            map.insert(attr.name.local.to_string(), attr.value.to_string());
                         }
                         map
                     };

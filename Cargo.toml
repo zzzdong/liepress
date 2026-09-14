@@ -1,6 +1,6 @@
 [package]
 name = "liepress"
-version = "0.2.0"
+version = "0.2.1"
 description = "A Markdown/HTML to PDF converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
@@ -25,7 +25,7 @@ path = "src/bin/liepress.rs"
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 docx-rs = "0.4"
-html5ever = "0.39.0"
+html5ever = "0.40"
 image = { version = "0.25" }
 liecharts = { version = "0.2", optional = true }
 liemermaid = { version = "0.2", optional = true }
@@ -46,7 +46,7 @@ mermaid = ["dep:liemermaid"]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
-lopdf = "0.44"
+lopdf = "0.45"
 zip = "8"
 image = "0.25"
 base64 = "0.23"

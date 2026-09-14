@@ -9,7 +9,7 @@
 - 作者：zzzdong
 - 仓库：<https://github.com/zzzdong/liepress>
 - 许可：MIT OR Apache-2.0
-- 当前版本：v0.2.0
+- 当前版本：v0.2.1
 
 > 本文件用于端到端验证 liepress 的生成能力，同时如实记录项目的实际功能边界。
 
@@ -397,7 +397,7 @@ this is not a valid diagram
 
 ## 13. 项目实际情况记录
 
-以下为 liepress 生成能力的**真实边界**（截至 v0.2.0，已与代码核对）：
+以下为 liepress 生成能力的**真实边界**（截至 v0.2.1，已与代码核对）：
 
 **已实现**
 
@@ -437,4 +437,4 @@ this is not a valid diagram
 
 ---
 
-*liepress v0.2.0 — 用 Markdown 生成文档*
+*liepress v0.2.1 — 用 Markdown 生成文档*
