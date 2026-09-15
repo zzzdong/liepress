@@ -27,8 +27,8 @@ clap = { version = "4", features = ["derive"] }
 docx-rs = "0.4"
 html5ever = "0.40"
 image = { version = "0.25" }
-liecharts = { version = "0.2", optional = true }
-liemermaid = { version = "0.2", optional = true }
+liecharts = { version = "0.2.2", optional = true }
+liemermaid = { version = "0.2.1", optional = true }
 lievisual = "0.2"
 lightningcss = { version = "1.0.0-alpha.71", default-features = false }
 kamadak-exif = "0.6"
