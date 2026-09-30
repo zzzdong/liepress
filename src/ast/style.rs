@@ -609,6 +609,14 @@ pub struct PageConfig {
     pub header_font_size: Option<f32>,
     /// 页脚字体大小（pt）
     pub footer_font_size: Option<f32>,
+    /// 页眉文本对齐（`None` 时用默认值：居中）
+    pub header_align: Option<TextAlign>,
+    /// 页脚文本对齐（`None` 时用默认值：居中）
+    pub footer_align: Option<TextAlign>,
+    /// 页眉字体族（优先级从高到低的回退列表；`None` 时用默认值 `["serif"]`）
+    pub header_font_family: Option<Vec<String>>,
+    /// 页脚字体族（优先级从高到低的回退列表；`None` 时用默认值 `["serif"]`）
+    pub footer_font_family: Option<Vec<String>>,
 }
 
 impl Default for PageConfig {
@@ -625,6 +633,10 @@ impl Default for PageConfig {
             footer: Some("- {page} -".to_string()),
             header_font_size: None,
             footer_font_size: None,
+            header_align: None,
+            footer_align: None,
+            header_font_family: None,
+            footer_font_family: None,
         }
     }
 }

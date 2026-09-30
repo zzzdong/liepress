@@ -20,17 +20,6 @@ pub struct Document {
     pub blocks: Vec<Block>,
 }
 
-/// 页眉/页脚模板（源 IR 持有模板文本，分页后端据页号/总页数替换 `{page}`/`{total}`）。
-#[derive(Clone, Debug)]
-pub struct HeaderFooter {
-    /// 文本内容（支持 {page} / {total} 模板变量）
-    pub text: String,
-    /// 字体大小（pt）
-    pub font_size_pt: f32,
-    /// 文本对齐
-    pub align: crate::document::types::TextAlign,
-}
-
 /// 内容块（源 IR 的基本单元）。
 ///
 /// 标题、表格、图片等不可分割；段落、列表可分割。

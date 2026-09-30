@@ -26,7 +26,8 @@ use krilla::text::Font;
 use crate::ast::PageBreak;
 use crate::document::layout::{Block, BlockKind, DefinitionItemBlock, Document, TableRow};
 use crate::document::text::{
-    LineMetrics, TextAlign as LayoutAlign, TextDecoration, TextLine, TextRun, layout_text,
+    LineMetrics, TextAlign as LayoutAlign, TextDecoration, TextLine, TextRun, css_text_style,
+    layout_text,
 };
 use crate::document::types::page::PageSettings;
 use crate::document::types::{ResolvedStyle, TextAlign};
@@ -236,7 +237,11 @@ impl PdfGenerator {
             // 无限高度模式：页高 = 上边距 + 内容实际占用 + 下边距（按页自适应），
             // 而非固定 A4 高度——否则内容下方会留出大片空白。
             let height = if self.settings.height_unlimited {
-                (self.settings.margin_top_pt + page.used_h as f32 + self.settings.margin_bottom_pt)
+                (self.settings.margin_top_pt
+                    + self.settings.header_height()
+                    + page.used_h as f32
+                    + self.settings.footer_height()
+                    + self.settings.margin_bottom_pt)
                     .max(1.0)
             } else {
                 self.settings.height_pt
@@ -251,16 +256,23 @@ impl PdfGenerator {
             let content_w = self.settings.content_width() as f64;
             let links = {
                 let mut renderer = PdfRenderer::new(&mut surface, content_w, self.settings.clone());
+                // 页眉：绘制在上边距之下的页眉条带 [margin_top, content_y] 内，
+                // 行顶与条带顶对齐；正文从 content_y 起，二者不重叠。
                 if let Some(h) = &page.header {
+                    let header_text = h
+                        .replace("{page}", &format!("{}", idx + 1))
+                        .replace("{total}", &format!("{}", pages.len()));
                     renderer.draw_text(
-                        h,
+                        &header_text,
                         self.settings.content_x() as f64,
-                        (self.settings.margin_top_pt - 6.0).max(2.0) as f64,
-                        9.0,
-                        LayoutAlign::Center,
+                        self.settings.margin_top_pt as f64,
+                        self.settings.header_font_size as f64,
+                        &self.settings.header_font_family,
+                        self.settings.header_align,
                         content_w,
                     );
                 }
+                // 页脚：绘制在下边距之上的页脚条带内，条带顶 = height - margin_bottom - footer_h。
                 if let Some(f) = &page.footer {
                     let footer_text = f
                         .replace("{page}", &format!("{}", idx + 1))
@@ -268,9 +280,11 @@ impl PdfGenerator {
                     renderer.draw_text(
                         &footer_text,
                         self.settings.content_x() as f64,
-                        (height - self.settings.margin_bottom_pt + 4.0) as f64,
-                        9.0,
-                        LayoutAlign::Center,
+                        (height - self.settings.margin_bottom_pt - self.settings.footer_height())
+                            as f64,
+                        self.settings.footer_font_size as f64,
+                        &self.settings.footer_font_family,
+                        self.settings.footer_align,
                         content_w,
                     );
                 }
@@ -552,25 +566,42 @@ impl<'a, 's> PdfRenderer<'a, 's> {
         }
     }
 
-    /// 绘制单行纯文本（用于页眉/页脚等），居中于 [x, x+width]。
+    /// 绘制单行纯文本（用于页眉/页脚等），按 `align` 对齐于 [x, x+width]。
+    ///
+    /// `font_family` 为优先级从高到低的回退列表（空列表回退到 `serif`）。
+    #[allow(clippy::too_many_arguments)]
     fn draw_text(
         &mut self,
         text: &str,
         x: f64,
         y: f64,
         font_size: f64,
+        font_family: &[String],
         align: LayoutAlign,
         width: f64,
     ) {
         if text.is_empty() {
             return;
         }
-        let style = text_style(
+        // 空字体族回退到 serif，避免排版时找不到字体。
+        let fallback = ["serif".to_string()];
+        let family: &[String] = if font_family.is_empty() {
+            &fallback
+        } else {
+            font_family
+        };
+        let style = css_text_style(
             Color::rgb(120, 120, 120),
-            "serif",
-            font_size as f32,
+            family,
+            font_size,
             "normal",
             "normal",
+            align,
+            None,
+            TextDecoration::None,
+            0.0,
+            None,
+            None,
         );
         let segments = [(text, &style)];
         let layout = layout_text(&segments, None, align);

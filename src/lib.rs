@@ -187,6 +187,42 @@ impl ConvertOptions {
         self
     }
 
+    /// 设置页眉文本对齐方式（默认居中）
+    ///
+    /// 仅在设置了页眉时生效。
+    pub fn with_header_align(mut self, align: ast::TextAlign) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.header_align = Some(align);
+        self
+    }
+
+    /// 设置页脚文本对齐方式（默认居中）
+    ///
+    /// 仅在设置了页脚时生效。
+    pub fn with_footer_align(mut self, align: ast::TextAlign) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.footer_align = Some(align);
+        self
+    }
+
+    /// 设置页眉字体族（优先级从高到低的回退列表）
+    ///
+    /// 仅在设置了页眉时生效。默认 `["serif"]`。
+    pub fn with_header_font_family(mut self, families: &[&str]) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.header_font_family = Some(families.iter().map(|f| f.to_string()).collect());
+        self
+    }
+
+    /// 设置页脚字体族（优先级从高到低的回退列表）
+    ///
+    /// 仅在设置了页脚时生效。默认 `["serif"]`。
+    pub fn with_footer_font_family(mut self, families: &[&str]) -> Self {
+        let config = self.page_config.get_or_insert_with(PageConfig::default);
+        config.footer_font_family = Some(families.iter().map(|f| f.to_string()).collect());
+        self
+    }
+
     /// 启用无限高度模式（仅限定宽度，高度自适应内容）
     ///
     /// 启用后：
@@ -930,6 +966,18 @@ fn merged_page_config(engine_page: &PageConfig, page_config: Option<&PageConfig>
         }
         if explicit.footer_font_size.is_some() {
             pc.footer_font_size = explicit.footer_font_size;
+        }
+        if explicit.header_align.is_some() {
+            pc.header_align = explicit.header_align;
+        }
+        if explicit.footer_align.is_some() {
+            pc.footer_align = explicit.footer_align;
+        }
+        if explicit.header_font_family.is_some() {
+            pc.header_font_family = explicit.header_font_family.clone();
+        }
+        if explicit.footer_font_family.is_some() {
+            pc.footer_font_family = explicit.footer_font_family.clone();
         }
     }
     pc

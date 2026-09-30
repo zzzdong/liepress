@@ -187,7 +187,7 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
 
 ### 4.5 `document` — 排版与中间表示
 
-- **`layout/mod.rs`**：核心 IR `Document { blocks: Vec<Block> }`（**不分页**）。`Block { kind, style, splittable }` 与 `BlockKind`（对应 `NodeKind`，但段落持 `Vec<TextLine>`、列表项持预生成 `marker`、代码块持由 `spans` 排版得到的 `lines` 等）、`HeaderFooter`、`DefinitionItemBlock`。
+- **`layout/mod.rs`**：核心 IR `Document { blocks: Vec<Block> }`（**不分页**）。`Block { kind, style, splittable }` 与 `BlockKind`（对应 `NodeKind`，但段落持 `Vec<TextLine>`、列表项持预生成 `marker`、代码块持由 `spans` 排版得到的 `lines` 等）、`DefinitionItemBlock`。
 - **`from_ast.rs`**：`ast_to_layout` —— `Node` 树 → `Document`。
   - `convert_node_depth`（上限 `MAX_CONVERT_DEPTH`）把深度传递给所有递归调用，防止深树栈溢出。
   - 注入列表标记（`marker`：有序 `"1."` / 无序 `"●"` / 任务 `"☐ "`）；聚合脚注到正文末尾。

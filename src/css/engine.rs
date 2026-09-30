@@ -1472,6 +1472,18 @@ fn extract_page_config_from_css(css: &str) -> PageConfig {
                         "size" => {
                             parse_page_size(&value, &mut config);
                         }
+                        "header-align" => {
+                            config.header_align = Some(parse_text_align(&value));
+                        }
+                        "footer-align" => {
+                            config.footer_align = Some(parse_text_align(&value));
+                        }
+                        "header-font-family" => {
+                            config.header_font_family = Some(parse_font_family(&value));
+                        }
+                        "footer-font-family" => {
+                            config.footer_font_family = Some(parse_font_family(&value));
+                        }
                         _ => {}
                     }
                 }
@@ -1569,6 +1581,18 @@ fn merge_page_config(target: &mut PageConfig, source: PageConfig) {
     }
     if source.footer_font_size.is_some() {
         target.footer_font_size = source.footer_font_size;
+    }
+    if source.header_align.is_some() {
+        target.header_align = source.header_align;
+    }
+    if source.footer_align.is_some() {
+        target.footer_align = source.footer_align;
+    }
+    if source.header_font_family.is_some() {
+        target.header_font_family = source.header_font_family;
+    }
+    if source.footer_font_family.is_some() {
+        target.footer_font_family = source.footer_font_family;
     }
 }
 
