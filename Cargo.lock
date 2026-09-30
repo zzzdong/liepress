@@ -1465,9 +1465,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liecharts"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c15649e1eff8c412e4129316ec92ee3238ec359932bbc01b2571d65fd6f22bfd"
+checksum = "70afc70fd0865c383d5aef5210b97898ec98552bfa9791e5c0386857d687468c"
 dependencies = [
  "anyhow",
  "clap",
@@ -1498,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "liepress"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64 0.23.1",
  "clap",

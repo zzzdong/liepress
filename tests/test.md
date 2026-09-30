@@ -9,7 +9,7 @@
 - 作者：zzzdong
 - 仓库：<https://github.com/zzzdong/liepress>
 - 许可：MIT OR Apache-2.0
-- 当前版本：v0.2.1
+- 当前版本：v0.2.2
 
 > 本文件用于端到端验证 liepress 的生成能力，同时如实记录项目的实际功能边界。
 
@@ -397,7 +397,7 @@ this is not a valid diagram
 
 ## 13. 项目实际情况记录
 
-以下为 liepress 生成能力的**真实边界**（截至 v0.2.1，已与代码核对）：
+以下为 liepress 生成能力的**真实边界**（截至 v0.2.2，已与代码核对）：
 
 **已实现**
 
@@ -419,10 +419,14 @@ this is not a valid diagram
 - 代码块 / 长段落跨页分页：PDF 后端按行切分超高块，续页保持背景 / 缩进上下文。
 - 居中容器 `<center>`、内联 `<style>` 标签自定义类。
 - CSS 样式系统：选择器权重计算与层叠，支持 `-s/--style` 外部 CSS 文件。
-- 页面配置：`@page` 规则（`size` / `margin`）与命令行参数
+- 页面配置：`@page` 规则（`size` / `margin` / `header-align` / `footer-align` /
+  `header-font-family` / `footer-font-family`）与命令行参数
   （`-p/--page-size`、`--page-width/height`、`--margin*`、`--landscape`）；
-  页眉 / 页脚由 `--header` / `--footer`（`{page}` / `{total}` 模板）与 `--no-page-number` 控制。
-- 自动字体探测：默认开启，按文档语言选择字体（中文 → 仿宋 FangSong），`--no-auto-font` 可关闭。
+  页眉 / 页脚由 `--header` / `--footer`（`{page}` / `{total}` 模板）、
+  `--header-font` / `--footer-font` 与 `--no-page-number` 控制，
+  排版时自动预留其高度、避免与正文重叠。
+- 正文字体：`--font-family`（逗号分隔回退列表）直接指定；自动字体探测默认开启，
+  按文档语言选择字体（中文 → 仿宋 FangSong），`--no-auto-font` 可关闭。
 - 字体子集化由 krilla 内部完成，无需手动处理。
 - 标准输入 / 输出：`-i -` 读 stdin，`-o -` 写 stdout；stdin 场景用 `-F/--from` 指定输入格式，
   图片需以 data URI 提供。
@@ -437,4 +441,4 @@ this is not a valid diagram
 
 ---
 
-*liepress v0.2.1 — 用 Markdown 生成文档*
+*liepress v0.2.2 — 用 Markdown 生成文档*
