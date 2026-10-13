@@ -29,7 +29,7 @@ html5ever = "0.40"
 image = { version = "0.25" }
 liecharts = { version = "0.2.3", optional = true }
 liemermaid = { version = "0.2.1", optional = true }
-lievisual = "0.2"
+lievisual = "0.3"
 lightningcss = { version = "1.0.0-alpha.72", default-features = false }
 kamadak-exif = "0.6"
 krilla = "0.8"

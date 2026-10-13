@@ -17,11 +17,11 @@
 /// 故下游既可写 `crate::ast::TextAlign` 也可写 `lievisual::text::TextAlign`，
 /// 二者为同一类型。
 pub use crate::ast::TextAlign;
+use lievisual::FontWidth;
 pub use lievisual::text::{
     FontStyle, FontWeight, Glyph, LineMetrics, TextBaseline, TextDecoration, TextLayout, TextLine,
     TextRun, TextStyle,
 };
-use lievisual::{FontWidth, geometry::Rect as LRect};
 use std::sync::Arc;
 
 // 已注册字体的原始字节缓存（供 PdfRenderer 等需要嵌入字体的后端使用）。
@@ -295,7 +295,6 @@ pub fn layout_text_with_ranges(
             lines: Vec::new(),
             width: 0.0,
             height: 0.0,
-            ink_bounds: LRect::new(0.0, 0.0, 0.0, 0.0),
         };
     }
     let lv_align = align;

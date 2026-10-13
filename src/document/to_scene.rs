@@ -81,15 +81,9 @@ impl SceneBuilder {
     }
 
     fn push(&mut self, el: Element, z: i32) {
-        self.nodes.push(SceneNode {
-            element: el,
-            z_index: z,
-            transform: None,
-            opacity: 1.0,
-            visible: true,
-            clip: None,
-            name: None,
-        });
+        // 用构造函数而非结构体字面量：`SceneNode` 会随 lievisual 演进而新增字段
+        // （blend_mode / mask / filter …），字面量会因此编译失败。
+        self.nodes.push(SceneNode::new(el).with_z(z));
     }
 
     /// 矩形（填充 + 可选描边）。
@@ -180,8 +174,8 @@ impl SceneBuilder {
         // 行内背景：逐 run 测量宽度并绘制矩形（顺序累积 x 偏移）。
         // 垂直对齐文本 em 盒（基线 - ascent 到基线 + descent），与 PDF 后端一致；
         // 从行顶起画会因行高 leading 使背景整体偏上。
-        let asc = line.metrics.ascent as f64;
-        let desc = line.metrics.descent as f64;
+        let asc = line.metrics.ascent() as f64;
+        let desc = line.metrics.descent() as f64;
         let mut cursor = 0.0_f64;
         for run in &line.runs {
             let fs = run.font_size as f64;
@@ -279,7 +273,9 @@ impl SceneBuilder {
         );
         let span = RichSpan::new(text.to_string(), lv_style.clone());
         let prelayout = lievisual::text::layout_text(std::slice::from_ref(&span), None);
-        let bounds = prelayout.ink_bounds;
+        // lievisual 0.3 移除逐字形墨迹盒（`ink_bounds`）：改用字体级 cap 盒
+        // （`baseline − cap_height → baseline`）的左上角定位。
+        let bounds = prelayout.cap_bounds();
         self.push(
             Element::Text {
                 spans: vec![span],

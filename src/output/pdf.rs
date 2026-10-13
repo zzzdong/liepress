@@ -761,9 +761,9 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             // 背景矩形垂直对齐文本 em 盒：em 盒顶 = 基线 - ascent。
             // 行高 > 字号时行顶到 em 盒顶有半个 leading，若从行顶起画
             // 背景会整体偏上、底部盖不住字形。
-            let ry = position.y as f32 + run.baseline_y - metrics.ascent - pad * 0.5;
+            let ry = position.y as f32 + run.baseline_y - metrics.ascent() - pad * 0.5;
             let rw = run.advance + pad * 2.0;
-            let rh = metrics.ascent + metrics.descent + pad;
+            let rh = metrics.ascent() + metrics.descent() + pad;
             let mut pb = PathBuilder::new();
             pb.move_to(rx, ry);
             pb.line_to(rx + rw, ry);
@@ -1724,9 +1724,8 @@ where
 
 /// 把一段文本行的坐标重新基准化到新原点（首行 y 归零），用于分页片段。
 ///
-/// `TextLine.bounds` / `ink_bounds` 是相对整段文本 layout origin 的坐标；按行切分到
-/// 不同页面后，每个片段需从自身原点开始绘制，故把 `bounds` / `ink_bounds` 的 y 分量
-/// 减去片段首行的偏移 `base_y`。
+/// `TextLine.bounds` 是相对整段文本 layout origin 的坐标；按行切分到不同页面后，
+/// 每个片段需从自身原点开始绘制，故把 `bounds` 的 y 分量减去片段首行的偏移 `base_y`。
 fn rebase_lines(lines: &[TextLine], base_y: f64) -> Vec<TextLine> {
     lines
         .iter()
@@ -1734,8 +1733,6 @@ fn rebase_lines(lines: &[TextLine], base_y: f64) -> Vec<TextLine> {
             let mut nl = line.clone();
             nl.bounds.y0 -= base_y;
             nl.bounds.y1 -= base_y;
-            nl.ink_bounds.y0 -= base_y;
-            nl.ink_bounds.y1 -= base_y;
             nl
         })
         .collect()
@@ -1839,12 +1836,15 @@ mod pagination_tests {
             runs: Vec::new(),
             bounds: Rect::new(0.0, y, 100.0, y + 14.0),
             metrics: LineMetrics {
-                ascent: 0.0,
-                descent: 0.0,
-                baseline: 0.0,
                 line_height: 14.0,
+                baseline: 0.0,
+                block_min: 0.0,
+                block_max: 14.0,
+                content_block_min: 0.0,
+                content_block_max: 14.0,
+                cap_height: 0.0,
+                x_height: 0.0,
             },
-            ink_bounds: Rect::new(0.0, y, 100.0, y + 14.0),
         }
     }
 
