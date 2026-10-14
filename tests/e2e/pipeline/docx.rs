@@ -25,7 +25,7 @@ fn docx_media(bytes: &[u8]) -> Vec<String> {
     (0..zip.len())
         .filter_map(|i| {
             let f = zip.by_index(i).ok()?;
-            let name = f.name().to_string();
+            let name = f.name().unwrap().to_string();
             name.starts_with("word/media/").then_some(name)
         })
         .collect()
