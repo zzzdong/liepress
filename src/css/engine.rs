@@ -19,6 +19,7 @@ use std::collections::HashMap;
 ///
 /// 管理样式表的解析和样式解析。
 /// 支持内置样式 + 用户 CSS 覆盖 + 内联样式。
+#[derive(Clone)]
 pub struct CssEngine {
     /// 内置样式表（解析后的规则）
     builtin_rules: Vec<ResolvedRule>,

@@ -5,4 +5,4 @@
 
 pub mod engine;
 
-pub use engine::CssEngine;
+pub use engine::{AncestorInfo, CssEngine};

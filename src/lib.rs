@@ -12,6 +12,9 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
+use crate::dom::HtmlDocument;
+use crate::dom::{HtmlElement, HtmlNode, HtmlTag};
+
 pub use ast::PageConfig;
 pub use document::from_ast::ast_to_layout;
 pub use document::layout::Document;
@@ -265,10 +268,14 @@ fn render_pdf(document: &Document, settings: &PageSettings) -> crate::error::Res
 
 // ─── 内部文件读取辅助函数 ─────────────────────────────────
 
-fn read_markdown_file(path: &Path) -> crate::error::Result<(String, Option<PathBuf>)> {
-    let markdown = fs::read_to_string(path)?;
+/// 读取 Markdown / HTML 源文件，返回 (内容, 图片资源的相对基准目录)。
+///
+/// Markdown 与 HTML 两条输入路径在这里完全一致：相对路径的本地图片由
+/// `ResourceResolver` 依据 `base_dir` 内联为 data URI。
+fn read_source_file(path: &Path) -> crate::error::Result<(String, Option<PathBuf>)> {
+    let content = fs::read_to_string(path)?;
     let base_dir = path.parent().map(|p| p.to_path_buf());
-    Ok((markdown, base_dir))
+    Ok((content, base_dir))
 }
 
 // ─── 自动字体推断 ────────────────────────────────────────
@@ -281,6 +288,36 @@ enum ScriptRange {
     Korean,
     Latin,
     Other,
+}
+
+/// 递归统计元素子树内**正文文本**的脚本分布。
+///
+/// 跳过的子树：
+/// - `<pre>` / `<code>`：编程语言几乎全是拉丁字符，计入会淹没正文；
+/// - `<style>`：元素节点在抽取 `style_sheets` 后仍留在 DOM 里，CSS 文本同理；
+/// - `Unknown`：未建模标签（典型 `<script>` / `<svg>` / `<math>`），其文本不是正文。
+///
+/// 代价：自定义标签（`<my-widget>中文</my-widget>`）的文本不计入。
+fn count_scripts(el: &HtmlElement, counts: &mut std::collections::HashMap<ScriptRange, usize>) {
+    if matches!(
+        el.tag,
+        HtmlTag::Pre | HtmlTag::Code | HtmlTag::Style | HtmlTag::Unknown
+    ) {
+        return;
+    }
+    for child in &el.children {
+        match child {
+            HtmlNode::Text(text) => {
+                for c in text.chars() {
+                    let range = ScriptRange::from_char(c);
+                    if range != ScriptRange::Other {
+                        *counts.entry(range).or_insert(0) += 1;
+                    }
+                }
+            }
+            HtmlNode::Element(elem) => count_scripts(elem, counts),
+        }
+    }
 }
 
 impl ScriptRange {
@@ -319,48 +356,14 @@ impl ScriptRange {
     }
 }
 
-/// 从 Markdown 文本中推断主要语言，返回推荐字体列表
-fn infer_font_family(markdown: &str) -> Vec<String> {
+/// 从**已解析的 DOM** 推断文档主要语言，返回推荐字体列表。
+///
+/// 走 DOM 而不是原始 Markdown 文本：结构信息（代码块、行内代码、链接 URL、
+/// 标题/列表标记）在 DOM 里是显式的，无需再用手写状态机去猜。
+/// 只统计文本节点——属性里可能有 `embed_images` 内联的 base64 图片数据。
+fn infer_font_family(doc: &HtmlDocument) -> Vec<String> {
     let mut counts = std::collections::HashMap::new();
-    let mut in_code = false;
-    let mut in_link = false;
-
-    for line in markdown.lines() {
-        // 简单状态机：代码块用 ``` 包围
-        if line.trim().starts_with("```") {
-            in_code = !in_code;
-            continue;
-        }
-        if in_code {
-            continue;
-        }
-
-        // 跳过标题标记和列表标记
-        let content = line.trim_start().trim_start_matches('#').trim_start();
-
-        for c in content.chars() {
-            // 跳过链接内容 [text](url)
-            if c == '[' {
-                in_link = true;
-                continue;
-            }
-            if in_link && c == ']' {
-                in_link = false;
-                continue;
-            }
-            if in_link {
-                continue;
-            }
-            if c == '`' {
-                continue;
-            }
-
-            let range = ScriptRange::from_char(c);
-            if range != ScriptRange::Other {
-                *counts.entry(range).or_insert(0) += 1;
-            }
-        }
-    }
+    count_scripts(&doc.root, &mut counts);
 
     let total: usize = counts.values().sum();
     if total == 0 {
@@ -446,76 +449,59 @@ fn infer_font_family(markdown: &str) -> Vec<String> {
 
 // ─── CSS 解析 ───────────────────────────────────────────────
 
-fn resolve_user_css(
-    options: &ConvertOptions,
-    markdown: Option<&str>,
-) -> crate::error::Result<String> {
+/// 收集用户显式提供的 CSS（`css_file` + `options.user_css`，后者优先）。
+///
+/// 只包含用户提供的部分：文档内 `<style>` 由 [`html_to_styled_node`] 合并，
+/// 字体兜底规则也由它按最低优先级拼在最前面。
+fn collect_user_css(options: &ConvertOptions) -> crate::error::Result<String> {
     let file_css = match &options.css_file {
         Some(path) => fs::read_to_string(path)?,
         None => String::new(),
     };
 
-    // 判断用户是否已经显式设置了 font-family（通过 CSS 字符串）
-    // 注意：这里做简单启发式判断。更严谨的做法是在 CSS 解析阶段
-    // 检查是否有 body { font-family: ... } 规则。当前先以显式 font_family 为首要考虑。
-    let user_has_font_css =
-        file_css.contains("font-family") || options.user_css.contains("font-family");
+    let parts: Vec<&str> = [options.user_css.as_str(), file_css.as_str()]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
 
-    // 优先级：用户 CSS > auto-font > font_family
-    let font_css = if user_has_font_css || !options.font_family.is_empty() {
-        if !options.font_family.is_empty() {
-            let families: Vec<String> = options
-                .font_family
-                .iter()
-                .map(|f| {
-                    if f.contains(' ') {
-                        format!("\"{}\"", f)
-                    } else {
-                        f.clone()
-                    }
-                })
-                .collect();
-            format!("body {{ font-family: {}; }}\n", families.join(", "))
-        } else {
-            String::new()
-        }
-    } else if options.auto_font {
-        if let Some(md) = markdown {
-            let families = infer_font_family(md);
-            format!(
-                "body {{ font-family: {}; }}\n",
-                families
-                    .iter()
-                    .map(|f| {
-                        if f.contains(' ') {
-                            format!("\"{}\"", f)
-                        } else {
-                            f.clone()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
+    Ok(parts.join("\n"))
+}
 
-    let parts: Vec<&str> = [
-        font_css.as_str(),
-        options.user_css.as_str(),
-        file_css.as_str(),
-    ]
-    .into_iter()
-    .filter(|s| !s.is_empty())
-    .collect();
+/// 把字体家族列表渲染成 `body { font-family: ... }` 规则（含空格的名称加引号）。
+fn font_family_css(families: &[String]) -> String {
+    let list = families
+        .iter()
+        .map(|f| {
+            if f.contains(' ') {
+                format!("\"{}\"", f)
+            } else {
+                f.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("body {{ font-family: {}; }}\n", list)
+}
 
-    if parts.is_empty() {
-        Ok(String::new())
-    } else {
-        Ok(parts.join("\n"))
+/// 判断是否注入字体兜底规则，并返回该规则（优先级最低）。
+///
+/// 优先级：显式 `font_family` > auto-font；用户 CSS（含文档 `<style>`）已为 `body`
+/// 指定字体族时不再推断。注意这里判断的是**解析结果**而非 CSS 文本是否包含
+/// `font-family` 字面量——后者会被注释/字符串里的字面量误判。
+fn font_fallback_css(
+    user_sets_body_font: bool,
+    options: &ConvertOptions,
+    doc: Option<&HtmlDocument>,
+) -> String {
+    if !options.font_family.is_empty() {
+        return font_family_css(&options.font_family);
+    }
+    if user_sets_body_font || !options.auto_font {
+        return String::new();
+    }
+    match doc {
+        Some(doc) => font_family_css(&infer_font_family(doc)),
+        None => String::new(),
     }
 }
 
@@ -526,20 +512,8 @@ fn resolve_user_css(
 /// 管线：Markdown → HTML → HtmlDocument → Styled Node → Document → PDF
 /// 其中分页（切页、跨页表格）由 PDF 后端独立完成。
 pub fn markdown_to_pdf(markdown: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
-    let user_css = resolve_user_css(options, Some(markdown))?;
-    let resolver = dom::ResourceResolver::new(None);
-    let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    render_pdf(&document, &page_settings)
+    let (node, page_settings) = prepare_styled(Source::Markdown(markdown), None, options)?;
+    render_pdf(&ast_to_layout(&node, &page_settings), &page_settings)
 }
 
 /// Markdown 文件 → PDF（自动将本地图片嵌入为 base64）
@@ -547,21 +521,9 @@ pub fn markdown_file_to_pdf(
     path: &Path,
     options: &ConvertOptions,
 ) -> crate::error::Result<Vec<u8>> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    let user_css = resolve_user_css(options, Some(&markdown))?;
-    let resolver = dom::ResourceResolver::new(base_dir);
-    let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    render_pdf(&document, &page_settings)
+    let (markdown, base_dir) = read_source_file(path)?;
+    let (node, page_settings) = prepare_styled(Source::Markdown(&markdown), base_dir, options)?;
+    render_pdf(&ast_to_layout(&node, &page_settings), &page_settings)
 }
 
 // ─── HTML → PDF ─────────────────────────────────────────────
@@ -571,116 +533,55 @@ pub fn markdown_file_to_pdf(
 /// 直接将 HTML 内容转换为 PDF，不经过 Markdown 解析。
 /// 适用于已有 HTML 文件的场景。
 pub fn html_to_pdf(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
-    let user_css = resolve_user_css(options, None)?;
-    let resolver = dom::ResourceResolver::new(None);
-    let doc = dom::parse_html_with_resolver(html, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    render_pdf(&document, &page_settings)
+    let (node, page_settings) = prepare_styled(Source::Html(html), None, options)?;
+    render_pdf(&ast_to_layout(&node, &page_settings), &page_settings)
 }
 
 /// HTML 文件 → PDF（自动将本地图片嵌入为 base64）
 pub fn html_file_to_pdf(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
-    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
-    let base_dir = path.parent().map(|p| p.to_path_buf());
-    let resolver = dom::ResourceResolver::new(base_dir);
-    let doc = dom::parse_html_with_resolver(&html, &resolver);
-    let user_css = resolve_user_css(options, None)?;
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    render_pdf(&document, &page_settings)
+    let (html, base_dir) = read_source_file(path)?;
+    let (node, page_settings) = prepare_styled(Source::Html(&html), base_dir, options)?;
+    render_pdf(&ast_to_layout(&node, &page_settings), &page_settings)
 }
 
 // ─── SVG 输出 ──────────────────────────────────────────────────
 
 /// Markdown → SVG（不分页长图）
 pub fn markdown_to_svg(markdown: &str, options: &ConvertOptions) -> crate::error::Result<String> {
-    let user_css = resolve_user_css(options, Some(markdown))?;
-    let resolver = dom::ResourceResolver::new(None);
-    let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    Ok(output::svg::document_to_svg(&document, &page_settings))
+    let (node, page_settings) = prepare_styled(Source::Markdown(markdown), None, options)?;
+    Ok(output::svg::document_to_svg(
+        &ast_to_layout(&node, &page_settings),
+        &page_settings,
+    ))
 }
 
 /// HTML → SVG（不分页长图）
 pub fn html_to_svg(html: &str, options: &ConvertOptions) -> crate::error::Result<String> {
-    let user_css = resolve_user_css(options, None)?;
-    let resolver = dom::ResourceResolver::new(None);
-    let doc = dom::parse_html_with_resolver(html, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    Ok(output::svg::document_to_svg(&document, &page_settings))
+    let (node, page_settings) = prepare_styled(Source::Html(html), None, options)?;
+    Ok(output::svg::document_to_svg(
+        &ast_to_layout(&node, &page_settings),
+        &page_settings,
+    ))
 }
 
 /// Markdown 文件 → SVG（自动内联本地图片）。
 pub fn markdown_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::error::Result<String> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    let user_css = resolve_user_css(options, Some(&markdown))?;
-    let resolver = dom::ResourceResolver::new(base_dir);
-    let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    Ok(output::svg::document_to_svg(&document, &page_settings))
+    let (markdown, base_dir) = read_source_file(path)?;
+    let (node, page_settings) = prepare_styled(Source::Markdown(&markdown), base_dir, options)?;
+    Ok(output::svg::document_to_svg(
+        &ast_to_layout(&node, &page_settings),
+        &page_settings,
+    ))
 }
 
 /// HTML 文件 → SVG（自动内联本地图片）。
 pub fn html_file_to_svg(path: &Path, options: &ConvertOptions) -> crate::error::Result<String> {
-    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
-    let resolver = dom::ResourceResolver::new(path.parent().map(|p| p.to_path_buf()));
-    let doc = dom::parse_html_with_resolver(&html, &resolver);
-    let user_css = resolve_user_css(options, None)?;
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    Ok(output::svg::document_to_svg(&document, &page_settings))
+    let (html, base_dir) = read_source_file(path)?;
+    let (node, page_settings) = prepare_styled(Source::Html(&html), base_dir, options)?;
+    Ok(output::svg::document_to_svg(
+        &ast_to_layout(&node, &page_settings),
+        &page_settings,
+    ))
 }
 
 // ─── PNG 输出 ──────────────────────────────────────────────────
@@ -696,38 +597,14 @@ pub fn markdown_to_png_dpi(
     options: &ConvertOptions,
     dpi: f32,
 ) -> crate::error::Result<Vec<u8>> {
-    let user_css = resolve_user_css(options, Some(markdown))?;
-    let resolver = dom::ResourceResolver::new(None);
-    let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    output::png::document_to_png(&document, &page_settings, dpi)
+    let (node, page_settings) = prepare_styled(Source::Markdown(markdown), None, options)?;
+    output::png::document_to_png(&ast_to_layout(&node, &page_settings), &page_settings, dpi)
 }
 
 /// HTML → PNG（不分页长图，默认 150 DPI，保证清晰度）
 pub fn html_to_png(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
-    let user_css = resolve_user_css(options, None)?;
-    let resolver = dom::ResourceResolver::new(None);
-    let doc = dom::parse_html_with_resolver(html, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    output::png::document_to_png(&document, &page_settings, 150.0)
+    let (node, page_settings) = prepare_styled(Source::Html(html), None, options)?;
+    output::png::document_to_png(&ast_to_layout(&node, &page_settings), &page_settings, 150.0)
 }
 
 /// Markdown 文件 → PNG（自动内联本地图片，默认 150 DPI）。
@@ -744,40 +621,16 @@ pub fn markdown_file_to_png_dpi(
     options: &ConvertOptions,
     dpi: f32,
 ) -> crate::error::Result<Vec<u8>> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    let user_css = resolve_user_css(options, Some(&markdown))?;
-    let resolver = dom::ResourceResolver::new(base_dir);
-    let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    output::png::document_to_png(&document, &page_settings, dpi)
+    let (markdown, base_dir) = read_source_file(path)?;
+    let (node, page_settings) = prepare_styled(Source::Markdown(&markdown), base_dir, options)?;
+    output::png::document_to_png(&ast_to_layout(&node, &page_settings), &page_settings, dpi)
 }
 
 /// HTML 文件 → PNG（自动内联本地图片，默认 150 DPI）。
 pub fn html_file_to_png(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
-    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
-    let resolver = dom::ResourceResolver::new(path.parent().map(|p| p.to_path_buf()));
-    let doc = dom::parse_html_with_resolver(&html, &resolver);
-    let user_css = resolve_user_css(options, None)?;
-    let (document, page_settings) = html_to_layout(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.clone(),
-    )?;
-    output::png::document_to_png(&document, &page_settings, 150.0)
+    let (html, base_dir) = read_source_file(path)?;
+    let (node, page_settings) = prepare_styled(Source::Html(&html), base_dir, options)?;
+    output::png::document_to_png(&ast_to_layout(&node, &page_settings), &page_settings, 150.0)
 }
 
 // ─── DOCX 输出 ─────────────────────────────────────────────────
@@ -787,19 +640,7 @@ pub fn html_file_to_png(path: &Path, options: &ConvertOptions) -> crate::error::
 /// 字符串输入无文件路径上下文，无法解析相对路径本地图片；
 /// 若需嵌入本地图片，请使用 [`markdown_file_to_docx`]。
 pub fn markdown_to_docx(markdown: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
-    let user_css = resolve_user_css(options, Some(markdown))?;
-    let resolver = dom::ResourceResolver::new(None);
-    let doc = dom::markdown_to_dom_with_resolver(markdown, &resolver);
-    let (node, page_settings) = html_to_styled_node(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.as_ref(),
-    )?;
+    let (node, page_settings) = prepare_styled(Source::Markdown(markdown), None, options)?;
     output::docx::node_to_docx(&node, &page_settings)
 }
 
@@ -808,20 +649,8 @@ pub fn markdown_file_to_docx(
     path: &Path,
     options: &ConvertOptions,
 ) -> crate::error::Result<Vec<u8>> {
-    let (markdown, base_dir) = read_markdown_file(path)?;
-    let user_css = resolve_user_css(options, Some(&markdown))?;
-    let resolver = dom::ResourceResolver::new(base_dir);
-    let doc = dom::markdown_to_dom_with_resolver(&markdown, &resolver);
-    let (node, page_settings) = html_to_styled_node(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.as_ref(),
-    )?;
+    let (markdown, base_dir) = read_source_file(path)?;
+    let (node, page_settings) = prepare_styled(Source::Markdown(&markdown), base_dir, options)?;
     output::docx::node_to_docx(&node, &page_settings)
 }
 
@@ -830,45 +659,64 @@ pub fn markdown_file_to_docx(
 /// 字符串输入无文件路径上下文，无法解析相对路径本地图片；
 /// 若需嵌入本地图片，请使用 [`html_file_to_docx`]。
 pub fn html_to_docx(html: &str, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
-    let user_css = resolve_user_css(options, None)?;
-    let resolver = dom::ResourceResolver::new(None);
-    let doc = dom::parse_html_with_resolver(html, &resolver);
-    let (node, page_settings) = html_to_styled_node(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.as_ref(),
-    )?;
+    let (node, page_settings) = prepare_styled(Source::Html(html), None, options)?;
     output::docx::node_to_docx(&node, &page_settings)
 }
 
 /// HTML 文件 → DOCX（自动将本地图片嵌入为 base64）。
 pub fn html_file_to_docx(path: &Path, options: &ConvertOptions) -> crate::error::Result<Vec<u8>> {
-    let html = std::fs::read_to_string(path).map_err(crate::error::Error::IoError)?;
-    let base_dir = path.parent().map(|p| p.to_path_buf());
-    let resolver = dom::ResourceResolver::new(base_dir);
-    let doc = dom::parse_html_with_resolver(&html, &resolver);
-    let user_css = resolve_user_css(options, None)?;
-    let (node, page_settings) = html_to_styled_node(
-        &doc,
-        if user_css.is_empty() {
-            None
-        } else {
-            Some(&user_css)
-        },
-        options.strict,
-        options.page_config.as_ref(),
-    )?;
+    let (html, base_dir) = read_source_file(path)?;
+    let (node, page_settings) = prepare_styled(Source::Html(&html), base_dir, options)?;
     output::docx::node_to_docx(&node, &page_settings)
 }
 
 // ─── 内部：HTML → Document 公共逻辑 ──────────────────────────────
 
-/// HtmlDocument → Styled AST Node 的核心转换逻辑（供 DOCX 等语义输出使用）。
+/// 输入源：Markdown 或 HTML 原始文本。
+///
+/// 两条输入路径在 DOM 构造处汇合，之后共用同一条管线。
+#[derive(Debug, Clone, Copy)]
+enum Source<'a> {
+    Markdown(&'a str),
+    Html(&'a str),
+}
+
+impl<'a> Source<'a> {
+    /// 是否启用 auto-font：只对 Markdown 源推断字体。
+    ///
+    /// HTML 源按约定不做推断（保持内置 `serif`），避免改变既有 HTML 输入的排版。
+    fn auto_font(&self) -> bool {
+        matches!(self, Source::Markdown(_))
+    }
+}
+
+/// 空串视作「没有用户 CSS」，避免下游再重复一次 `is_empty` 判断。
+fn non_empty_css(css: &str) -> Option<&str> {
+    if css.is_empty() { None } else { Some(css) }
+}
+
+/// 所有公开入口的公共前处理：合并 CSS → 构造 DOM → Styled AST + 页面设置。
+///
+/// 分页后端（PDF/SVG/PNG）在此基础上再调 [`ast_to_layout`]，语义后端（DOCX）
+/// 直接消费 Styled AST；二者共享同一份富化产物与页面几何。
+fn prepare_styled(
+    source: Source<'_>,
+    base_dir: Option<PathBuf>,
+    options: &ConvertOptions,
+) -> crate::error::Result<(crate::ast::Node, PageSettings)> {
+    let user_css = collect_user_css(options)?;
+    let resolver = dom::ResourceResolver::new(base_dir);
+    let doc = match source {
+        Source::Markdown(md) => dom::markdown_to_dom_with_resolver(md, &resolver),
+        Source::Html(html) => dom::parse_html_with_resolver(html, &resolver),
+    };
+    html_to_styled_node(&doc, non_empty_css(&user_css), options, source.auto_font())
+}
+
+/// HtmlDocument → Styled AST Node 的核心转换逻辑。
+///
+/// 所有输出后端（PDF/SVG/PNG/DOCX）共用的**唯一**入口，CSS 合并、字体兜底、
+/// 页面几何、AST 富化都只在这里做一遍，避免各后端各自实现导致漂移。
 ///
 /// 图片内嵌已由 [`crate::dom::markdown_to_dom_with_resolver`]（Markdown）或
 /// [`crate::dom::parser::parse_html_with_resolver`]（HTML）在 DOM 层完成，
@@ -876,15 +724,21 @@ pub fn html_file_to_docx(path: &Path, options: &ConvertOptions) -> crate::error:
 fn html_to_styled_node(
     doc: &crate::dom::HtmlDocument,
     user_css: Option<&str>,
-    strict: bool,
-    page_config: Option<&PageConfig>,
+    options: &ConvertOptions,
+    auto_font: bool,
 ) -> crate::error::Result<(crate::ast::Node, PageSettings)> {
     let builtin_css = ast::presets::DEFAULT_CSS;
     let mut engine =
         css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
 
+    // 严格模式必须在解析用户 CSS **之前**开启：`with_user_css` 依据该标志决定
+    // 解析失败是返回错误还是静默忽略，放在之后设置等于永不生效。
+    if options.strict {
+        engine = engine.with_strict_mode(true);
+    }
+
     // 合并所有「用户级」CSS 到单次 with_user_css 调用，避免文档 <style> 规则被 user_css 覆盖。
-    // 优先级：文档 <style> < 用户 CSS（用户级覆盖文档级），故 user_css 置于末尾。
+    // 优先级（低 → 高）：字体兜底 < 文档 <style> < 用户 CSS。
     let mut merged_user_css = String::new();
     for sheet in &doc.style_sheets {
         merged_user_css.push_str(sheet);
@@ -894,23 +748,54 @@ fn html_to_styled_node(
         merged_user_css.push_str(css);
         merged_user_css.push('\n');
     }
+
+    // 判断用户是否已为 `body` 指定字体族：用引擎真实解析，而不是对 CSS 文本做
+    // `contains("font-family")` 的启发式——后者会被注释/字符串里的字面量误判，
+    // 也认不出 `html { font-family }` 这类经继承生效的来源。
+    let default_style = ast::Style::default();
+    let body_ancestors = [css::AncestorInfo {
+        tag: "html".to_string(),
+        classes: Vec::new(),
+        id: None,
+    }];
+    let baseline_font = engine
+        .resolve_style("body", &[], None, &body_ancestors, &default_style)
+        .font_family;
+    let user_sets_body_font = engine
+        .clone()
+        .with_user_css(&merged_user_css)
+        .map_err(crate::error::Error::CssParseError)?
+        .resolve_style("body", &[], None, &body_ancestors, &default_style)
+        .font_family
+        != baseline_font;
+
+    // 字体兜底规则置于最前（最低优先级），用户 CSS 与文档 <style> 均可覆盖它。
+    // HTML 源 `auto_font = false` → 传 `None`，即完全不推断。
+    let font_css = font_fallback_css(
+        user_sets_body_font,
+        options,
+        if auto_font { Some(doc) } else { None },
+    );
+    if !font_css.is_empty() {
+        merged_user_css.insert_str(0, &font_css);
+    }
     if !merged_user_css.trim().is_empty() {
         engine = engine
             .with_user_css(&merged_user_css)
             .map_err(crate::error::Error::CssParseError)?;
     }
-    if strict {
-        engine = engine.with_strict_mode(true);
-    }
-    let default_style = ast::Style::default();
+
     let root_style = engine.resolve_style("html", &[], None, &[], &default_style);
     engine.set_root_font_size(root_style.font_size_pt);
-    // 百分比基准 = 页面内容宽度（显式 PageConfig 优先，与 PDF 路径一致）。
-    apply_page_metrics(&mut engine, page_config);
+    // 百分比基准 = 页面内容宽度（显式 PageConfig 优先）。
+    apply_page_metrics(&mut engine, options.page_config.as_ref());
     let mut node = dom::to_ast::html_to_styled_nodes(doc, &engine);
-    // AST 富化：外绘 + 语法高亮（与 PDF 路径共享同一份产物，保证 DOCX 也有图表/高亮）。
+    // AST 富化：外绘 + 语法高亮（与分页路径共享同一份产物，保证 DOCX 也有图表/高亮）。
     // 页面几何与 `%` 基准一致：取 `@page` 与显式配置的合并结果。
-    let page_settings = PageSettings::from(merged_page_config(engine.page_config(), page_config));
+    let page_settings = PageSettings::from(merged_page_config(
+        engine.page_config(),
+        options.page_config.as_ref(),
+    ));
     enrich::enrich_ast(&mut node, &page_settings);
     Ok((node, page_settings))
 }
@@ -983,78 +868,28 @@ fn merged_page_config(engine_page: &PageConfig, page_config: Option<&PageConfig>
     pc
 }
 
-/// HtmlDocument → Document 的核心转换逻辑
-///
-/// 被所有 `*_to_pdf`/`*_to_svg`/`*_to_png` 入口共享。源 IR 不分页，分页由各输出后端负责。
-/// 输入已是管线 Layer 1 的 `HtmlDocument`（Markdown/HTML 两个输入源在此汇合）。
-///
-/// 图片内嵌已由 [`crate::dom::markdown_to_dom_with_resolver`]（Markdown）或
-/// [`crate::dom::parser::parse_html_with_resolver`]（HTML）在 DOM 层完成。
-fn html_to_layout(
-    doc: &crate::dom::HtmlDocument,
-    user_css: Option<&str>,
-    strict: bool,
-    page_config: Option<PageConfig>,
-) -> crate::error::Result<(Document, PageSettings)> {
-    // 1. 合并 CSS：内置样式 + <style> 标签 + 用户 CSS
-    let builtin_css = ast::presets::DEFAULT_CSS;
-    let mut engine =
-        css::engine::CssEngine::new(builtin_css).map_err(crate::error::Error::CssParseError)?;
-
-    // 合并所有「用户级」CSS 到单次 with_user_css 调用：
-    // `with_user_css` 会整体替换 user_rules，循环/分次调用会互相覆盖，
-    // 导致文档内 <style> 规则被后续 user_css 覆盖而失效。
-    // 优先级：文档 <style> < 用户 CSS（用户级覆盖文档级），故 user_css 置于末尾。
-    let mut merged_user_css = String::new();
-    for sheet in &doc.style_sheets {
-        merged_user_css.push_str(sheet);
-        merged_user_css.push('\n');
-    }
-    if let Some(css) = user_css.filter(|c| !c.is_empty()) {
-        merged_user_css.push_str(css);
-        merged_user_css.push('\n');
-    }
-    if !merged_user_css.trim().is_empty() {
-        engine = engine
-            .with_user_css(&merged_user_css)
-            .map_err(crate::error::Error::CssParseError)?;
-    }
-
-    if strict {
-        engine = engine.with_strict_mode(true);
-    }
-
-    let default_style = ast::Style::default();
-    let root_style = engine.resolve_style("html", &[], None, &[], &default_style);
-    engine.set_root_font_size(root_style.font_size_pt);
-    // 百分比基准 = 页面内容宽度（须在 Styled AST 转换前设置）。
-    apply_page_metrics(&mut engine, page_config.as_ref());
-
-    // 3. HtmlDocument → Styled Node Tree
-    let mut styled_node = dom::to_ast::html_to_styled_nodes(doc, &engine);
-
-    // 4. Styled Node → Document（源 IR，不分页）
-    // 页面几何 = CSS `@page` 与显式 `PageConfig` 合并后的结果（与 `%` 基准一致）。
-    // 若只取显式配置，仅通过 `@page { size/margin }` 设置页面时渲染端会退回
-    // A4 默认值，导致 `%` 宽度按 @page 计算而实际页面仍是 A4。
-    let page_settings = PageSettings::from(merged_page_config(
-        engine.page_config(),
-        page_config.as_ref(),
-    ));
-
-    // 3.5 AST 富化：外绘（mermaid/liecharts → 图片节点）+ 语法高亮。
-    // 必须在 `ast_to_layout` 之前完成，各后端（含 DOCX/HTML）据此消费同一份产物。
-    enrich::enrich_ast(&mut styled_node, &page_settings);
-
-    Ok((ast_to_layout(&styled_node, &page_settings), page_settings))
-}
-
 #[cfg(test)]
 mod pipeline_tests {
     use super::*;
 
     fn sample_markdown() -> &'static str {
         "# Hello World\n\nThis is a **test** paragraph with *italic* text.\n\n- item 1\n- item 2\n- [ ] unchecked task\n- [x] checked task\n\n> A blockquote\n\n| A | B |\n|---|---|\n| 1 | 2 |"
+    }
+
+    /// 取第一个含文本块的字体族，用于观察字体兜底 / 用户 CSS 的实际生效结果。
+    fn text_block_font(document: &Document) -> Vec<String> {
+        // `ast_to_layout` 产出的是顶层块列表（可能带一层 Document 容器）。
+        let mut candidates: Vec<&crate::document::layout::Block> = document.blocks.iter().collect();
+        if let Some(crate::document::layout::BlockKind::Document { children }) =
+            document.blocks.first().map(|b| &b.kind)
+        {
+            candidates = children.iter().collect();
+        }
+        candidates
+            .into_iter()
+            .find(|b| !b.text_content().trim().is_empty())
+            .map(|b| b.style.font_family.clone())
+            .expect("应存在含文本的块")
     }
 
     #[test]
@@ -1078,12 +913,9 @@ mod pipeline_tests {
         // 仅通过 <style> 中的 @page 设置页面（无显式 ConvertOptions::page_config）：
         // 渲染端 PageSettings 必须采用 @page 的尺寸/边距，而非退回 A4 默认值。
         let md = "<style>@page { size: A5; margin: 24pt; }</style>\n\n# Hi\n";
-        let resolver = dom::ResourceResolver::new(None);
-        let doc = dom::markdown_to_dom_with_resolver(md, &resolver);
         let options = ConvertOptions::default();
-        let (_document, settings) =
-            html_to_layout(&doc, None, options.strict, options.page_config.clone())
-                .expect("layout");
+        let (_node, settings) =
+            prepare_styled(Source::Markdown(md), None, &options).expect("layout");
         // A5 = 419.53 × 595.28 pt
         assert!(
             (settings.width_pt - 419.53).abs() < 0.5,
@@ -1106,15 +938,12 @@ mod pipeline_tests {
     fn test_explicit_page_config_overrides_at_page() {
         // 优先级：显式 PageConfig > @page。
         let md = "<style>@page { size: A5; margin: 24pt; }</style>\n\n# Hi\n";
-        let resolver = dom::ResourceResolver::new(None);
-        let doc = dom::markdown_to_dom_with_resolver(md, &resolver);
         let options = ConvertOptions::default().with_page_config(PageConfig {
             width: Some(300.0),
             ..Default::default()
         });
-        let (_document, settings) =
-            html_to_layout(&doc, None, options.strict, options.page_config.clone())
-                .expect("layout");
+        let (_node, settings) =
+            prepare_styled(Source::Markdown(md), None, &options).expect("layout");
         assert!(
             (settings.width_pt - 300.0).abs() < 0.5,
             "显式 width 应覆盖 @page，实际 {}",
@@ -1122,5 +951,131 @@ mod pipeline_tests {
         );
         // 未被显式覆盖的 margin 仍取 @page 值。
         assert!((settings.margin_top_pt - 24.0).abs() < 0.1);
+    }
+
+    // ─── 自动字体推断（auto-font）回归 ───
+    //
+    // 该路径此前零覆盖（e2e 全部 `with_auto_font(false)`），以下用例固定住
+    // 「推断只受正文影响」的语义。
+
+    /// 经 Markdown → DOM 推断字体（auto-font 的正式入口语义）。
+    fn infer(markdown: &str) -> Vec<String> {
+        let doc = dom::markdown_to_dom_with_resolver(markdown, &dom::ResourceResolver::new(None));
+        infer_font_family(&doc)
+    }
+
+    /// Latin 分支会在 CJK 字体之后再追加西文字体（含 Georgia），
+    /// 故「是否出现 Georgia」可区分「判为拉丁」与「判为 CJK」。
+    fn is_latin(fonts: &[String]) -> bool {
+        fonts.iter().any(|f| f == "Georgia")
+    }
+
+    #[test]
+    fn code_block_is_not_counted() {
+        // 代码块内容是拉丁字符，计入会把中文文档拉向 Latin。
+        let md = "中文一句话。\n\n```rust\nfn the_quick_brown_fox_jumps_over() {}\n```\n";
+        let fonts = infer(md);
+        assert!(!is_latin(&fonts), "代码块不应参与统计：{:?}", fonts);
+    }
+
+    #[test]
+    fn inline_code_is_not_counted() {
+        let md = "中文一句话。\n`let the_quick_brown_fox_jumps_over_the_lazy_dog = 1;`\n";
+        let fonts = infer(md);
+        assert!(!is_latin(&fonts), "行内代码不应参与统计：{:?}", fonts);
+    }
+
+    #[test]
+    fn link_url_is_not_counted() {
+        // URL 只存在于 href 属性，不参与统计。
+        let md = "中文一句话。\n[文档](https://example.com/very/long/english/path/for/testing)\n";
+        let fonts = infer(md);
+        assert!(!is_latin(&fonts), "URL 不应参与统计：{:?}", fonts);
+        // 链接**文字**仍应计入：整篇只有链接文字是日文时应判为日文。
+        let jp = infer("[これはペンです](https://example.com/a/b/c)\n");
+        assert_eq!(jp[0], "Noto Serif CJK JP", "链接文字应计入：{:?}", jp);
+    }
+
+    #[test]
+    fn style_element_text_is_not_counted() {
+        // <style> 节点仍留在 DOM 里（只有文本被复制进 style_sheets），必须跳过。
+        let md = "<style>/* comment */ body { color: red; }</style>\n\nこれはペンです。\n";
+        let fonts = infer(md);
+        assert_eq!(
+            fonts[0], "Noto Serif CJK JP",
+            "CSS 文本不应计入：{:?}",
+            fonts
+        );
+    }
+
+    #[test]
+    fn html_source_does_not_infer_font() {
+        // 约定：HTML 输入不做字体推断，保持内置 serif。
+        let html = "<p>这是一段中文正文。</p>";
+        let (node, settings) =
+            prepare_styled(Source::Html(html), None, &ConvertOptions::default()).expect("layout");
+        let font = text_block_font(&ast_to_layout(&node, &settings));
+        assert_eq!(font, vec!["serif".to_string(), "sans-serif".to_string()]);
+    }
+
+    // ─── 字体来源优先级 ───
+
+    #[test]
+    fn user_css_body_font_family_wins_over_auto_font() {
+        let opts = ConvertOptions::default().with_css("body { font-family: Georgia; }");
+        let (node, settings) =
+            prepare_styled(Source::Markdown("中文一句话。\n"), None, &opts).expect("layout");
+        let font = text_block_font(&ast_to_layout(&node, &settings));
+        assert_eq!(font, vec!["Georgia".to_string()], "实际 {:?}", font);
+    }
+
+    #[test]
+    fn font_family_only_in_comment_does_not_suppress_auto_font() {
+        // 修复前用 `css.contains("font-family")` 判断：注释里的字面量会误判为
+        // 「用户已指定字体」，导致 auto-font 被静默抑制（中文文档退回 serif）。
+        let opts = ConvertOptions::default()
+            .with_css("/* 注意：font-family 由主题提供 */\nbody { color: #333; }");
+        let (node, settings) =
+            prepare_styled(Source::Markdown("中文一句话。\n"), None, &opts).expect("layout");
+        let font = text_block_font(&ast_to_layout(&node, &settings));
+        assert!(
+            font[0].eq_ignore_ascii_case("fangsong"),
+            "注释不应抑制 auto-font：{:?}",
+            font
+        );
+    }
+
+    #[test]
+    fn document_style_body_font_wins_over_auto_font() {
+        // 文档 <style> 中的 body font-family 应压过 auto-font 兜底规则。
+        let md = "<style>body { font-family: Georgia; }</style>\n\n中文一句话。\n";
+        let (node, settings) =
+            prepare_styled(Source::Markdown(md), None, &ConvertOptions::default()).expect("layout");
+        let font = text_block_font(&ast_to_layout(&node, &settings));
+        assert_eq!(font, vec!["Georgia".to_string()], "实际 {:?}", font);
+    }
+
+    #[test]
+    fn explicit_font_family_option_is_lowest_priority() {
+        // 显式 font_family 只作兜底：用户 CSS 的 body 规则优先。
+        let opts = ConvertOptions::new()
+            .with_font_family(&["FangSong"])
+            .with_css("body { font-family: Georgia; }");
+        let (node, settings) =
+            prepare_styled(Source::Markdown("中文一句话。\n"), None, &opts).expect("layout");
+        let font = text_block_font(&ast_to_layout(&node, &settings));
+        assert_eq!(font, vec!["Georgia".to_string()], "实际 {:?}", font);
+    }
+
+    #[test]
+    fn strict_mode_reports_invalid_user_css() {
+        // 严格模式必须在解析用户 CSS 之前开启，否则解析错误会被静默忽略。
+        let opts = ConvertOptions::new()
+            .with_strict(true)
+            .with_css("body { color: red; } }");
+        assert!(
+            markdown_to_svg("中文一句话。\n", &opts).is_err(),
+            "strict 模式下无效 CSS 应返回错误"
+        );
     }
 }
