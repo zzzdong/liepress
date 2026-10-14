@@ -7,6 +7,7 @@
 //! §1.1/§1.3.1/§4.1「Document 不知道页，分页是各输出后端职责」。
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use krilla::action::{Action, LinkAction};
 use krilla::annotation::{Annotation, LinkAnnotation, Target};
@@ -55,6 +56,12 @@ fn reencode_to_png(data: &[u8]) -> Option<Vec<u8>> {
     Some(buf.into_inner())
 }
 
+/// 字体缓存键：字体字节地址 + 长度 + 集合内索引。
+///
+/// `data_ptr` 只在缓存条目持有对应 `Arc<Vec<u8>>` 期间有效——条目本身就持有它
+/// （见 [`FontCacheEntry::data`]），所以只要条目还在，这份分配就不可能被释放，
+/// 更不可能被另一份字体复用（杜绝「地址回收后重新分配」导致的错误命中）。
+/// 每次命中都会 `debug_assert` 校验内容，Release 下则是零开销的指针比较。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct FontCacheKey {
     data_ptr: *const u8,
@@ -70,6 +77,13 @@ impl FontCacheKey {
             index,
         }
     }
+}
+
+/// 缓存条目：字体 + 其字节的强引用（后者保证 key 中的地址有效）。
+struct FontCacheEntry {
+    data: Arc<Vec<u8>>,
+    index: u32,
+    font: Font,
 }
 
 /// lievisual `Color`（0–255 u8）→ krilla 的 `RgbColor`（0–255 u8）。
@@ -368,7 +382,7 @@ impl PdfGenerator {
 /// PDF 绘制器：在单个 krilla Surface 上绘制 `Block`。
 struct PdfRenderer<'a, 's> {
     surface: &'s mut Surface<'a>,
-    font_cache: HashMap<FontCacheKey, Font>,
+    font_cache: HashMap<FontCacheKey, FontCacheEntry>,
     links: Vec<(f32, f32, f32, f32, String)>,
     content_w: f64,
     settings: PageSettings,
@@ -383,6 +397,44 @@ impl<'a, 's> PdfRenderer<'a, 's> {
             content_w,
             settings,
         }
+    }
+
+    /// 取得文本 run 所用字体（首次遇到时注册 krilla `Font`）。
+    ///
+    /// `index` 用于在 ttc/otc 集合中定位具体字体实例，须参与缓存 key。
+    /// 缓存未命中时先按**内容**比对已登记字体：相同字节若落在两份分配里也只
+    /// 注册一份 `Font`（省掉一次字体解析）。这在正常情况下不会发生（lievisual
+    /// 按 `Blob::id()` 共享同一份 `Arc`），属于防御。
+    fn font_for(&mut self, font_data: &Arc<Vec<u8>>, index: u32) -> Option<Font> {
+        let slice = font_data.as_slice();
+        let key = FontCacheKey::from_font_data(slice, index);
+        if let Some(entry) = self.font_cache.get(&key) {
+            debug_assert_eq!(
+                entry.data.as_slice(),
+                slice,
+                "字体缓存命中了地址相同但内容不同的字体"
+            );
+            return Some(entry.font.clone());
+        }
+
+        let reused = self
+            .font_cache
+            .values()
+            .find(|e| e.index == index && e.data.as_slice() == slice)
+            .map(|e| e.font.clone());
+        let font = match reused {
+            Some(font) => font,
+            None => Font::new(krilla::Data::from(font_data.clone()), index)?,
+        };
+        self.font_cache.insert(
+            key,
+            FontCacheEntry {
+                data: font_data.clone(),
+                index,
+                font: font.clone(),
+            },
+        );
+        Some(font)
     }
 
     fn take_links(&mut self) -> Vec<(f32, f32, f32, f32, String)> {
@@ -785,18 +837,8 @@ impl<'a, 's> PdfRenderer<'a, 's> {
 
         // `run.font_data` 是 lievisual 共享的 `Arc<Vec<u8>>`，以 Arc 克隆交给 krilla
         // （`Data: From<Arc<Vec<u8>>>`），避免 `.to_vec()` 深拷贝整份字体。
-        // `run.font_index` 用于在 ttc/otc 集合中定位具体字体实例，须同时参与缓存 key。
-        let font_key = FontCacheKey::from_font_data(run.font_data.as_slice(), run.font_index);
-        if let std::collections::hash_map::Entry::Vacant(e) = self.font_cache.entry(font_key) {
-            if let Some(font) = Font::new(krilla::Data::from(run.font_data.clone()), run.font_index)
-            {
-                e.insert(font);
-            } else {
-                return;
-            }
-        }
-        let krilla_font = match self.font_cache.get(&font_key) {
-            Some(f) => f.clone(),
+        let krilla_font = match self.font_for(&run.font_data, run.font_index) {
+            Some(f) => f,
             None => return,
         };
 
