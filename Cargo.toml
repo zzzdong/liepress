@@ -1,6 +1,6 @@
 [package]
 name = "liepress"
-version = "0.2.2"
+version = "0.2.3"
 description = "A Markdown/HTML to PDF converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
