@@ -179,8 +179,9 @@ Liepress 是一个 Rust 实现、**支持 CSS 样式**的文档生成器：将 M
 ### 4.4 `enrich` / `ext_render` / `highlight` — AST 富化（外绘与高亮）
 
 - **`enrich.rs`**：编排入口 `enrich_ast(node, settings)`，**先外绘、后高亮**（外绘失败软降级时错误注释写回代码块，随后的高亮 pass 才能对带注释的代码正确着色）。幂等，可安全重复调用。
-- **`ext_render/mod.rs`**：渲染器契约 `BlockRenderer`（`lang()` + `render(code, opts)`）、`RenderOpts`（宽/高/主题/DPI，支持 info string 的 `key=value` 覆盖）、注册表 `builtin_renderers()`（按 feature 门控）。
+- **`ext_render/mod.rs`**：渲染器契约 `BlockRenderer`（`lang()` + `render(code, opts)`）、`RenderOpts`（宽/高/主题/DPI/超采样倍率，支持 info string 的 `key=value` 覆盖）、注册表 `builtin_renderers()`（按 feature 门控）。
   - 模块位于**顶层**（不属于 `ast`/`document`）：它做的是 AST→AST 变换，由管线入口显式调用，以维持「不在 ast/dom/document 层直接绘制」的分层红线。
+  - **超采样**：`RenderOpts.scale`（默认 2）让位图按「标称尺寸 × scale」光栅化，图片在文档中仍按标称排版尺寸显示，故只提升清晰度（有效 DPI = `dpi × scale`，默认 300）、不改变版式；可用 `scale=1..8` 调节，超 `MAX_RENDER_PX`（8000px）自动降倍率。liecharts 走 lievisual 的密度旋钮 `Scene.scale`（不能放大画布：echarts 字号是画布内绝对 px，放大画布会相对缩小文字）；liemermaid 走 `fit_scene` 的目标宽（整图含文字经 Group 变换等比缩放）。
 - **`ext_render/pass.rs`**：AST 外绘 pass `render_ext_blocks` —— 遍历 `Node` 树，命中已注册语言的代码块则渲染为 PNG，就地替换为 `NodeKind::Image`（base64 data URI，`style.width` 置为内容宽、居中、不可拆分）；失败则保留代码块并附注 `// render failed (...)`。
 - **`ext_render/liecharts.rs` / `liemermaid.rs`**：两种具体渲染器（`charts` / `mermaid` feature 启用）。
 - **`highlight.rs`**：`tokenize(code, lang)` 基于 syntect 把代码切分为「行 → 着色片段」，`highlight_code_blocks` 遍历填充 `CodeBlock.spans`。主题使用浅色（`InspiredGitHub`），与内置 `pre` 的浅灰底匹配；语法集/主题集为进程级单例。

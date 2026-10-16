@@ -30,6 +30,19 @@ use std::collections::HashMap;
 /// 默认位图渲染 DPI（用于把排版宽度 pt 换算为像素）。
 const DEFAULT_DPI: f64 = 150.0;
 
+/// 默认超采样倍率：位图按「标称尺寸 × scale」光栅化后再插入文档。
+///
+/// 标称尺寸对应 [`RenderOpts::dpi`]（默认 150），2× 即有效 300 DPI：
+/// 印刷与高分屏下边缘/文字不虚，而图片在文档中的排版尺寸不变。
+const DEFAULT_SCALE: u32 = 2;
+
+/// 单张图片的像素尺寸上限（宽/高各自）。
+///
+/// 超采样成本随面积平方增长（`scale²`），且光栅化画布受 vello_cpu 的
+/// `u16` 上限约束；超限时自动降倍率（见 [`RenderOpts::scale_factor`]），
+/// 而不是截断画布。
+pub const MAX_RENDER_PX: u32 = 8000;
+
 /// 渲染器接收的选项。
 #[derive(Debug, Clone)]
 pub struct RenderOpts {
@@ -41,6 +54,13 @@ pub struct RenderOpts {
     pub theme: String,
     /// 渲染 DPI（用于像素 ↔ 排版单位换算）。默认 150。
     pub dpi: u32,
+    /// 位图超采样倍率。默认 2（见 [`DEFAULT_SCALE`]）。
+    ///
+    /// 渲染器按 `width/height × scale` 的像素数光栅化；图片插入文档后仍按
+    /// `width/height` 对应的排版尺寸显示，因此倍率只提升清晰度、不改变版式，
+    /// 有效 DPI = `dpi × scale`。可用 info string `scale=1` 关闭（快速预览）、
+    /// `scale=3/4` 进一步提高（成本按面积平方增长）。
+    pub scale: u32,
 }
 
 impl Default for RenderOpts {
@@ -50,6 +70,7 @@ impl Default for RenderOpts {
             height: 420,
             theme: "light".to_string(),
             dpi: 150,
+            scale: DEFAULT_SCALE,
         }
     }
 }
@@ -68,7 +89,28 @@ impl RenderOpts {
             height: (width as f64 * 7.0 / 12.0).round() as u32,
             theme: theme.to_string(),
             dpi: DEFAULT_DPI as u32,
+            scale: DEFAULT_SCALE,
         }
+    }
+
+    /// 有效超采样倍率：`scale` 钳制到 `1..=8`，并保证宽/高各自不超过
+    /// [`MAX_RENDER_PX`]（超限自动降倍率，而非截断画布）。
+    pub fn scale_factor(&self) -> u32 {
+        let by_width = (MAX_RENDER_PX / self.width.max(1)).max(1);
+        let by_height = (MAX_RENDER_PX / self.height.max(1)).max(1);
+        self.scale.clamp(1, 8).min(by_width).min(by_height)
+    }
+
+    /// 实际光栅化像素尺寸 = 标称宽高 × [`Self::scale_factor`]。
+    ///
+    /// 高度由内容决定的渲染器（如 mermaid）可只用 [`Self::scale_factor`]
+    /// 乘它的目标宽度。
+    pub fn raster_size(&self) -> (u32, u32) {
+        let s = self.scale_factor();
+        (
+            self.width.saturating_mul(s),
+            self.height.saturating_mul(s),
+        )
     }
 
     /// 用 info-string 的 `key=value` 覆盖项（width/height/theme/dpi）更新自身。
@@ -108,6 +150,13 @@ impl RenderOpts {
                 self.height = (phys_pt * new_dpi / 72.0).round() as u32;
             }
             self.dpi = new_dpi as u32;
+        }
+        if let Some(s) = overrides.get("scale").and_then(|v| v.parse::<u32>().ok())
+            && s > 0
+        {
+            // 超采样倍率独立于 dpi：dpi 决定标称像素尺寸，scale 决定在其之上
+            // 再放大多少倍光栅化（有效 DPI = dpi × scale）。
+            self.scale = s.min(8);
         }
     }
 }
@@ -245,6 +294,44 @@ mod tests {
         o.apply_overrides(&ov);
         assert_eq!(o.width, before.0 * 2, "无显式尺寸时宽随 DPI 等比翻倍");
         assert_eq!(o.height, before.1 * 2, "无显式尺寸时高随 DPI 等比翻倍");
+    }
+
+    #[test]
+    fn scale_defaults_to_two_and_doubles_raster_size() {
+        let o = RenderOpts::for_content_width(467.0, "light");
+        assert_eq!(o.scale, 2, "默认 2× 超采样");
+        assert_eq!(
+            o.raster_size(),
+            (o.width * 2, o.height * 2),
+            "光栅化尺寸 = 标称尺寸 × scale"
+        );
+    }
+
+    #[test]
+    fn scale_override_disables_supersampling() {
+        let mut o = RenderOpts::default();
+        let nominal = (o.width, o.height);
+        let mut ov = HashMap::new();
+        ov.insert("scale".into(), "1".into());
+        o.apply_overrides(&ov);
+        assert_eq!(o.scale, 1);
+        assert_eq!(o.raster_size(), nominal, "scale=1 回到标称尺寸");
+    }
+
+    #[test]
+    fn scale_factor_clamped_by_max_render_px() {
+        // 超大画布：倍率被 MAX_RENDER_PX 压制，避免超出光栅化画布上限。
+        let o = RenderOpts {
+            width: 5000,
+            height: 5000,
+            scale: 4,
+            ..Default::default()
+        };
+        assert_eq!(o.scale_factor(), 1);
+        assert_eq!(o.raster_size(), (5000, 5000));
+        // 正常尺寸不受钳制影响。
+        let o = RenderOpts::default();
+        assert_eq!(o.scale_factor(), 2);
     }
 
     #[test]

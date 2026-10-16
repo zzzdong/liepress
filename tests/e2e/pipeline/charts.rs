@@ -132,6 +132,7 @@ fn liecharts_render_failure_degrades_gracefully() {
 fn info_string_width_override_propagates() {
     use liepress::markdown_to_html_document;
     // `width=900` 应传导到渲染像素尺寸：解码内嵌 PNG 的 IHDR 宽度断言。
+    // 默认 2× 超采样：标称 900 → 实际光栅化 1800px（排版尺寸不变，有效 DPI 翻倍）。
     let html = markdown_to_html_document(
         "```mermaid width=900\nflowchart TD\n  A --> B\n```\n",
         None,
@@ -146,7 +147,60 @@ fn info_string_width_override_propagates() {
     // PNG IHDR：8 字节签名 + 4 长度 + "IHDR" + 4 宽度（大端）。
     assert_eq!(&png[12..16], b"IHDR", "内嵌数据应为 PNG");
     let width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
-    assert_eq!(width, 900, "info-string 的 width=900 应传导到渲染像素宽");
+    assert_eq!(width, 1800, "info-string 的 width=900 经默认 2× 超采样应为 1800px");
+}
+
+#[cfg(feature = "mermaid")]
+#[test]
+fn info_string_scale_override_disables_supersampling() {
+    use liepress::markdown_to_html_document;
+    // `scale=1` 关闭超采样：标称 900 → 实际 900px（快速预览/控制文件体积）。
+    let html = markdown_to_html_document(
+        "```mermaid width=900 scale=1\nflowchart TD\n  A --> B\n```\n",
+        None,
+        None,
+        None,
+    );
+    let marker = "data:image/png;base64,";
+    let idx = html.find(marker).expect("mermaid 应渲染为内嵌 PNG");
+    let b64 = &html[idx + marker.len()..];
+    let b64 = &b64[..b64.find('"').unwrap_or(b64.len())];
+    let png = base64_decode(b64);
+    assert_eq!(&png[12..16], b"IHDR", "内嵌数据应为 PNG");
+    let width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+    assert_eq!(width, 900, "scale=1 应按标称宽度光栅化");
+}
+
+#[cfg(feature = "charts")]
+#[test]
+fn liecharts_block_renders_supersampled() {
+    use liepress::markdown_to_html_document;
+    // liecharts 经 Scene 密度旋钮超采样（而非放大画布，否则 px 字号会被相对缩小）：
+    // 显式 width=900 height=525，默认 2× → 1800×1050px。
+    let html = markdown_to_html_document(
+        concat!(
+            "```liecharts width=900 height=525\n",
+            "{\"xAxis\":[{\"type\":\"category\",\"data\":[\"a\",\"b\"]}],",
+            "\"yAxis\":[{\"type\":\"value\"}],\"series\":[{\"type\":\"bar\",\"data\":[1,2]}]}\n",
+            "```\n"
+        ),
+        None,
+        None,
+        None,
+    );
+    let marker = "data:image/png;base64,";
+    let idx = html.find(marker).expect("liecharts 应渲染为内嵌 PNG");
+    let b64 = &html[idx + marker.len()..];
+    let b64 = &b64[..b64.find('"').unwrap_or(b64.len())];
+    let png = base64_decode(b64);
+    assert_eq!(&png[12..16], b"IHDR", "内嵌数据应为 PNG");
+    let width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+    let height = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
+    assert_eq!(
+        (width, height),
+        (1800, 1050),
+        "900×525 标称经 2× 超采样应为 1800×1050px"
+    );
 }
 
 /// 极简 base64 解码（测试专用，无外部依赖）。
