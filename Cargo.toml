@@ -1,6 +1,6 @@
 [package]
 name = "liepress"
-version = "0.2.3"
+version = "0.2.4"
 description = "A Markdown/HTML to PDF converter with CSS styling support"
 authors = ["zzzdong <kuwater@163.com>"]
 license = "MIT OR Apache-2.0"
@@ -27,9 +27,9 @@ clap = { version = "4", features = ["derive"] }
 docx-rs = "0.4"
 html5ever = "0.40"
 image = { version = "0.25" }
-liecharts = { version = "0.3", optional = true }
-liemermaid = { version = "0.2.1", optional = true }
-lievisual = "0.3"
+liecharts = { version = "0.3.2", optional = true }
+liemermaid = { version = "0.3.1", optional = true }
+lievisual = "0.3.1"
 lightningcss = { version = "1.0.0-alpha.72", default-features = false }
 kamadak-exif = "0.6"
 krilla = "0.8"

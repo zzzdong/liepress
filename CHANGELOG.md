@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.4]
+
+### Changed
+
+- 升级 `liecharts` 0.3 → 0.3.2、`liemermaid` 0.2.1 → 0.3.1、`lievisual` 0.3 → 0.3.1：取到栅格后端旋转文字修复、gauge/polar 双路径布局一致性与 `textStyle.fontSize`（rem 根）等上游修复；liepress 侧无需改动。
+
 ## [0.2.3]
+
+### Added
+
+- `liecharts` / `liemermaid` 位图渲染支持超采样（`scale`，默认 2×）：按「标称尺寸 × scale」光栅化，文档中仍按标称尺寸排版，有效 DPI 翻倍而不改变版式；可用 info string `scale=1..8` 调节，超过 `MAX_RENDER_PX` 自动降倍率。
 
 ### Changed
 
