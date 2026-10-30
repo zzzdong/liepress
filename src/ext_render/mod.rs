@@ -107,10 +107,7 @@ impl RenderOpts {
     /// 乘它的目标宽度。
     pub fn raster_size(&self) -> (u32, u32) {
         let s = self.scale_factor();
-        (
-            self.width.saturating_mul(s),
-            self.height.saturating_mul(s),
-        )
+        (self.width.saturating_mul(s), self.height.saturating_mul(s))
     }
 
     /// 用 info-string 的 `key=value` 覆盖项（width/height/theme/dpi）更新自身。

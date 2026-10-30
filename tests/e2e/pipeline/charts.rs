@@ -147,7 +147,10 @@ fn info_string_width_override_propagates() {
     // PNG IHDR：8 字节签名 + 4 长度 + "IHDR" + 4 宽度（大端）。
     assert_eq!(&png[12..16], b"IHDR", "内嵌数据应为 PNG");
     let width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
-    assert_eq!(width, 1800, "info-string 的 width=900 经默认 2× 超采样应为 1800px");
+    assert_eq!(
+        width, 1800,
+        "info-string 的 width=900 经默认 2× 超采样应为 1800px"
+    );
 }
 
 #[cfg(feature = "mermaid")]

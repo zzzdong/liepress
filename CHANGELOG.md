@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.5]
+
+### Changed
+
+- 升级 `liecharts` 0.3.2 → 0.3.3：取到横向条形图值标签位置修复与 `Bottom`/`Left`/`Right` 绝对方位语义扩展（label position 与 ECharts 对齐）；liepress 侧无需改动。
+- 开发依赖 `lopdf` 0.45 → 0.46（仅测试使用，不影响产物）。
+
 ## [0.2.4]
 
 ### Changed
